@@ -1,0 +1,15 @@
+# Mediu virtual
+venv/
+env/
+
+# Cache Python
+__pycache__/
+*.pyc
+
+# FIȘIERE CU PAROLE ȘI CHEI API (CRITIC!)
+config.py
+
+# DATE PERSONALE ȘI JURNALE (CRITIC!)
+chronos_data/
+*.wav
+*.ppn
