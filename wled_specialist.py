@@ -1,15 +1,12 @@
 import requests
-import json
 import logging
 import datetime
 from concurrent.futures import ThreadPoolExecutor
-from config import WLED_IP_MAIN, WLED_IP_FLOOR, GEMINI_API_KEY
+from config import WLED_IP_MAIN, WLED_IP_FLOOR
+from ai_core import ask_gemini_json
 
 class WLEDDispatcher:
     def __init__(self):
-        self.gemini_key = GEMINI_API_KEY
-        
-        # --- MENU COMPLET PENTRU DIVERSITATE MAXIMĂ (Formatul tău) ---
         self.palettes_db = """
 -- VIBRANT & HIGH ENERGY (Multicolor/Party) --
 6: Party – Rainbow fără nuanțe de verde (vibe de club).
@@ -62,17 +59,12 @@ class WLEDDispatcher:
         """
 
     def _get_time_context(self):
-        """Calculează contextul orar pentru a ajusta luminozitatea automat."""
         hour = datetime.datetime.now().hour
-        if 8 <= hour < 19:
-            return "DAY (Bright allowed)"
-        elif 19 <= hour < 23:
-            return "EVENING (Cozy/Medium)"
-        else:
-            return "NIGHT (Dim/Low - DO NOT BLIND USER)"
+        if 8 <= hour < 19: return "DAY (Bright allowed)"
+        elif 19 <= hour < 23: return "EVENING (Cozy/Medium)"
+        else: return "NIGHT (Dim/Low - DO NOT BLIND USER)"
 
     def _get_current_state_summary(self):
-        """Citim starea doar de la MAIN pentru context general."""
         try:
             resp = requests.get(f"http://{WLED_IP_MAIN}/json/state", timeout=0.5)
             if resp.status_code == 200:
@@ -81,12 +73,9 @@ class WLEDDispatcher:
         except: pass
         return "Unknown"
 
-    def _get_ai_dual_decision(self, user_text):
+    def _get_ai_dual_decision(self, user_text, conversation_history):
         state_summary = self._get_current_state_summary()
         time_context = self._get_time_context()
-        
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.gemini_key}"
-        headers = {'Content-Type': 'application/json'}
 
         system_prompt = f"""
         You are an Advanced Dual-Zone Lighting Designer.
@@ -98,6 +87,9 @@ class WLEDDispatcher:
         CURRENT CONTEXT:
         - Time: {time_context}
         - Current Status: {state_summary}
+        
+        RECENT CONVERSATION HISTORY (Last Hour):
+        {conversation_history}
 
         BRIGHTNESS RULES (0-255 Scale):
         [NIGHT MODE (23:00 - 08:00)]
@@ -121,63 +113,85 @@ class WLEDDispatcher:
         {self.effects_db}
 
         INSTRUCTIONS:
-        1. **Create a Layered Atmosphere**: Combine zones!
-           - Example "Cyberpunk": Main = Blue/Cyan (Solid/Flow), Floor = Hot Pink/Magenta (Splash).
-           - Example "Storm": Main = Dark Blue (Breathe), Floor = Flash/White (Lightning).
+        1. **Create a Layered Atmosphere**: Combine zones! Use the CONVERSATION HISTORY to understand vague requests like "dim them" or "change it to red".
+        2. **Logic**: MODIFY (dim, bright, off) OR CHANGE (mood, theme) for BOTH zones.
         
-        2. **Logic**:
-           - CASE 1: MODIFY (dim, bright, off) -> Return JSON with just "bri" or "on" changes.
-           - CASE 2: CHANGE (mood, theme) -> Generate NEW "seg" arrays with new FX/PAL for BOTH zones.
-
-        OUTPUT JSON STRICTLY:
-        {{
-            "main":  {{ "on": true, "bri": 50, "seg": [{{ "fx": ID, "pal": ID, "sx": 128, "ix": 128 }}] }},
-            "floor": {{ "on": true, "bri": 200, "seg": [{{ "fx": ID, "pal": ID, "sx": 128, "ix": 128 }}] }}
-        }}
-
         User Request: "{user_text}"
         """
 
-        payload = {
-            "contents": [{"parts": [{"text": system_prompt}]}],
-            "generationConfig": {"temperature": 0.85, "responseMimeType": "application/json"}
+        # SCHEMA STRICTĂ PENTRU LUMINILE WLED
+        wled_schema = {
+            "type": "OBJECT",
+            "properties": {
+                "main": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "on": {"type": "BOOLEAN"},
+                        "bri": {"type": "INTEGER"},
+                        "seg": {
+                            "type": "ARRAY",
+                            "items": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "fx": {"type": "INTEGER"},
+                                    "pal": {"type": "INTEGER"},
+                                    "sx": {"type": "INTEGER"},
+                                    "ix": {"type": "INTEGER"}
+                                },
+                                "required": ["fx", "pal", "sx", "ix"]
+                            }
+                        }
+                    },
+                    "required": ["on", "bri", "seg"]
+                },
+                "floor": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "on": {"type": "BOOLEAN"},
+                        "bri": {"type": "INTEGER"},
+                        "seg": {
+                            "type": "ARRAY",
+                            "items": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "fx": {"type": "INTEGER"},
+                                    "pal": {"type": "INTEGER"},
+                                    "sx": {"type": "INTEGER"},
+                                    "ix": {"type": "INTEGER"}
+                                },
+                                "required": ["fx", "pal", "sx", "ix"]
+                            }
+                        }
+                    },
+                    "required": ["on", "bri", "seg"]
+                }
+            }
         }
 
-        try:
-            response = requests.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            return response.json()['candidates'][0]['content']['parts'][0]['text']
-        except Exception as e:
-            logging.error(f"Eroare AI: {e}")
-            return None
+        return ask_gemini_json(system_prompt, schema=wled_schema, temperature=0.85)
 
     def _send_request(self, ip, data):
-        """Helper pentru trimiterea request-ului către un IP specific."""
         try:
             requests.post(f"http://{ip}/json/state", json=data, timeout=1.5)
         except Exception as e:
             logging.error(f"Eroare trimitere către {ip}: {e}")
 
-    def execute(self, user_text):
+    def execute(self, user_text, conversation_history=""):
         logging.info(f"🎨 Dual-Zone AI: '{user_text}'")
-        json_resp = self._get_ai_dual_decision(user_text)
+        full_scene = self._get_ai_dual_decision(user_text, conversation_history)
         
-        if not json_resp: return
+        if not full_scene: return
 
         try:
-            clean_json = json_resp.replace("```json", "").replace("```", "").strip()
-            full_scene = json.loads(clean_json)
-
-            # Folosim Threading pentru a trimite comenzile INSTANTANEU la ambele benzi
             with ThreadPoolExecutor() as executor:
                 if "main" in full_scene:
                     bri = full_scene['main'].get('bri', 'N/A')
-                    logging.info(f"Main (Top) -> Bri: {bri}/255 | FX: {full_scene['main'].get('seg', [{}])[0].get('fx', 'N/A')}")
+                    logging.info(f"Main (Top) -> Bri: {bri}/255")
                     executor.submit(self._send_request, WLED_IP_MAIN, full_scene["main"])
                 
                 if "floor" in full_scene:
                     bri = full_scene['floor'].get('bri', 'N/A')
-                    logging.info(f"Floor (Bot) -> Bri: {bri}/255 | FX: {full_scene['floor'].get('seg', [{}])[0].get('fx', 'N/A')}")
+                    logging.info(f"Floor (Bot) -> Bri: {bri}/255")
                     executor.submit(self._send_request, WLED_IP_FLOOR, full_scene["floor"])
                     
         except Exception as e:
@@ -185,9 +199,6 @@ class WLEDDispatcher:
 
 
 class WLEDStateManager:
-    """
-    Gestionează starea și animațiile pentru AMBELE dispozitive.
-    """
     def __init__(self):
         self.saved_states = {} 
 
@@ -201,7 +212,6 @@ class WLEDStateManager:
         return None
 
     def save_state(self):
-        """Salvează starea ambelor benzi."""
         with ThreadPoolExecutor() as executor:
             future_main = executor.submit(self._get_state, WLED_IP_MAIN)
             future_floor = executor.submit(self._get_state, WLED_IP_FLOOR)
@@ -209,11 +219,6 @@ class WLEDStateManager:
             self.saved_states["floor"] = future_floor.result()
 
     def start_loading_animation(self):
-        """
-        Animație sincronizată:
-        MAIN (Sus): Scan Roșu (DIM)
-        FLOOR (Jos): Scan Mov (BRIGHT)
-        """
         def send_anim(ip, color, bri):
             payload = {
                 "on": True, "bri": bri,
@@ -226,11 +231,10 @@ class WLEDStateManager:
             except: pass
 
         with ThreadPoolExecutor() as executor:
-            executor.submit(send_anim, WLED_IP_MAIN, [255, 0, 0], 60)   # Sus: Roșu Dim (60)
-            executor.submit(send_anim, WLED_IP_FLOOR, [128, 0, 255], 200) # Jos: Mov Bright (200)
+            executor.submit(send_anim, WLED_IP_MAIN, [255, 0, 0], 60)   
+            executor.submit(send_anim, WLED_IP_FLOOR, [128, 0, 255], 200) 
 
     def restore_state(self):
-        """Restaurează stările salvate."""
         def restore(ip, state_key):
             if state_key in self.saved_states and self.saved_states[state_key]:
                 try: requests.post(f"http://{ip}/json/state", json=self.saved_states[state_key], timeout=1)

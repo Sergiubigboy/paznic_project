@@ -1,19 +1,18 @@
 import os
 import sys
 import time
-import json
 import wave
 import struct
 import socket
 import logging
-import requests
 import speech_recognition as sr
 import pvporcupine
 
 # --- IMPORTURI MODULE SPECIALISTE ---
 from wled_specialist import WLEDDispatcher, WLEDStateManager
-from music_specialist import MusicHandler # <--- NOUL SPECIALIST MUZICAL
+from music_specialist import MusicHandler
 from logger_specialist import JournalCore
+from ai_core import ask_gemini_json
 
 from config import (
     PICOVOICE_KEY, 
@@ -30,53 +29,46 @@ from config import (
 # --- LOGGING ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- DISPATCHER INTELIGENT (ROUTER) ---
-def classify_intent_with_gemini(transcription):
-    logging.info(f"🧠 Dispatcher: Analizez intenția pentru: '{transcription}'")
+def classify_intent_with_gemini(transcription, conversation_history):
+    logging.info(f"🧠 Dispatcher: Analizez intenția...")
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    headers = {'Content-Type': 'application/json'}
-
     prompt_text = f"""
     You are the Intelligent Room Assistant Dispatcher.
     Route the user's voice command.
     
-    USER COMMAND: "{transcription}"
+    RECENT CONVERSATION HISTORY (Last Hour):
+    {conversation_history}
+    
+    CURRENT USER COMMAND: "{transcription}"
 
-    OUTPUT FORMAT: JSON {{ "led": bool, "music": bool, "general": bool, "journal": bool, "target": bool, "reasoning": "string" }}
-    Logic:
+    Logic for classification:
     - "led": lights, colors, brightness, "atmosphere", "vibe" related to sight.
-    - "music": songs, radio, artists, volume, "baga", "pune", "play", "stop", "next".
+    - "music": songs, radio, artists, volume, "baga", "pune", "play", "stop", "next" (even if user just says "schimba" or "next", look at history).
     - "general": weather, chat, jokes, math.
     - "journal": User talks about feelings, day summary, rant, ideas ("vreau să mă descarc", "jurnal", "azi a fost greu").
     - "target": User wants to add a specific task ("adaugă target", "trebuie să fac X", "amintește-mi să").
-    
     """
 
-    payload = {
-        "contents": [{"parts": [{"text": prompt_text}]}],
-        "generationConfig": {"responseMimeType": "application/json"}
+    intent_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "led": {"type": "BOOLEAN"},
+            "music": {"type": "BOOLEAN"},
+            "general": {"type": "BOOLEAN"},
+            "journal": {"type": "BOOLEAN"},
+            "target": {"type": "BOOLEAN"},
+            "reasoning": {"type": "STRING", "description": "Short explanation of the decision"}
+        },
+        "required": ["led", "music", "general", "journal", "target", "reasoning"]
     }
 
-    try:
-        response = requests.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        raw_text = response.json()['candidates'][0]['content']['parts'][0]['text']
-        parsed = json.loads(raw_text)
-        
-        # Handle case where Gemini returns a list instead of dict
-        if isinstance(parsed, list) and len(parsed) > 0:
-            parsed = parsed[0]
-        
-        # Ensure it's a dict
-        if not isinstance(parsed, dict):
-            logging.error(f"Gemini returned unexpected format: {type(parsed)}")
-            return None
-        
-        return parsed
-    except Exception as e:
-        logging.error(f"Eroare Dispatcher Gemini: {e}")
+    parsed = ask_gemini_json(prompt_text, schema=intent_schema, temperature=0.1)
+    
+    if not parsed:
+        logging.error(f"Gemini a returnat None.")
         return None
+    
+    return parsed
 
 # --- AUDIO & TRANSCRIPTION ---
 def transcribe_audio(wav_filename):
@@ -84,7 +76,6 @@ def transcribe_audio(wav_filename):
     try:
         with sr.AudioFile(wav_filename) as source:
             audio_data = recognizer.record(source)
-            # Folosim limba română pentru transcriere, Gemini va traduce intern în engleză pentru Spotify
             text = recognizer.recognize_google(audio_data, language="ro-RO")
             logging.info(f"🗣️  Utilizator: {text}")
             return text
@@ -106,20 +97,20 @@ def main():
     sock.bind(("0.0.0.0", UDP_PORT))
     sock.settimeout(0.05)
 
-    logging.info("🚀 Sistem INTEGRAT (WLED + SPOTIFY) pornit. Aștept Wake Word...")
+    logging.info("🚀 Sistem INTEGRAT pornit. Aștept Wake Word...")
 
-    # --- INIȚIALIZARE EXPERȚI ---
     wled_expert = WLEDDispatcher()
     wled_mechanic = WLEDStateManager()
-    music_expert = MusicHandler() # <--- AICI SE CONECTEAZĂ SPOTIFY
-    jural_expert = JournalCore(GEMINI_API_KEY, wled_mechanic)
-    
+    music_expert = MusicHandler()
+    jural_expert = JournalCore(wled_mechanic) 
     
     audio_buffer = []
     recording_buffer = []
     is_recording = False
     silence_start = None
     record_start = None
+
+    conversation_history = [] 
 
     try:
         while True:
@@ -133,24 +124,23 @@ def main():
 
                 if not is_recording:
                     audio_buffer.extend(chunk)
-                    if len(audio_buffer) > porcupine.frame_length:
+                    
+                    # Fixul magic care nu lasă microfonul să aibă lag după câteva ore
+                    while len(audio_buffer) >= porcupine.frame_length:
                         frame = audio_buffer[:porcupine.frame_length]
                         audio_buffer = audio_buffer[porcupine.frame_length:]
                         
                         if porcupine.process(frame) >= 0:
                             logging.info("🎤 Wake Word Detectat! Ascult...")
-                            
-                            # --- ANIMATIE LOADING (Feedback Vizual) ---
                             wled_mechanic.save_state()            
                             wled_mechanic.start_loading_animation() 
-                            # ----------------------------------
 
                             is_recording = True
                             recording_buffer = []
                             record_start = time.time()
                             silence_start = time.time()
+                            break
                 else:
-                    # Logică Înregistrare
                     recording_buffer.extend(chunk)
                     amplitude = sum(abs(x) for x in chunk) / len(chunk)
                     if amplitude > SILENCE_THRESHOLD:
@@ -175,17 +165,21 @@ def main():
                         should_restore_lights = True 
 
                         if text:
-                            intent = classify_intent_with_gemini(text)
+                            current_time = time.time()
+                            
+                            conversation_history = [msg for msg in conversation_history if current_time - msg[0] <= 3600]
+                            history_str = "\n".join([msg[1] for msg in conversation_history]) if conversation_history else "No previous context."
+                            
+                            intent = classify_intent_with_gemini(text, history_str)
+                            
+                            conversation_history.append((current_time, f"User: {text}"))
                             
                             if intent and isinstance(intent, dict):
                                 logging.info(f"📋 Intenție: {intent.get('reasoning', 'unknown')}")
                                 
-                                # A. CAZUL LED-URI (Dacă vrei lumini, nu le restabilim pe cele vechi)
                                 if intent.get("led"):
-                                    wled_expert.execute(text)
+                                    wled_expert.execute(text, history_str)
                                     should_restore_lights = False 
-                                
-                                
                                 
                                 if intent.get("journal"):
                                     logging.info("📔 Jurnal Personal ")
@@ -197,19 +191,16 @@ def main():
 
                                 if intent.get("music"):
                                     logging.info("🎵 Procesare Muzică...")
-                                    # Acum totul e gestionat în music_specialist.py
-                                    music_expert.process_command(text)
+                                    music_expert.process_command(text, history_str)
                            
                                 if intent.get("general"):
                                     logging.info("💬 General Chat (Coming Soon)")
                             else:
-                                logging.error("Failed to parse intent or invalid intent format")
+                                logging.error("Failed to parse intent")
                         
-                        # --- RESTAURARE STARE LUMINI ---
                         if should_restore_lights:
                             logging.info("Revin la luminile anterioare...")
                             wled_mechanic.restore_state()
-                        # --------------------------------
 
                         if os.path.exists(temp_wav):
                             os.remove(temp_wav)
