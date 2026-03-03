@@ -23,6 +23,7 @@ class MusicHandler:
         self.strategy = self._load_text(STRATEGY_FILE)
         self.user_taste_profile = "" 
         self.play_history = self._load_history()
+        self.was_playing_before_pause = False
         
         try:
             self.sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
@@ -97,6 +98,35 @@ class MusicHandler:
             print(f"⚠️ Nu am putut citi istoricul: {e}")
             self.user_taste_profile = "No history available."
 
+    def pause_playback(self):
+        """Pauză temporară pentru a asculta comanda"""
+        try:
+            dev_id = self._get_device_id()
+            if not dev_id: return
+            
+            # Verificăm dacă chiar cântă ceva
+            current = self.sp.current_playback()
+            if current and current.get('is_playing'):
+                self.sp.pause_playback(device_id=dev_id)
+                self.was_playing_before_pause = True # Ținem minte să o repornim
+                logging.info("⏸️ Muzică pusă pe pauză pentru a asculta.")
+            else:
+                self.was_playing_before_pause = False
+        except Exception as e:
+            logging.error(f"Eroare la pauză Spotify: {e}")
+
+    def resume_playback(self):
+        """Reluăm muzica dacă era pornită înainte de pauză"""
+        try:
+            if hasattr(self, 'was_playing_before_pause') and self.was_playing_before_pause:
+                dev_id = self._get_device_id()
+                if dev_id:
+                    self.sp.start_playback(device_id=dev_id)
+                    logging.info("▶️ Muzică reluată.")
+                self.was_playing_before_pause = False
+        except Exception as e:
+            logging.error(f"Eroare la reluare Spotify: {e}")
+
     def _get_time_context(self):
         hour = datetime.now().hour
         if 5 <= hour < 12: return "MORNING (Wake Up / Energize / Start Day)"
@@ -110,40 +140,41 @@ class MusicHandler:
         history_str = ", ".join(self.play_history) if self.play_history else "No recent tracks played yet."
         
         system_prompt = f"""
-        ROLE: Elite Music Curator (Strict Fact-Checker & Taste Expert).
+        ROLE: Elite Music Curator & Playback Controller.
         
-        --- REAL-TIME CONTEXT ---
         CURRENT TIME: {current_time}
         TIME VIBE: {time_context}
         
-        --- RECENT CONVERSATION HISTORY (Last Hour) ---
+        RECENT CONVERSATION HISTORY:
         {conversation_history}
         
-        --- USER PROFILE (DATA FROM SPOTIFY) ---
+        USER PROFILE:
         {self.user_taste_profile}
 
-        --- RECENTLY PLAYED BY YOU (CRITICAL: DO NOT REPEAT THESE) ---
+        BANNED TRACKS (RECENTLY PLAYED):
         {history_str}
 
-        --- GOLDEN RULES (USER MANIFESTO) ---
+        GOLDEN RULES:
         {self.strategy}
 
-        --- CURRENT REQUEST ---
-        "{user_text}"
+        CURRENT REQUEST: "{user_text}"
 
-        --- INSTRUCTIONS ---
-        1. ANALYZE INTENT based on the current request AND the recent conversation. (If user says "change it", look at memory).
-        2. ANTI-HALLUCINATION: Pick a REAL song that exists on Spotify. DO NOT repeat recently played tracks.
+        INSTRUCTIONS:
+        1. Determine if the user wants to PLAY new music, or CONTROL the current music.
+        2. If they want to pause ("pune pauză", "oprește", "taci"), return mode "pause".
+        3. If they want to skip ("next", "următoarea", "alta"), return mode "next".
+        4. If they want to resume ("dă-i drumul", "continuă", "play"), return mode "resume".
+        5. Otherwise, pick a real song/playlist that fits the mood.
         """
         
         dj_schema = {
             "type": "OBJECT",
             "properties": {
-                "mode": {"type": "STRING", "enum": ["playlist", "track"]},
-                "query": {"type": "STRING", "description": "Exact Search Term (Artist - Song) OR (Playlist Name)"},
-                "reason": {"type": "STRING", "description": "Explain how this fits the golden rules and time"}
+                "mode": {"type": "STRING", "enum": ["playlist", "track", "pause", "resume", "next"]},
+                "query": {"type": "STRING", "description": "Search Term (Leave empty if mode is pause, resume, or next)"},
+                "reason": {"type": "STRING", "description": "Explain the decision in Romanian"}
             },
-            "required": ["mode", "query", "reason"]
+            "required": ["mode", "reason"]
         }
 
         # BUMP LA GEMINI 2.5 FLASH PENTRU GUSTURI MAI BUNE (Mijlocul perfect)
@@ -154,19 +185,40 @@ class MusicHandler:
         if not decision: return
 
         mode = decision.get('mode')
-        query = decision.get('query')
+        query = decision.get('query', '')
         reason = decision.get('reason')
         
         print(f"\n🧠 RAȚIONAMENT AI (2.5 Flash): {reason}")
-        print(f"🤖 ACȚIUNE [{mode.upper()}]: {query}")
+        print(f"🤖 ACȚIUNE [{mode.upper()}]: {query if query else 'N/A'}")
         
         dev_id = self._get_device_id()
         if not dev_id: 
-            print("❌ Nu găsesc boxa.")
+            print("❌ Nu găsesc boxa Spotify activă.")
             return
             
-        # ... Restul codului tău cu Spotify rămâne absolut la fel ...
         try:
+            # --- COMENZI DE CONTROL PLAYBACK ---
+            if mode == 'pause':
+                self.sp.pause_playback(device_id=dev_id)
+                print("⏸️ Playback oprit din voce.")
+                # Foarte important: anulăm reluarea automată din main.py
+                self.was_playing_before_pause = False 
+                return
+                
+            elif mode == 'next':
+                self.sp.next_track(device_id=dev_id)
+                print("⏭️ Piesa următoare.")
+                # Dacă dai next, vrei să și cânte
+                self.was_playing_before_pause = True 
+                return
+                
+            elif mode == 'resume':
+                self.sp.start_playback(device_id=dev_id)
+                print("▶️ Playback reluat.")
+                self.was_playing_before_pause = False
+                return
+
+            # --- COMENZI PENTRU PIESE / PLAYLISTURI NOI ---
             if mode == 'playlist':
                 results = self.sp.search(q=query, type='playlist', limit=1, market='US')
                 if results and results['playlists']['items']:
@@ -175,10 +227,11 @@ class MusicHandler:
                     self.sp.shuffle(True, device_id=dev_id)
                     self.sp.start_playback(device_id=dev_id, context_uri=playlist['uri'])
                     print("✅ Playlist pornit.")
+                    self.was_playing_before_pause = False # Evităm resume-ul dublu
                     self._add_to_history(f"Playlist: {playlist['name']}")
                 else: print("❌ Nu am găsit playlist.")
 
-            else:
+            elif mode == 'track':
                 results = self.sp.search(q=query, type='track', limit=1, market='US')
                 if results and results['tracks']['items']:
                     track = results['tracks']['items'][0]
@@ -189,11 +242,12 @@ class MusicHandler:
                     time.sleep(0.5) 
                     self.sp.next_track(device_id=dev_id)
                     print(f"✅ Piesa a intrat! Enjoy.")
+                    self.was_playing_before_pause = False # Evităm resume-ul dublu
                     self._add_to_history(track_fullname)
                 else: print("❌ Nu am găsit piesa.")
 
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"❌ Error Spotify: {e}")
             if DEBUG_MODE: traceback.print_exc()
 
 if __name__ == "__main__":

@@ -81,43 +81,99 @@ class WLEDDispatcher:
         You are an Advanced Dual-Zone Lighting Designer.
         
         SETUP & PHYSICS (CRITICAL):
-        1. "main": Ceiling/Wardrobe LEDs (Ambient light). VERY BRIGHT (5m).
-        2. "floor": Under-desk/Floor LEDs (Accent/Glow). Subtle (3m).
+        1. "main": Ceiling/Wardrobe LEDs.
+        2. "floor": Under-desk/Floor LEDs.
 
         CURRENT CONTEXT:
         - Time: {time_context}
         - Current Status: {state_summary}
         
-        RECENT CONVERSATION HISTORY (Last Hour):
+        RECENT CONVERSATION HISTORY:
         {conversation_history}
 
-        BRIGHTNESS RULES (0-255 Scale):
-        [NIGHT MODE (23:00 - 08:00)]
-        - MAIN (Top): LOW (5-25) -> Faint glow.
-        - FLOOR (Bottom): MEDIUM (100-150) -> Visible underglow.
-        
-        [EVENING MODE (19:00 - 23:00)]
-        - MAIN (Top): MEDIUM (40-100).
-        - FLOOR (Bottom): HIGH (180-220).
-        
-        [DAY MODE (08:00 - 19:00)]
-        - MAIN (Top): HIGH (200-255).
-        - FLOOR (Bottom): MAX (255).
-
-        [EXCEPTION]: If user asks for "Party", "Full Power", or "Work", override limits.
-
-        AVAILABLE PALETTES:
+        AVAILABLE PALETTES (pal):
         {self.palettes_db}
 
-        AVAILABLE EFFECTS:
+        AVAILABLE EFFECTS (fx):
         {self.effects_db}
 
         INSTRUCTIONS:
-        1. **Create a Layered Atmosphere**: Combine zones! Use the CONVERSATION HISTORY to understand vague requests like "dim them" or "change it to red".
-        2. **Logic**: MODIFY (dim, bright, off) OR CHANGE (mood, theme) for BOTH zones.
+        1. NEVER just use solid colors unless explicitly asked. ALWAYS pick an effect (fx) and a palette (pal) from the lists above to create a dynamic vibe!
+        2. Explain your artistic choices in the 'reasoning' field (in Romanian). Why this palette? Why this effect?
+        3. Combine the two zones logically (e.g., ocean -> blue main, teal floor).
         
         User Request: "{user_text}"
         """
+
+        wled_schema = {
+            "type": "OBJECT",
+            "properties": {
+                "reasoning": {"type": "STRING", "description": "Explică în română logica alegerii efectului și paletei."},
+                "main": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "on": {"type": "BOOLEAN"},
+                        "bri": {"type": "INTEGER"},
+                        "seg": {
+                            "type": "ARRAY",
+                            "items": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "fx": {"type": "INTEGER"},
+                                    "pal": {"type": "INTEGER"},
+                                    "sx": {"type": "INTEGER"},
+                                    "ix": {"type": "INTEGER"}
+                                },
+                                "required": ["fx", "pal", "sx", "ix"]
+                            }
+                        }
+                    },
+                    "required": ["on", "bri", "seg"]
+                },
+                "floor": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "on": {"type": "BOOLEAN"},
+                        "bri": {"type": "INTEGER"},
+                        "seg": {
+                            "type": "ARRAY",
+                            "items": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "fx": {"type": "INTEGER"},
+                                    "pal": {"type": "INTEGER"},
+                                    "sx": {"type": "INTEGER"},
+                                    "ix": {"type": "INTEGER"}
+                                },
+                                "required": ["fx", "pal", "sx", "ix"]
+                            }
+                        }
+                    },
+                    "required": ["on", "bri", "seg"]
+                }
+            },
+            "required": ["reasoning", "main", "floor"]
+        }
+
+        return ask_gemini_json(system_prompt, schema=wled_schema, temperature=0.85)
+
+    def execute(self, user_text, conversation_history=""):
+        logging.info(f"🎨 Dual-Zone AI: '{user_text}'")
+        full_scene = self._get_ai_dual_decision(user_text, conversation_history)
+        
+        if not full_scene: return
+        
+        # AICI VOM VEDEA DE CE A ALES EFECTELE
+        logging.info(f"💡 LOGICĂ WLED: {full_scene.get('reasoning', 'Fără explicație')}")
+
+        try:
+            with ThreadPoolExecutor() as executor:
+                if "main" in full_scene:
+                    executor.submit(self._send_request, WLED_IP_MAIN, full_scene["main"])
+                if "floor" in full_scene:
+                    executor.submit(self._send_request, WLED_IP_FLOOR, full_scene["floor"])
+        except Exception as e:
+            logging.error(f"Eroare execuție WLED: {e}")
 
         # SCHEMA STRICTĂ PENTRU LUMINILE WLED
         wled_schema = {
@@ -167,8 +223,6 @@ class WLEDDispatcher:
                 }
             }
         }
-
-        return ask_gemini_json(system_prompt, schema=wled_schema, temperature=0.85)
 
     def _send_request(self, ip, data):
         try:

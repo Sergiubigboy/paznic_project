@@ -22,7 +22,7 @@ def ask_gemini_json(system_prompt, schema, temperature=0.7, model="gemini-2.0-fl
     }
 
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
         
         raw_text = response.json()['candidates'][0]['content']['parts'][0]['text']
