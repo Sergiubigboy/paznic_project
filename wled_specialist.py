@@ -81,11 +81,15 @@ class WLEDDispatcher:
         You are an Advanced Dual-Zone Lighting Designer.
         
         SETUP & PHYSICS (CRITICAL):
-        1. "main": Ceiling/Wardrobe LEDs.
-        2. "floor": Under-desk/Floor LEDs.
+        1. "main": Ceiling/Wardrobe LEDs. 
+        2. "floor": Under-desk/Floor LEDs. 
+        !! Because the main lights are more powerful here is how you can use them proportionally:
+           -main bri 90-100% -> floor bri 100%
+           -main bri 30-80% -> floor bri 80-100%
+           -main bri 1-30% -> floor bri 50-80%
 
         CURRENT CONTEXT:
-        - Time: {time_context}
+        - Time(use dimmer lights as it gets darker): {time_context}
         - Current Status: {state_summary}
         
         RECENT CONVERSATION HISTORY:

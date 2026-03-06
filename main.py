@@ -46,7 +46,6 @@ def main():
         logging.critical(f"Lipsește fișierul keyword Picovoice: {KEYWORD_PATH}")
         sys.exit(1)
 
-    # Inițializăm specialiștii o singură dată
     wled_mechanic = WLEDStateManager()
     music_expert = MusicHandler()
     dispatcher = CommandDispatcher(music_expert, wled_mechanic)
@@ -56,16 +55,28 @@ def main():
     sock.bind(("0.0.0.0", UDP_PORT))
     sock.settimeout(0.05)
 
-    logging.info("🚀 CHRONOS CORE pornit. Aștept Wake Word ('Guardian')...")
+    logging.info("🚀 CHRONOS CORE pornit.")
+    
+    # === VERIFICĂ ZILELE LIPSĂ IMEDIAT LA PORNIRE ===
+    dispatcher.jural_expert.check_and_generate_missing_summaries()
+
+    logging.info("Aștept Wake Word ('Guardian')...")
 
     audio_buffer = []
     recording_buffer = []
     is_recording = False
     silence_start = None
     record_start = None
+    
+    last_summary_check = time.time()
 
     try:
         while True:
+            # === VERIFICARE PERIODICĂ (O DATĂ PE ORĂ) ===
+            if time.time() - last_summary_check > 3600:
+                dispatcher.jural_expert.check_and_generate_missing_summaries()
+                last_summary_check = time.time()
+
             try:
                 data, _ = sock.recvfrom(2048)
             except socket.timeout:
@@ -83,11 +94,9 @@ def main():
                         
                         if porcupine.process(frame) >= 0:
                             logging.info("🎤 Wake Word Detectat! Ascult...")
-                            
-                            # ACȚIUNILE IMEDIATE LA WAKE WORD
                             wled_mechanic.save_state()            
                             wled_mechanic.start_loading_animation() 
-                            music_expert.pause_playback() # OPREȘTE MUZICA
+                            music_expert.pause_playback() 
 
                             is_recording = True
                             recording_buffer = []
@@ -98,14 +107,12 @@ def main():
                     recording_buffer.extend(chunk)
                     amplitude = sum(abs(x) for x in chunk) / len(chunk)
                     
-                    # Verificăm dacă vorbește
                     if amplitude > SILENCE_THRESHOLD:
                         silence_start = time.time()
                     
                     duration = time.time() - record_start
                     silence_duration = time.time() - silence_start
 
-                    # A terminat de vorbit
                     if duration > MIN_RECORD_SECONDS and (silence_duration > SILENCE_DURATION or duration > MAX_RECORD_SECONDS):
                         logging.info("Procesare comandă...")
                         is_recording = False
@@ -117,20 +124,16 @@ def main():
                             wf.setframerate(SAMPLE_RATE)
                             wf.writeframes(struct.pack("h" * len(recording_buffer), *recording_buffer))
 
-                        # 1. Transcriere
                         text = transcribe_audio(TEMP_WAV)
                         
-                        # 2. Trimitem la creier pentru decizie
                         if text:
                             should_restore = dispatcher.process_text_command(text, sock)
                             if should_restore:
                                 logging.info("Revin la luminile anterioare...")
                                 wled_mechanic.restore_state()
                         else:
-                            # Dacă n-a înțeles nimic, revine la normal
                             wled_mechanic.restore_state()
                         
-                        # 3. Reluăm muzica DOAR dacă nu a dat o comandă de control muzical
                         cuvinte_muzica = ["pune", "bagă", "schimbă", "stop", "oprește", "oprit", "muzic", "pauză", "pauza", "next", "următoarea", "sari", "lasă"]
                         if text and not any(kw in text.lower() for kw in cuvinte_muzica):
                             music_expert.resume_playback()
