@@ -182,3 +182,113 @@ h1 span { color: var(--primary); }
     padding: 40px;
     display: none;
 }
+
+/* NAVBAR */
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: var(--card-bg);
+    padding: 15px 30px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 30px;
+}
+
+.nav-brand {
+    font-size: 20px;
+    font-weight: 700;
+    color: white;
+}
+
+.nav-brand span { color: var(--primary); }
+
+.nav-links a {
+    color: var(--text-muted);
+    text-decoration: none;
+    margin-left: 20px;
+    font-weight: 600;
+    transition: color 0.2s;
+}
+
+.nav-links a:hover, .nav-links a.active {
+    color: var(--primary);
+}
+
+/* TARGETS GRID */
+.targets-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+.target-card {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+}
+
+.target-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+}
+
+.target-header h3 { margin: 0; color: white; font-size: 18px; }
+
+.target-priority {
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.target-details { font-size: 14px; color: var(--text-muted); margin-bottom: 15px; }
+
+.target-progress-container {
+    background-color: #0b0b0e;
+    height: 10px;
+    border-radius: 5px;
+    overflow: hidden;
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+}
+
+.progress-bar {
+    background-color: var(--primary);
+    height: 100%;
+    transition: width 0.4s ease;
+}
+
+.target-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.progress-input {
+    width: 60px;
+    background-color: #0b0b0e;
+    border: 1px solid var(--border);
+    color: white;
+    padding: 8px;
+    border-radius: 6px;
+    text-align: center;
+}
+
+.target-btn {
+    padding: 8px 12px;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.2s;
+    font-size: 13px;
+}
+
+.save-btn { background-color: rgba(255,255,255,0.1); color: white; }
+.save-btn:hover { background-color: rgba(255,255,255,0.2); }
+
+.complete-btn { background-color: #2ed57322; color: #2ed573; border: 1px solid #2ed573; }
+.complete-btn:hover { background-color: #2ed573; color: #000; }

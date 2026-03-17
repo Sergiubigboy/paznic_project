@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chronos OS | Targeturi</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<nav class="navbar">
+    <div class="nav-brand">Chronos <span>OS</span></div>
+    <div class="nav-links">
+        <a href="/">📘 Jurnal</a>
+        <a href="/targets" class="active">🎯 Targeturi</a>
+    </div>
+</nav>
+
+<div class="container">
+    <h2 style="margin-bottom: 20px; border-bottom: 2px solid var(--primary); padding-bottom: 10px; display: inline-block;">Obiective Active</h2>
+    <div id="targetsContainer" class="targets-grid">
+        </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/targets.js') }}"></script>
+</body>
+</html>

@@ -211,9 +211,10 @@ class JournalCore:
         {combined_text}
 
         REGULI STRICTE:
-        1. short_summary: Care e ESENȚA zilei? (nu enumera robotic activitățile). Cum s-a simțit?
-        2. judge_feedback: Fii TĂIOS, obiectiv, fără laude ieftine. Dacă muncește dar se simte gol/inutil, zdruncină-l un pic mental, zi-i adevărul.
-        
+        1. short_summary: Care e ESENȚA zilei? (nu enumera robotic activitățile). Cum s-a simțit? 
+        2. judge_feedback: Fii TĂIOS, obiectiv, fără laude ieftine. Dacă muncește dar se simte gol/inutil, zdruncină-l un pic mental, zi-i adevărul. 
+        3. RASPUNDE IN LIMBA ROMANA!!!
+
         SISTEM DE SCORING (1-10):
         - execution: Cât a muncit / disciplina.
         - fulfillment: Cât de împlinit și util s-a simțit (1 = depresie/gol interior, 10 = sens maxim).

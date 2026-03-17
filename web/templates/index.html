@@ -8,21 +8,23 @@
 </head>
 <body>
 
-<div class="container">
-    <header>
-        <h1>Chronos <span>OS</span></h1>
-    </header>
+<nav class="navbar">
+    <div class="nav-brand">Chronos <span>OS</span></div>
+    <div class="nav-links">
+        <a href="/" class="active">📘 Jurnal</a>
+        <a href="/targets">🎯 Targeturi</a>
+    </div>
+</nav>
 
+<div class="container">
     <div class="search-container">
-        <input type="text" id="searchInput" placeholder="Caută 'trist', 'școală', sau 'productivitate 9'...">
+        <input type="text" id="searchInput" placeholder="Caută stări, rezumate, sau 'execuție 9'...">
     </div>
 
-    <div id="logsContainer">
-        </div>
+    <div id="logsContainer"></div>
     <div id="noResults" class="no-results">Nu am găsit niciun log care să corespundă căutării.</div>
 </div>
 
 <script src="{{ url_for('static', filename='js/script.js') }}"></script>
-
 </body>
 </html>
