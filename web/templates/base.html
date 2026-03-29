@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Chronos OS{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="page-{{ active_page | default('') }}">
+
+<!-- ===== NAVBAR ===== -->
+<nav class="navbar">
+    <a href="/day" class="nav-brand">
+        Chronos <span class="brand-dot">●</span>
+        <span class="brand-sub">OS</span>
+    </a>
+    <div class="nav-links">
+        <a href="/day"     {% if active_page == 'day'      %}class="active"{% endif %}>
+            <span class="nav-icon">🌅</span> Azi</a>
+        <a href="/"        {% if active_page == 'journal'  %}class="active"{% endif %}>
+            <span class="nav-icon">📘</span> Jurnal</a>
+        <a href="/targets" {% if active_page == 'targets'  %}class="active"{% endif %}>
+            <span class="nav-icon">🎯</span> Targeturi</a>
+        <a href="/gym"     {% if active_page == 'gym'      %}class="active"{% endif %}>
+            <span class="nav-icon">💪</span> Fitness</a>
+        <a href="/terminal"{% if active_page == 'terminal' %}class="active"{% endif %}>
+            <span class="nav-icon">⌨️</span> Terminal</a>
+    </div>
+    <button class="hamburger" id="hamburgerBtn" aria-label="Menu">
+        <span></span><span></span><span></span>
+    </button>
+</nav>
+
+<!-- ===== MOBILE NAV ===== -->
+<div class="mobile-nav" id="mobileNav">
+    <a href="/day"     {% if active_page == 'day'      %}class="active"{% endif %}><span>🌅</span> Azi</a>
+    <a href="/"        {% if active_page == 'journal'  %}class="active"{% endif %}><span>📘</span> Jurnal</a>
+    <a href="/targets" {% if active_page == 'targets'  %}class="active"{% endif %}><span>🎯</span> Targeturi</a>
+    <a href="/gym"     {% if active_page == 'gym'      %}class="active"{% endif %}><span>💪</span> Fitness</a>
+    <a href="/terminal"{% if active_page == 'terminal' %}class="active"{% endif %}><span>⌨️</span> Terminal</a>
+</div>
+
+<!-- ===== GLOBAL STATUS STRIP ===== -->
+<div class="status-strip" id="statusStrip">
+    <a href="/gym" class="status-pill" id="sp-weight" title="Greutate azi">
+        <span class="sp-icon">⚖️</span>
+        <span class="sp-val" id="spv-weight">…</span>
+    </a>
+    <a href="/day" class="status-pill" id="sp-screen" title="Screen time azi">
+        <span class="sp-icon">📱</span>
+        <span class="sp-val" id="spv-screen">…</span>
+    </a>
+    <a href="/gym" class="status-pill" id="sp-food" title="Alimentație azi">
+        <span class="sp-icon">🍽️</span>
+        <span class="sp-val" id="spv-food">…</span>
+    </a>
+    <a href="/" class="status-pill" id="sp-journal" title="Jurnal azi">
+        <span class="sp-icon">📘</span>
+        <span class="sp-val" id="spv-journal">…</span>
+    </a>
+    <div class="status-pill-spacer"></div>
+    <div class="status-day-progress" title="Progres zi">
+        <div class="sdp-bar"><div class="sdp-fill" id="dayProgressFill" style="width:0%"></div></div>
+        <span class="sdp-txt" id="dayProgressTxt">0/4</span>
+    </div>
+</div>
+
+<!-- ===== PAGE CONTENT ===== -->
+{% block content %}{% endblock %}
+
+<!-- ===== SHARED ELEMENTS ===== -->
+<div id="flashMsg" class="flash-msg"></div>
+<div id="lightbox" class="lightbox">
+    <button class="lightbox-close" onclick="closeLightbox()">✕</button>
+    <img id="lightboxImg" src="" alt="">
+    <div id="lightboxCaption"></div>
+</div>
+
+<script src="{{ url_for('static', filename='js/shared.js') }}"></script>
+<script src="{{ url_for('static', filename='js/daily-status.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

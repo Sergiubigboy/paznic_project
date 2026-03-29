@@ -3,6 +3,7 @@ from spotipy.oauth2 import SpotifyOAuth
 import logging
 import json
 import os
+import random
 import traceback
 import time
 from datetime import datetime
@@ -21,10 +22,10 @@ class MusicHandler:
     def __init__(self):
         self.sp = None
         self.strategy = self._load_text(STRATEGY_FILE)
-        self.user_taste_profile = "" 
+        self.user_taste_profile = ""
         self.play_history = self._load_history()
         self.was_playing_before_pause = False
-        
+
         try:
             self.sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
                 client_id=SPOTIFY_CLIENT_ID,
@@ -35,7 +36,7 @@ class MusicHandler:
             ))
             print(f"✅ [DEBUG] Spotify Conectat.")
             self._analyze_user_taste()
-            
+
         except Exception as e:
             print(f"❌ [CRITICAL] Eroare Auth Spotify: {e}")
 
@@ -77,10 +78,10 @@ class MusicHandler:
         try:
             short = self.sp.current_user_top_tracks(limit=5, time_range='short_term')
             short_str = ", ".join([f"{t['name']} ({t['artists'][0]['name']})" for t in short['items']])
-            
+
             medium = self.sp.current_user_top_tracks(limit=5, time_range='medium_term')
             medium_str = ", ".join([f"{t['name']} ({t['artists'][0]['name']})" for t in medium['items']])
-            
+
             long = self.sp.current_user_top_tracks(limit=5, time_range='long_term')
             long_str = ", ".join([f"{t['name']} ({t['artists'][0]['name']})" for t in long['items']])
 
@@ -103,12 +104,11 @@ class MusicHandler:
         try:
             dev_id = self._get_device_id()
             if not dev_id: return
-            
-            # Verificăm dacă chiar cântă ceva
+
             current = self.sp.current_playback()
             if current and current.get('is_playing'):
                 self.sp.pause_playback(device_id=dev_id)
-                self.was_playing_before_pause = True # Ținem minte să o repornim
+                self.was_playing_before_pause = True
                 logging.info("⏸️ Muzică pusă pe pauză pentru a asculta.")
             else:
                 self.was_playing_before_pause = False
@@ -132,30 +132,38 @@ class MusicHandler:
         if 5 <= hour < 12: return "MORNING (Wake Up / Energize / Start Day)"
         elif 12 <= hour < 18: return "AFTERNOON (Focus / Vibe / Activity)"
         elif 18 <= hour < 22: return "EVENING (Chill / Social / Pre-Party)"
-        else: return "LATE NIGHT (Deep / pshihedelic / Introspective / Bedroom Flow)"
+        else: return "LATE NIGHT (Deep / Psychedelic / Introspective / Bedroom Flow)"
 
     def _ask_gemini_dj(self, user_text, conversation_history):
         time_context = self._get_time_context()
         current_time = datetime.now().strftime("%H:%M")
         history_str = ", ".join(self.play_history) if self.play_history else "No recent tracks played yet."
-        
+        rand_seed = random.random()  # forțăm variație la fiecare call
+
         system_prompt = f"""
         ROLE: Elite Music Curator & Playback Controller.
-        
+
         CURRENT TIME: {current_time}
         TIME VIBE: {time_context}
-        
+        RANDOM SEED (ignore this, it's just to prevent caching): {rand_seed}
+
         RECENT CONVERSATION HISTORY:
         {conversation_history}
-        
+
         USER PROFILE:
         {self.user_taste_profile}
 
-        BANNED TRACKS (RECENTLY PLAYED):
+        BANNED TRACKS (RECENTLY PLAYED - NEVER PICK THESE):
         {history_str}
 
         GOLDEN RULES:
         {self.strategy}
+
+        VARIETY RULES (CRITICAL):
+        - NEVER suggest overplayed mainstream hits or anything in the BANNED list above.
+        - Be ADVENTUROUS. Dig deep into the catalog — B-sides, deep cuts, underground tracks, rare gems.
+        - Think like a music nerd who never repeats themselves. Surprise the user.
+        - Avoid the obvious choice. If Moon by Kanye was played, pick something completely different in vibe.
 
         CURRENT REQUEST: "{user_text}"
 
@@ -164,9 +172,9 @@ class MusicHandler:
         2. If they want to pause ("pune pauză", "oprește", "taci"), return mode "pause".
         3. If they want to skip ("next", "următoarea", "alta"), return mode "next".
         4. If they want to resume ("dă-i drumul", "continuă", "play"), return mode "resume".
-        5. Otherwise, pick a real song/playlist that fits the mood.
+        5. Otherwise, pick a FRESH, UNEXPECTED song/playlist that fits the mood.
         """
-        
+
         dj_schema = {
             "type": "OBJECT",
             "properties": {
@@ -177,8 +185,7 @@ class MusicHandler:
             "required": ["mode", "reason"]
         }
 
-        # BUMP LA GEMINI 2.5 FLASH PENTRU GUSTURI MAI BUNE (Mijlocul perfect)
-        return ask_gemini_json(system_prompt, schema=dj_schema, temperature=0.2, model="gemini-2.5-flash")
+        return ask_gemini_json(system_prompt, schema=dj_schema, temperature=0.9, model="gemini-2.5-flash")
 
     def process_command(self, user_text, conversation_history=""):
         decision = self._ask_gemini_dj(user_text, conversation_history)
@@ -187,31 +194,29 @@ class MusicHandler:
         mode = decision.get('mode')
         query = decision.get('query', '')
         reason = decision.get('reason')
-        
+
         print(f"\n🧠 RAȚIONAMENT AI (2.5 Flash): {reason}")
         print(f"🤖 ACȚIUNE [{mode.upper()}]: {query if query else 'N/A'}")
-        
+
         dev_id = self._get_device_id()
-        if not dev_id: 
+        if not dev_id:
             print("❌ Nu găsesc boxa Spotify activă.")
             return
-            
+
         try:
             # --- COMENZI DE CONTROL PLAYBACK ---
             if mode == 'pause':
                 self.sp.pause_playback(device_id=dev_id)
                 print("⏸️ Playback oprit din voce.")
-                # Foarte important: anulăm reluarea automată din main.py
-                self.was_playing_before_pause = False 
+                self.was_playing_before_pause = False
                 return
-                
+
             elif mode == 'next':
                 self.sp.next_track(device_id=dev_id)
                 print("⏭️ Piesa următoare.")
-                # Dacă dai next, vrei să și cânte
-                self.was_playing_before_pause = True 
+                self.was_playing_before_pause = True
                 return
-                
+
             elif mode == 'resume':
                 self.sp.start_playback(device_id=dev_id)
                 print("▶️ Playback reluat.")
@@ -227,7 +232,7 @@ class MusicHandler:
                     self.sp.shuffle(True, device_id=dev_id)
                     self.sp.start_playback(device_id=dev_id, context_uri=playlist['uri'])
                     print("✅ Playlist pornit.")
-                    self.was_playing_before_pause = False # Evităm resume-ul dublu
+                    self.was_playing_before_pause = False
                     self._add_to_history(f"Playlist: {playlist['name']}")
                 else: print("❌ Nu am găsit playlist.")
 
@@ -237,12 +242,12 @@ class MusicHandler:
                     track = results['tracks']['items'][0]
                     track_fullname = f"{track['name']} - {track['artists'][0]['name']}"
                     print(f"➕ Adaug la Queue: {track_fullname}")
-                    
+
                     self.sp.add_to_queue(track['uri'], device_id=dev_id)
-                    time.sleep(0.5) 
+                    time.sleep(0.5)
                     self.sp.next_track(device_id=dev_id)
                     print(f"✅ Piesa a intrat! Enjoy.")
-                    self.was_playing_before_pause = False # Evităm resume-ul dublu
+                    self.was_playing_before_pause = False
                     self._add_to_history(track_fullname)
                 else: print("❌ Nu am găsit piesa.")
 

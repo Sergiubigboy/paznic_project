@@ -1,30 +1,167 @@
-<!DOCTYPE html>
-<html lang="ro">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chronos OS | Jurnal</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body>
+{% extends "base.html" %}
+{% set active_page = "journal" %}
 
-<nav class="navbar">
-    <div class="nav-brand">Chronos <span>OS</span></div>
-    <div class="nav-links">
-        <a href="/" class="active">📘 Jurnal</a>
-        <a href="/targets">🎯 Targeturi</a>
-    </div>
-</nav>
+{% block title %}Chronos OS | Jurnal{% endblock %}
 
+{% block content %}
 <div class="container">
-    <div class="search-container">
-        <input type="text" id="searchInput" placeholder="Caută stări, rezumate, sau 'execuție 9'...">
-    </div>
+    <div class="layout-split">
 
-    <div id="logsContainer"></div>
-    <div id="noResults" class="no-results">Nu am găsit niciun log care să corespundă căutării.</div>
+        <!-- MAIN COLUMN -->
+        <div class="main-col">
+
+            <!-- Input Card -->
+            <div class="journal-input-card">
+                <h3>✏️ Adaugă în Jurnal</h3>
+
+                <textarea id="newEntryText" placeholder="Ce s-a întâmplat azi? Cum te simți? Scrie liber..."></textarea>
+
+                <!-- Date picker -->
+                <div class="journal-date-section">
+                    <div class="form-label" style="margin-bottom:7px">📅 Dată</div>
+                    <div class="quick-date-row">
+                        <button class="date-quick-btn active" onclick="setJournalQuickDate(0,this)">Azi</button>
+                        <button class="date-quick-btn" onclick="setJournalQuickDate(-1,this)">Ieri</button>
+                        <button class="date-quick-btn" onclick="setJournalQuickDate(-2,this)">-2z</button>
+                        <button class="date-quick-btn" onclick="setJournalQuickDate(-3,this)">-3z</button>
+                        <span class="date-sep">sau</span>
+                        <input type="date" id="entryDate" class="form-input" style="max-width:150px;resize:none;min-height:0;padding:6px 10px"
+                               onchange="onManualDateChange()">
+                    </div>
+                    <div id="entryDateDisplay" class="entry-date-display">📅 Azi</div>
+                </div>
+
+                <!-- Photo slots -->
+                <div class="journal-photo-section">
+                    <div class="form-label" style="margin-bottom:7px">📷 Poze zi (max 3, opțional)</div>
+                    <div class="journal-photo-row">
+                        <div class="journal-photo-slot" onclick="triggerJournalPhotoInput(0)" id="jSlot0">
+                            <div class="jslot-icon">+</div>
+                            <div class="jslot-label">Poză 1</div>
+                        </div>
+                        <div class="journal-photo-slot" onclick="triggerJournalPhotoInput(1)" id="jSlot1">
+                            <div class="jslot-icon">+</div>
+                            <div class="jslot-label">Poză 2</div>
+                        </div>
+                        <div class="journal-photo-slot" onclick="triggerJournalPhotoInput(2)" id="jSlot2">
+                            <div class="jslot-icon">+</div>
+                            <div class="jslot-label">Poză 3</div>
+                        </div>
+                        <input type="file" id="jPhotoInput0" accept="image/*" style="display:none" onchange="handleJournalPhotoSelect(event,0)">
+                        <input type="file" id="jPhotoInput1" accept="image/*" style="display:none" onchange="handleJournalPhotoSelect(event,1)">
+                        <input type="file" id="jPhotoInput2" accept="image/*" style="display:none" onchange="handleJournalPhotoSelect(event,2)">
+                    </div>
+                    <div id="journalPhotoStatus" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+                </div>
+
+                <div class="btn-row" style="margin-top:12px">
+                    <button id="submitEntryBtn" class="btn btn-primary">💾 Salvează</button>
+                    <button id="rejudgeAfterSaveBtn" class="btn btn-teal" style="display:none">🔄 Re-judecă</button>
+                </div>
+                <div id="entryStatus" style="margin-top:8px;font-size:12px;color:var(--text-muted);display:none;"></div>
+            </div>
+
+            <!-- Search -->
+            <div class="search-box">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="searchInput" placeholder="Caută în jurnal...">
+            </div>
+
+            <!-- Logs -->
+            <div id="logsContainer"></div>
+            <div id="noResults" class="empty-state no-results">Nu am găsit nimic.</div>
+        </div>
+
+        <!-- SIDEBAR -->
+        <div class="sidebar-sticky">
+
+            <!-- Today status snapshot -->
+            <div class="sidebar-card" id="sidebarTodayStatus">
+                <div class="card-title" style="margin-bottom:12px">📊 Status Azi</div>
+                <div id="sidebarStatusItems">
+                    <div class="empty-state" style="padding:10px 0">Se încarcă...</div>
+                </div>
+                <a href="/day" class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;margin-top:10px">
+                    Hub Zilnic →
+                </a>
+            </div>
+
+            <div class="sidebar-card">
+                <div class="card-title" style="margin-bottom:12px">🎯 Targeturi Active</div>
+                <div id="sidebarTargets"><div class="empty-state">Se încarcă...</div></div>
+                <a href="/targets" class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;margin-top:10px">
+                    Gestionează →
+                </a>
+            </div>
+
+        </div>
+    </div>
 </div>
 
+<!-- SCORE EDIT MODAL -->
+<div id="scoreEditModal" class="modal-overlay">
+    <div class="modal modal-wide">
+        <h2>✏️ Editează Scoruri</h2>
+        <div id="scoreEditDate" style="font-size:12px;color:var(--text-muted);margin-bottom:16px"></div>
+        <div id="scoreSliders"></div>
+        <div class="btn-row" style="margin-top:18px">
+            <button class="btn btn-primary" onclick="saveScores()">💾 Salvează</button>
+            <button class="btn btn-secondary" onclick="closeScoreModal()">Anulează</button>
+        </div>
+    </div>
+</div>
+
+<!-- ADD PHOTO TO ENTRY MODAL -->
+<div id="entryPhotoModal" class="modal-overlay">
+    <div class="modal">
+        <h2>📷 Adaugă Poze la Zi</h2>
+        <div id="entryPhotoDate" style="font-size:12px;color:var(--text-muted);margin-bottom:16px"></div>
+        <div class="upload-drop" onclick="document.getElementById('entryPhotoFileInput').click()">
+            <div class="upload-drop-icon">📁</div>
+            <div class="upload-drop-txt">Click sau trage pozele</div>
+            <div class="upload-drop-sub">JPG, PNG, HEIC, WEBP</div>
+            <input type="file" id="entryPhotoFileInput" multiple accept="image/*" style="display:none" onchange="handleEntryPhotoSelect(event)">
+        </div>
+        <div id="entryPhotoPreviewGrid" class="upload-preview-grid"></div>
+        <div id="entryUploadProgress" style="display:none;margin-top:10px">
+            <div class="upload-prog-bar"><div id="entryUploadFill" class="upload-prog-fill"></div></div>
+        </div>
+        <div class="btn-row" style="margin-top:16px">
+            <button class="btn btn-primary" onclick="doEntryPhotoUpload()">📤 Încarcă</button>
+            <button class="btn btn-secondary" onclick="closeModal('entryPhotoModal')">Anulează</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script src="{{ url_for('static', filename='js/script.js') }}"></script>
-</body>
-</html>
+<script>
+// Populate sidebar today status from day status data
+document.addEventListener('dayStatusLoaded', (e) => {
+    const s = e.detail;
+    const el = document.getElementById('sidebarStatusItems');
+    if (!el) return;
+
+    const items = [
+        { icon: '⚖️', label: 'Greutate', done: s.weight?.logged, val: s.weight?.logged ? s.weight.value + ' kg' : (s.last_weight_ever ? s.last_weight_ever + ' kg' : '—'), href: '/gym' },
+        { icon: '📱', label: 'Screen time', done: s.screen_time?.logged, val: s.screen_time?.logged ? fmtMinsStr(s.screen_time.minutes) : '—', href: '/day' },
+        { icon: '🍽️', label: 'Alimentație', done: s.food_check?.logged, val: s.food_check?.logged ? s.food_check.level.replace('_', ' ') : '—', href: '/day' },
+    ];
+
+    el.innerHTML = items.map(item => `
+        <a href="${item.href}" style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);text-decoration:none">
+            <span style="font-size:16px">${item.icon}</span>
+            <span style="font-size:12px;color:var(--text-muted);flex:1">${item.label}</span>
+            <span style="font-size:12px;font-weight:800;color:${item.done ? 'var(--green)' : 'var(--text-faint)'}">${item.val}</span>
+            ${item.done ? '<span style="color:var(--green);font-size:10px">✓</span>' : ''}
+        </a>
+    `).join('') + '<div style="border-bottom:none"></div>';
+});
+
+function fmtMinsStr(m) {
+    const h = Math.floor(m / 60), min = m % 60;
+    return min > 0 ? `${h}h ${min}m` : `${h}h`;
+}
+</script>
+{% endblock %}

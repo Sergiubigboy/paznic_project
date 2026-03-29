@@ -1,94 +1,123 @@
 import os
 import json
 import time
+import glob
+from datetime import datetime
 from ai_core import ask_gemini_json
+from logger_specialist import JUDGMENT_SCHEMA
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "chronos_data", "logs")
+TARGETS_FILE = os.path.join(BASE_DIR, "chronos_data", "targets.json")
 
 def reprocess_all_logs():
-    print("🔄 Încep reprocesarea logurilor vechi cu noul Creier Analitic...")
-    
+    print("🔄 Încep reprocesarea logurilor cu noul sistem psihologic...")
+
     if not os.path.exists(LOGS_DIR):
         print("❌ Nu am găsit folderul de loguri.")
         return
 
-    for filename in os.listdir(LOGS_DIR):
-        if not filename.endswith(".jsonl") or filename.startswith("reprocessed_"):
+    # Load targets for context
+    try:
+        with open(TARGETS_FILE, 'r', encoding='utf-8') as f:
+            tdata = json.load(f)
+        targets_list = tdata.get('goals', [])
+        targets_context = "\n".join([f"- [{g.get('priority','?')}] {g['title']} (progres: {g.get('progress',0)}%)" for g in targets_list]) or "Niciun target activ."
+    except:
+        targets_context = "Targeturile nu au putut fi încărcate."
+
+    for filename in sorted(glob.glob(os.path.join(LOGS_DIR, "*.jsonl"))):
+        if os.path.basename(filename).startswith("reprocessed_"):
             continue
-            
-        file_path = os.path.join(LOGS_DIR, filename)
-        new_file_path = os.path.join(LOGS_DIR, f"reprocessed_{filename}")
-        
-        print(f"\n📂 Procesez fișierul: {filename}")
-        
-        with open(file_path, 'r', encoding='utf-8') as f_in, open(new_file_path, 'w', encoding='utf-8') as f_out:
-            for line in f_in:
-                if not line.strip(): continue
+
+        print(f"\n📂 Procesez: {filename}")
+
+        # Group daily_entries by logical_date, keep daily_summary positions
+        entries_by_date = {}
+        all_lines_info = []  # list of (line_str, parsed_data_or_None)
+
+        with open(filename, 'r', encoding='utf-8') as f:
+            raw_lines = [l for l in f.readlines() if l.strip()]
+
+        for line in raw_lines:
+            try:
+                data = json.loads(line)
+                ldate = data.get("logical_date", "")
+                if data.get("type") == "daily_entry" and ldate:
+                    if ldate not in entries_by_date:
+                        entries_by_date[ldate] = []
+                    dt_obj = datetime.fromisoformat(data["timestamp"])
+                    entries_by_date[ldate].append(f"[{dt_obj.strftime('%H:%M')}] {data['raw_text']}")
+                all_lines_info.append((line, data))
+            except:
+                all_lines_info.append((line, None))
+
+        new_lines = []
+        processed_dates = set()
+
+        for line, data in all_lines_info:
+            if data is None:
+                new_lines.append(line)
+                continue
+
+            if data.get("type") == "daily_summary":
+                ldate = data.get("logical_date", "")
+                if ldate in processed_dates:
+                    # Already processed, skip duplicate
+                    continue
+
+                logs_list = entries_by_date.get(ldate, [])
+                if not logs_list:
+                    # No raw entries found for this summary, keep original
+                    new_lines.append(line)
+                    continue
+
+                combined_text = "\n".join(logs_list)
+                print(f"   🔁 Re-analiza pentru {ldate}...")
+
+                prompt = f"""
+                ROL: Psiholog sincer și empatic, cunoscut ca "Chronos".
                 
-                try:
-                    data = json.loads(line)
-                    raw_text = data.get("raw_text", "")
-                    if not raw_text: continue
-                    
-                    print(f"   Analizez logul din: {data['timestamp']}...")
+                TARGETURILE ACTIVE:
+                {targets_context}
+                
+                LOGURILE ZILEI {ldate}:
+                {combined_text}
+                
+                INSTRUCȚIUNI:
+                1. short_summary: 2-3 propoziții care surprind ESENȚA zilei, nu o listă de activități.
+                2. psychologist_feedback: 3-5 propoziții empatice dar sincere. Pune o întrebare bună la final.
+                3. what_went_well: 1-3 lucruri concrete pozitive.
+                4. pattern_alert: Un pattern negativ observat, sau "Niciun pattern negativ semnificativ azi." dacă nu există.
+                5. tags: 3-6 cuvinte cheie în română (ex: epuizare, conexiune_sociala, progres, gol_interior)
+                6. RĂSPUNDE EXCLUSIV ÎN ROMÂNĂ!
+                """
 
-                    prompt = f"""
-                    ROL: "The Judge" - Profilator Psihologic. 
-                    SARCINĂ: Evaluează acest text vechi din jurnalul utilizatorului.
-                    TEXT RAW: "{raw_text}"
-                    
-                    REGULI CRITICE:
-                    1. short_summary: Extrage ESENȚA. Ce a făcut ziua asta diferită? Cum s-a simțit? Nu înșira mecanic activitățile (ex: "a fost la școală, apoi la sală"), ci surprinde starea (ex: "A fost o zi plină, dar se simte limitat și caută mai mult sens în activitățile lui").
-                    2. judge_feedback: Brutal de sincer. Dacă simte un gol interior deși a muncit, subliniază asta. Fără laudă ieftină.
-                    3. Toate textele STRICT în limba română.
+                new_analysis = ask_gemini_json(prompt, schema=JUDGMENT_SCHEMA, temperature=0.6, model="gemini-2.5-flash")
 
-                    SCORURI (1-10):
-                    - execution: Cât de disciplinat a fost / cât a muncit fizic.
-                    - fulfillment: Cât de util/împlinit sufletește se simte (scade dacă face lucruri mecanic).
-                    - mental_load: Nivelul de stres / copleșire (10 = maxim).
-                    - dopamine_control: Cum a rezistat tentațiilor (telefon/scroll).
-                    """
-                    
-                    schema = {
-                        "type": "OBJECT",
-                        "properties": {
-                            "scores": {
-                                "type": "OBJECT",
-                                "properties": {
-                                    "execution": {"type": "INTEGER"},
-                                    "fulfillment": {"type": "INTEGER"},
-                                    "mental_load": {"type": "INTEGER"},
-                                    "dopamine_control": {"type": "INTEGER"}
-                                },
-                                "required": ["execution", "fulfillment", "mental_load", "dopamine_control"]
-                            },
-                            "tags": {"type": "ARRAY", "items": {"type": "STRING"}},
-                            "quote": {"type": "STRING"},
-                            "short_summary": {"type": "STRING"},
-                            "judge_feedback": {"type": "STRING"}
-                        },
-                        "required": ["scores", "tags", "quote", "short_summary", "judge_feedback"]
-                    }
-                    
-                    new_analysis = ask_gemini_json(prompt, schema=schema, temperature=0.6, model="gemini-2.5-flash")
-                    
-                    if new_analysis:
-                        data["analysis"] = new_analysis
-                        f_out.write(json.dumps(data, ensure_ascii=False) + "\n")
-                        print("   ✅ Actualizat cu succes.")
-                    else:
-                        print("   ❌ Eșec la procesare AI. Păstrez vechiul log.")
-                        f_out.write(line)
-                        
-                    time.sleep(2) # Evităm rate-limitul la Google API
-                    
-                except Exception as e:
-                    print(f"   ⚠️ Eroare: {e}")
-                    f_out.write(line) # Păstrăm linia originală dacă dă eroare
-                    
-        print(f"✅ Fișier salvat ca {new_file_path}")
-        print("💡 Poți șterge fișierul original și să îl redenumești pe cel 'reprocessed_' după ce verifici că e ok.")
+                if new_analysis:
+                    data["analysis"] = new_analysis
+                    data["combined_text"] = combined_text
+                    new_lines.append(json.dumps(data, ensure_ascii=False) + "\n")
+                    processed_dates.add(ldate)
+                    print(f"   ✅ {ldate} re-analizat cu succes.")
+                else:
+                    print(f"   ❌ Eșec AI pentru {ldate}. Păstrez vechiul.")
+                    new_lines.append(line)
+                    processed_dates.add(ldate)
+
+                time.sleep(3)  # Rate limiting
+
+            else:
+                new_lines.append(line)
+
+        # Write back
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.writelines(new_lines)
+
+        print(f"✅ Fișier actualizat: {filename}")
+
+    print("\n🎉 Reprocesare completă!")
 
 if __name__ == "__main__":
     reprocess_all_logs()

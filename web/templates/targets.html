@@ -1,27 +1,73 @@
-<!DOCTYPE html>
-<html lang="ro">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chronos OS | Targeturi</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body>
+{% extends "base.html" %}
+{% set active_page = "targets" %}
 
-<nav class="navbar">
-    <div class="nav-brand">Chronos <span>OS</span></div>
-    <div class="nav-links">
-        <a href="/">📘 Jurnal</a>
-        <a href="/targets" class="active">🎯 Targeturi</a>
-    </div>
-</nav>
+{% block title %}Chronos OS | Targeturi{% endblock %}
 
+{% block content %}
 <div class="container">
-    <h2 style="margin-bottom: 20px; border-bottom: 2px solid var(--primary); padding-bottom: 10px; display: inline-block;">Obiective Active</h2>
-    <div id="targetsContainer" class="targets-grid">
+    <div class="section-header">
+        <div>
+            <div class="section-title">🎯 Targeturile Mele</div>
+            <div class="section-subtitle" id="targetSummary">Se încarcă...</div>
         </div>
+        <button class="btn btn-primary" id="openAddModal">+ Adaugă</button>
+    </div>
+
+    <div id="targetsGrid" class="targets-grid">
+        <div class="empty-state" style="grid-column:1/-1">Se încarcă...</div>
+    </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/targets.js') }}"></script>
-</body>
-</html>
+<!-- ADD TARGET MODAL -->
+<div id="addModal" class="modal-overlay">
+    <div class="modal">
+        <h2>➕ Target Nou</h2>
+
+        <div class="form-group">
+            <label class="form-label">Titlu *</label>
+            <input type="text" id="newTitle" class="form-input" placeholder="Ex: Să fac 100 flotări pe zi">
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Descriere (opțional)</label>
+            <textarea id="newDesc" class="form-input" style="min-height:60px" placeholder="De ce vrei asta?"></textarea>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="form-group">
+                <label class="form-label">Deadline</label>
+                <input type="date" id="newDeadline" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Prioritate</label>
+                <select id="newPriority" class="form-select">
+                    <option value="High">🔴 High</option>
+                    <option value="Med" selected>🟡 Med</option>
+                    <option value="Low">🟢 Low</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Categorie</label>
+            <select id="newCategory" class="form-select">
+                <option value="Sanatate">💪 Sănătate</option>
+                <option value="Proiecte">🔧 Proiecte</option>
+                <option value="Scoala">📚 Școală</option>
+                <option value="Personal">🧠 Personal</option>
+                <option value="Social">👥 Social</option>
+                <option value="General" selected>📌 General</option>
+            </select>
+        </div>
+
+        <div class="btn-row" style="margin-top:18px">
+            <button class="btn btn-primary" id="confirmAddBtn">Salvează</button>
+            <button class="btn btn-secondary" id="closeAddModal">Anulează</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/target.js') }}"></script>
+{% endblock %}

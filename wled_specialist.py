@@ -269,12 +269,14 @@ class WLEDStateManager:
         except: pass
         return None
 
-    def save_state(self):
+    def save_state(self, slot="default"):
         with ThreadPoolExecutor() as executor:
             future_main = executor.submit(self._get_state, WLED_IP_MAIN)
             future_floor = executor.submit(self._get_state, WLED_IP_FLOOR)
-            self.saved_states["main"] = future_main.result()
-            self.saved_states["floor"] = future_floor.result()
+            self.saved_states[slot] = {
+                "main": future_main.result(),
+                "floor": future_floor.result()
+            }
 
     def start_loading_animation(self):
         def send_anim(ip, color, bri):
@@ -292,15 +294,58 @@ class WLEDStateManager:
             executor.submit(send_anim, WLED_IP_MAIN, [255, 0, 0], 60)   
             executor.submit(send_anim, WLED_IP_FLOOR, [128, 0, 255], 200) 
 
-    def restore_state(self):
-        def restore(ip, state_key):
-            if state_key in self.saved_states and self.saved_states[state_key]:
-                try: requests.post(f"http://{ip}/json/state", json=self.saved_states[state_key], timeout=1)
+    def restore_state(self, slot="default"):
+        if slot not in self.saved_states: return
+        states = self.saved_states[slot]
+        
+        def restore(ip, state_data):
+            if state_data:
+                try: requests.post(f"http://{ip}/json/state", json=state_data, timeout=1)
                 except: pass
 
         with ThreadPoolExecutor() as executor:
-            executor.submit(restore, WLED_IP_MAIN, "main")
-            executor.submit(restore, WLED_IP_FLOOR, "floor")
+            executor.submit(restore, WLED_IP_MAIN, states.get("main"))
+            executor.submit(restore, WLED_IP_FLOOR, states.get("floor"))
+
+    def pulse_color(self, color_rgb, duration=5):
+        import time
+        self.save_state(slot="temp_pulse")
+        payload = {
+            "on": True, "bri": 200,
+            "seg": [{"fx": 0, "col": [color_rgb, [0,0,0], [0,0,0]]}]
+        }
+        def send(ip):
+            try: requests.post(f"http://{ip}/json/state", json=payload, timeout=0.5)
+            except: pass
+
+        with ThreadPoolExecutor() as executor:
+            executor.submit(send, WLED_IP_MAIN)
+            executor.submit(send, WLED_IP_FLOOR)
+            
+        time.sleep(duration)
+        self.restore_state(slot="temp_pulse")
+        
+    def set_focus_mode(self):
+        payload_main = {"on": True, "bri": 200, "seg": [{"fx": 0, "col": [[220, 240, 255], [0,0,0], [0,0,0]]}]}
+        payload_floor = {"on": True, "bri": 150, "seg": [{"fx": 0, "col": [[0, 50, 255], [0,0,0], [0,0,0]]}]}
+        try:
+            requests.post(f"http://{WLED_IP_MAIN}/json/state", json=payload_main, timeout=0.5)
+            requests.post(f"http://{WLED_IP_FLOOR}/json/state", json=payload_floor, timeout=0.5)
+        except: pass
+
+    def set_break_mode(self):
+        payload = {"on": True, "bri": 150, "seg": [{"fx": 2, "sx": 120, "col": [[0, 255, 100], [0,0,0], [0,0,0]]}]}
+        try:
+            requests.post(f"http://{WLED_IP_MAIN}/json/state", json=payload, timeout=0.5)
+            requests.post(f"http://{WLED_IP_FLOOR}/json/state", json=payload, timeout=0.5)
+        except: pass
+
+    def trigger_hype_mode(self):
+        payload = {"on": True, "bri": 255, "seg": [{"fx": 68, "sx": 200, "pal": 11}]}
+        try:
+            requests.post(f"http://{WLED_IP_MAIN}/json/state", json=payload, timeout=0.5)
+            requests.post(f"http://{WLED_IP_FLOOR}/json/state", json=payload, timeout=0.5)
+        except: pass
 
 
 if __name__ == "__main__":

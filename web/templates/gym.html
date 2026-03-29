@@ -1,0 +1,401 @@
+{% extends "base.html" %}
+{% set active_page = "gym" %}
+
+{% block title %}Chronos OS | Fitness{% endblock %}
+
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+.gym-section-label {
+    font-size: 9px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 2px; color: var(--text-faint);
+    margin: 24px 0 10px; display: flex; align-items: center; gap: 8px;
+}
+.gym-section-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.meas-due-banner {
+    background: linear-gradient(135deg, rgba(255,209,102,0.1) 0%, rgba(255,140,66,0.06) 100%);
+    border: 1px solid rgba(255,209,102,0.35);
+    border-radius: var(--radius-xs); padding: 12px 16px;
+    display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.meas-due-banner .meas-due-icon { font-size: 20px; }
+.meas-due-banner .meas-due-txt { font-size: 12px; color: var(--yellow); font-weight: 600; }
+.meas-due-banner .meas-due-sub { font-size: 11px; color: var(--text-faint); }
+.height-badge {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius-xs); padding: 12px 16px;
+}
+.height-badge-val { font-size: 22px; font-weight: 900; color: var(--primary); }
+.height-badge-lbl { font-size: 11px; color: var(--text-faint); }
+.height-edit-btn {
+    margin-left: auto; background: none; border: 1px solid var(--border);
+    border-radius: var(--radius-xs); color: var(--text-faint); font-size: 11px;
+    padding: 4px 10px; cursor: pointer; transition: all 0.15s; font-family: inherit;
+}
+.height-edit-btn:hover { color: var(--text); border-color: var(--border-light); }
+/* Mood sparkline from journal */
+.mood-spark-row {
+    display: flex; align-items: flex-end; gap: 3px; height: 30px; margin-top: 8px;
+}
+.mood-spark-bar {
+    flex: 1; background: var(--primary-dim); border-radius: 3px 3px 0 0;
+    min-height: 3px; transition: background 0.2s;
+    position: relative;
+}
+.mood-spark-bar:hover { background: var(--primary); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-wide">
+
+    <!-- PHASE BANNER -->
+    <div class="phase-banner" id="phaseBanner">
+        <div class="phase-info">
+            <div class="phase-icon" id="phaseIcon">⚖️</div>
+            <div>
+                <div class="phase-lbl">Faza Activă</div>
+                <div class="phase-name" id="phaseName">Se încarcă...</div>
+            </div>
+        </div>
+        <button class="phase-btn" onclick="openPhaseModal()">✏️ Schimbă</button>
+    </div>
+
+    <div class="gym-grid">
+        <!-- LEFT -->
+        <div>
+
+            <div class="gym-section-label">⚖️ Greutate Zilnică</div>
+
+            <div class="gym-card">
+                <div class="gym-card-header">
+                    <div class="gym-card-title">Log Rapid Greutate</div>
+                    <div style="font-size:11px;color:var(--text-faint)">Fă-l în fiecare zi</div>
+                </div>
+                <div style="display:flex;gap:10px;align-items:flex-end">
+                    <div style="flex:1">
+                        <div class="meas-lbl" style="margin-bottom:6px">Greutate (kg)</div>
+                        <input type="number" step="0.1" id="weightQuick" class="meas-input meas-input-big" placeholder="78.5">
+                    </div>
+                    <div style="flex:0">
+                        <div class="meas-lbl" style="margin-bottom:6px">Dată</div>
+                        <input type="date" id="weightDate" class="meas-input" style="min-height:0;padding:11px 10px">
+                    </div>
+                </div>
+                <input type="text" id="weightNote" class="meas-input" style="margin-top:8px;font-size:13px" placeholder="Notă (ex: după masă, dimineața...)">
+                <div class="btn-row" style="margin-top:10px">
+                    <button class="btn btn-teal" onclick="saveWeightQuick()">💾 Salvează</button>
+                </div>
+                <div id="weightRecentLog" style="margin-top:14px"></div>
+            </div>
+
+            <div class="gym-card">
+                <div class="gym-card-header">
+                    <div class="gym-card-title">📈 Evoluție Greutate</div>
+                    <div class="chart-range-row">
+                        <button class="chart-range-btn active" onclick="setChartRange(30,this)">30z</button>
+                        <button class="chart-range-btn" onclick="setChartRange(60,this)">60z</button>
+                        <button class="chart-range-btn" onclick="setChartRange(90,this)">90z</button>
+                        <button class="chart-range-btn" onclick="setChartRange(0,this)">Toate</button>
+                    </div>
+                </div>
+                <div class="chart-wrap"><canvas id="weightChart"></canvas></div>
+            </div>
+
+            <div class="gym-section-label" id="measurements">📏 Măsurători Periodice</div>
+
+            <div class="meas-due-banner" id="measDueBanner" style="display:none">
+                <div class="meas-due-icon">⏰</div>
+                <div>
+                    <div class="meas-due-txt" id="measDueTxt">E timp să măsori din nou!</div>
+                    <div class="meas-due-sub">Se recomandă o dată pe lună pentru a vedea progresul real</div>
+                </div>
+            </div>
+
+            <div class="gym-card">
+                <div class="gym-card-header">
+                    <div class="gym-card-title">Circumferințe Corp</div>
+                    <div style="font-size:11px;color:var(--text-faint)" id="lastMeasLabel">—</div>
+                </div>
+
+                <div class="quick-date-row" style="margin-bottom:14px">
+                    <button class="date-quick-btn active" onclick="setQuickDate(0,this)">Azi</button>
+                    <button class="date-quick-btn" onclick="setQuickDate(-1,this)">Ieri</button>
+                    <span class="date-sep">sau</span>
+                    <input type="date" id="measureDate" class="form-input" style="max-width:150px;resize:none;min-height:0;padding:6px 10px">
+                </div>
+
+                <div class="meas-grid-body">
+                    <div class="meas-group"><label class="meas-lbl">💪 Brațul relaxat</label>
+                        <input type="number" step="0.1" id="mBratRelaxat" class="meas-input" placeholder="38"></div>
+                    <div class="meas-group"><label class="meas-lbl">💪 Brațul încordat</label>
+                        <input type="number" step="0.1" id="mBratIncordat" class="meas-input" placeholder="41"></div>
+                    <div class="meas-group"><label class="meas-lbl">🦾 Antebraț</label>
+                        <input type="number" step="0.1" id="mAntebrat" class="meas-input" placeholder="30"></div>
+                    <div class="meas-group"><label class="meas-lbl">🫁 Piept</label>
+                        <input type="number" step="0.1" id="mPiept" class="meas-input" placeholder="105"></div>
+                    <div class="meas-group"><label class="meas-lbl">🎯 Talie</label>
+                        <input type="number" step="0.1" id="mTalie" class="meas-input" placeholder="82"></div>
+                    <div class="meas-group"><label class="meas-lbl">🩻 Sold</label>
+                        <input type="number" step="0.1" id="mSold" class="meas-input" placeholder="98"></div>
+                    <div class="meas-group"><label class="meas-lbl">🦵 Coapsă</label>
+                        <input type="number" step="0.1" id="mCoapsa" class="meas-input" placeholder="62"></div>
+                    <div class="meas-group"><label class="meas-lbl">🏋️ Umăr</label>
+                        <input type="number" step="0.1" id="mUmar" class="meas-input" placeholder="125"></div>
+                    <div class="meas-group"><label class="meas-lbl">🔵 Gât</label>
+                        <input type="number" step="0.1" id="mGat" class="meas-input" placeholder="38"></div>
+                    <div class="meas-group"><label class="meas-lbl">🦿 Gambă</label>
+                        <input type="number" step="0.1" id="mGamba" class="meas-input" placeholder="40"></div>
+                </div>
+
+                <textarea id="mNotes" class="form-input" style="min-height:50px;margin-top:8px" placeholder="Note opționale..."></textarea>
+                <div class="btn-row" style="margin-top:12px">
+                    <button class="btn btn-primary" onclick="saveMeasurement()">💾 Salvează Măsurători</button>
+                </div>
+            </div>
+
+            <div class="gym-card">
+                <div class="gym-card-header">
+                    <div class="gym-card-title">📊 Evoluție Circumferință</div>
+                    <select id="bodyMeasSelect" class="form-select mini" onchange="renderBodyChart()">
+                        <option value="piept">Piept</option>
+                        <option value="talie">Talie</option>
+                        <option value="brat_incordat">Brațul încordat</option>
+                        <option value="brat_relaxat">Brațul relaxat</option>
+                        <option value="antebrat_incordat">Antebraț</option>
+                        <option value="sold">Sold</option>
+                        <option value="coapsa">Coapsă</option>
+                        <option value="umar">Umăr</option>
+                        <option value="gat">Gât</option>
+                        <option value="gamba">Gambă</option>
+                    </select>
+                </div>
+                <div class="chart-wrap"><canvas id="bodyChart"></canvas></div>
+            </div>
+
+            <div class="gym-card">
+                <div class="gym-card-title" style="margin-bottom:14px">🍽️ Alimentație (28 zile)</div>
+                <div class="chart-wrap" style="height:160px"><canvas id="caloriesChart"></canvas></div>
+            </div>
+
+        </div>
+
+        <!-- RIGHT SIDEBAR -->
+        <div>
+
+            <!-- PROFILE: ÎNĂLȚIME -->
+            <div class="gym-card">
+                <div class="gym-card-title" style="margin-bottom:12px">👤 Profil Fizic</div>
+                <div class="height-badge" id="heightBadge" style="display:none">
+                    <div>
+                        <div class="height-badge-val" id="heightVal">—</div>
+                        <div class="height-badge-lbl">Înălțime (nu se schimbă)</div>
+                    </div>
+                    <button class="height-edit-btn" onclick="editHeight()">✏️</button>
+                </div>
+                <div id="heightInputSection">
+                    <div class="form-label" style="margin-bottom:6px">Înălțime (cm)</div>
+                    <div style="display:flex;gap:8px">
+                        <input type="number" step="0.1" id="heightInput" class="meas-input meas-input-big" placeholder="180" style="flex:1">
+                        <button class="btn btn-teal" onclick="saveHeight()">✓</button>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-faint);margin-top:5px">Se setează o singură dată.</div>
+                </div>
+                <div style="margin-top:14px">
+                    <div class="form-label" style="margin-bottom:6px">🎯 Greutate Țintă (kg)</div>
+                    <div style="display:flex;gap:8px">
+                        <input type="number" step="0.1" id="goalWeightInput" class="meas-input" placeholder="75" style="flex:1">
+                        <button class="btn btn-secondary btn-sm" onclick="saveGoalWeight()">✓</button>
+                    </div>
+                    <div id="goalWeightDisplay" style="font-size:11px;color:var(--text-faint);margin-top:4px"></div>
+                </div>
+            </div>
+
+            <!-- DAILY CHECK -->
+            <div class="gym-card">
+                <div class="gym-card-header">
+                    <div class="gym-card-title">🍽️ Check Alimentar</div>
+                </div>
+                <input type="date" id="checkDate" class="form-input" style="margin-bottom:12px;resize:none;min-height:0;padding:7px 10px;font-size:13px">
+                <div class="check-btns">
+                    <button class="check-btn surplus-mare" data-level="surplus_mare" onclick="setDailyCheck('surplus_mare',this)">
+                        <span class="check-icon">💪</span>
+                        <div><div class="check-lbl">Surplus Mare</div><div class="check-desc">Mult peste nevoi</div></div>
+                    </button>
+                    <button class="check-btn mentinere" data-level="mentinere" onclick="setDailyCheck('mentinere',this)">
+                        <span class="check-icon">✅</span>
+                        <div><div class="check-lbl">Menținere</div><div class="check-desc">Exact cât trebuie</div></div>
+                    </button>
+                    <button class="check-btn deficit" data-level="deficit" onclick="setDailyCheck('deficit',this)">
+                        <span class="check-icon">⬇️</span>
+                        <div><div class="check-lbl">Deficit</div><div class="check-desc">Sub nevoi, ușor</div></div>
+                    </button>
+                    <button class="check-btn deficit-mare" data-level="deficit_mare" onclick="setDailyCheck('deficit_mare',this)">
+                        <span class="check-icon">❌</span>
+                        <div><div class="check-lbl">Deficit Mare</div><div class="check-desc">Mult sub nevoi</div></div>
+                    </button>
+                </div>
+                <div id="checkStatus" class="check-status"></div>
+            </div>
+
+            <!-- MOOD from journal -->
+            <div class="gym-card" id="moodFromJournalCard" style="display:none">
+                <div class="gym-card-title" style="margin-bottom:6px">🧠 Dispoziție (din jurnal)</div>
+                <div style="font-size:11px;color:var(--text-faint);margin-bottom:8px">Ultimele 7 zile — energie + dispoziție</div>
+                <div class="mood-spark-row" id="moodSparkRow"></div>
+                <div id="moodSparkLbl" style="font-size:10px;color:var(--text-faint);margin-top:4px"></div>
+            </div>
+
+            <!-- STATS -->
+            <div class="gym-card" id="statsSummaryCard" style="display:none">
+                <div class="gym-card-title" style="margin-bottom:12px">📊 Statistici</div>
+                <div id="statsSummary"></div>
+            </div>
+
+            <!-- RECENT MEASUREMENTS TABLE -->
+            <div class="gym-card">
+                <div class="gym-card-title" style="margin-bottom:12px">📋 Ultimele Măsurători</div>
+                <div id="recentMeasTable"></div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- PHOTOS SECTION -->
+    <div class="photo-section-header">
+        <div class="section-title" style="font-size:18px">📸 Galerie</div>
+        <div class="photo-tabs">
+            <button class="photo-tab active" onclick="switchPhotoTab('progress',this)">💪 Progress</button>
+            <button class="photo-tab" onclick="switchPhotoTab('aesthetic',this)">✨ Aesthetic</button>
+        </div>
+    </div>
+
+    <div id="progressPhotoGuide" class="photo-guide">
+        <span style="font-size:18px;flex-shrink:0">📐</span>
+        <span><strong>Poze corecte pentru comparare:</strong> Aceeași oră (dimineața), aceeași lumină și poziție (față/lateral/spate), aceeași distanță față de cameră. Fără pompare prealabilă.</span>
+    </div>
+
+    <div class="compare-panel" id="comparePanel">
+        <div class="compare-header">
+            <div class="compare-title">🔄 Comparare</div>
+            <button class="btn btn-secondary btn-sm" onclick="clearCompare()">✕ Ieși</button>
+        </div>
+        <div class="compare-grid">
+            <div class="compare-slot" id="compareSlot1"><div class="compare-placeholder">Selectează A</div></div>
+            <div class="compare-slot" id="compareSlot2"><div class="compare-placeholder">Selectează B</div></div>
+        </div>
+        <div id="compareDates" style="text-align:center;font-size:11px;color:var(--text-faint);margin-top:8px"></div>
+    </div>
+
+    <div class="photo-controls">
+        <button class="btn btn-primary btn-sm" onclick="openUploadModal()">📤 Adaugă Poze</button>
+        <button class="btn btn-secondary btn-sm" id="compareToggleBtn" onclick="toggleCompareMode()">🔄 Compară</button>
+        <div class="photo-filter">
+            <select id="photoFilterYear" class="form-select mini" onchange="loadPhotos()">
+                <option value="">Toți anii</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="photo-grid" id="photoGrid">
+        <div class="empty-state">Se încarcă...</div>
+    </div>
+
+</div>
+
+<!-- PHASE MODAL -->
+<div id="phaseModal" class="modal-overlay">
+    <div class="modal">
+        <h2>🏋️ Schimbă Faza</h2>
+        <div class="phase-select-grid">
+            <div class="phase-option bulk" onclick="selectPhase('bulk',this)">
+                <div class="phase-opt-icon">📈</div>
+                <div class="phase-opt-name">Bulk</div>
+                <div class="phase-opt-desc">Surplus caloric, construiești masă musculară</div>
+            </div>
+            <div class="phase-option sustinere" onclick="selectPhase('sustinere',this)">
+                <div class="phase-opt-icon">⚖️</div>
+                <div class="phase-opt-name">Susținere</div>
+                <div class="phase-opt-desc">Menții greutatea actuală</div>
+            </div>
+            <div class="phase-option cut" onclick="selectPhase('cut',this)">
+                <div class="phase-opt-icon">📉</div>
+                <div class="phase-opt-name">Cut</div>
+                <div class="phase-opt-desc">Deficit caloric, arzi grăsime</div>
+            </div>
+        </div>
+        <div class="btn-row" style="margin-top:18px">
+            <button class="btn btn-secondary" onclick="closeModal('phaseModal')">Anulează</button>
+        </div>
+    </div>
+</div>
+
+<!-- UPLOAD MODAL -->
+<div id="uploadModal" class="modal-overlay">
+    <div class="modal">
+        <h2>📤 Upload Poze</h2>
+        <div class="form-group">
+            <label class="form-label">Categorie</label>
+            <div class="upload-cat-toggle">
+                <button class="upload-cat-btn active" data-cat="progress" onclick="selectUploadCat('progress',this)">💪 Progress</button>
+                <button class="upload-cat-btn" data-cat="aesthetic" onclick="selectUploadCat('aesthetic',this)">✨ Aesthetic</button>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Dată</label>
+            <div class="quick-date-row">
+                <button class="date-quick-btn active" onclick="setUploadQuickDate(0,this)">Azi</button>
+                <button class="date-quick-btn" onclick="setUploadQuickDate(-1,this)">Ieri</button>
+                <button class="date-quick-btn" onclick="setUploadQuickDate(-30,this)">-30z</button>
+                <input type="date" id="uploadDate" class="form-input" style="max-width:140px;resize:none;min-height:0;padding:5px 9px">
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Poze</label>
+            <div class="upload-drop" id="uploadDropZone" onclick="document.getElementById('photoFileInput').click()">
+                <div class="upload-drop-icon">📁</div>
+                <div class="upload-drop-txt">Click sau trage pozele</div>
+                <div class="upload-drop-sub">JPG, PNG, HEIC, WEBP — max 50MB</div>
+                <input type="file" id="photoFileInput" multiple accept="image/*" style="display:none" onchange="handleFileSelect(event)">
+            </div>
+            <div id="uploadPreviewGrid" class="upload-preview-grid"></div>
+        </div>
+        <div id="uploadProgress" style="display:none">
+            <div class="upload-prog-bar"><div id="uploadProgressFill" class="upload-prog-fill"></div></div>
+            <div id="uploadProgressText" style="font-size:11px;color:var(--text-muted);margin-top:5px;text-align:center"></div>
+        </div>
+        <div class="btn-row" style="margin-top:16px">
+            <button class="btn btn-primary" onclick="doUpload()">📤 Încarcă</button>
+            <button class="btn btn-secondary" onclick="closeModal('uploadModal')">Anulează</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/gym.js') }}"></script>
+<script>
+// Show mood sparkline from journal data
+document.addEventListener('dayStatusLoaded', (e) => {
+    const s = e.detail;
+    // We'll try to fetch last 7 days journal scores here
+    fetch('/api/journal/scores-summary?days=7').then(r => r.json()).then(data => {
+        const card = document.getElementById('moodFromJournalCard');
+        const row = document.getElementById('moodSparkRow');
+        const lbl = document.getElementById('moodSparkLbl');
+        if (!data || !data.length) return;
+        card.style.display = 'block';
+        const maxVal = Math.max(...data.map(d => (d.energie || 0) + (d.dispozitie || 0)), 1);
+        row.innerHTML = data.slice(-7).map(d => {
+            const val = ((d.energie || 0) + (d.dispozitie || 0)) / 2;
+            const pct = Math.round((val / 10) * 100);
+            const col = val >= 7 ? 'var(--green)' : val >= 4 ? 'var(--primary)' : 'var(--red)';
+            return `<div class="mood-spark-bar" style="height:${Math.max(pct, 8)}%;background:${col}50;border-top:2px solid ${col}" title="${d.date}: ${val.toFixed(1)}/10"></div>`;
+        }).join('');
+        const avgScore = data.slice(-7).reduce((s, d) => s + ((d.energie || 0) + (d.dispozitie || 0)) / 2, 0) / Math.min(data.length, 7);
+        lbl.textContent = `Media 7 zile: ${avgScore.toFixed(1)}/10`;
+    }).catch(() => {});
+});
+</script>
+{% endblock %}

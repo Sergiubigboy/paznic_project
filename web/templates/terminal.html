@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% set active_page = "terminal" %}
+
+{% block title %}Chronos OS | Terminal{% endblock %}
+
+{% block content %}
+<div class="terminal-container">
+
+    <div class="terminal-header">
+        <div>
+            <div class="section-title" style="font-size:18px">⌨️ Terminal Chronos</div>
+            <div class="section-subtitle">Trimite comenzi direct la Dispatcher</div>
+        </div>
+        <div class="terminal-status">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">Conectat</span>
+        </div>
+    </div>
+
+    <div class="terminal-window">
+        <div class="terminal-output" id="terminalOutput">
+            <div class="term-line info">
+                <span class="term-prefix">CHRONOS</span>
+                <span class="term-text">Terminal pornit. Scrie o comandă și apasă Enter sau →</span>
+            </div>
+            <div class="term-line info">
+                <span class="term-prefix">TIP</span>
+                <span class="term-text">Poți trimite orice comandă: led, muzică, jurnal, timer pomodoro, hype mode, întrebări generale...</span>
+            </div>
+        </div>
+
+        <div class="term-quick-cmds" id="quickCmds">
+            <span style="font-size:11px;color:var(--text-faint);margin-right:4px">Quick:</span>
+            <button class="term-quick-btn" onclick="fillCmd('pune muzică hype energică')">🎵 Muzică hype</button>
+            <button class="term-quick-btn" onclick="fillCmd('hype mode')">🔥 Hype mode</button>
+            <button class="term-quick-btn" onclick="fillCmd('pornește timer pomodoro 25 minute focus 5 pauză')">⏱️ Pomodoro 25/5</button>
+            <button class="term-quick-btn" onclick="fillCmd('oprește timerul')">⏹️ Stop timer</button>
+            <button class="term-quick-btn" onclick="fillCmd('schimbă luminile în albastru calm')">💡 Lumini calme</button>
+            <button class="term-quick-btn" onclick="fillCmd('ce am făcut ieri?')">🧠 Memory</button>
+            <button class="term-quick-btn" onclick="fillCmd('rezumă ziua mea de azi')">🌅 Rezumă ziua</button>
+        </div>
+
+        <div class="terminal-input-row">
+            <div class="term-prompt">Chronos&gt;</div>
+            <textarea id="terminalInput" rows="1" placeholder="Scrie comanda..." onkeydown="handleTermKey(event)"></textarea>
+            <button class="term-send-btn" onclick="sendCommand()">➤</button>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/terminal.js') }}"></script>
+{% endblock %}

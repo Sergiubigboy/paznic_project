@@ -1,108 +1,216 @@
-let allData = [];
-
-fetch('/api/logs')
-    .then(response => response.json())
-    .then(data => {
-        allData = data;
-        renderLogs(allData);
-    });
-
-function toggleRaw(btn) {
-    const rawContent = btn.nextElementSibling;
-    rawContent.classList.toggle('show');
-    btn.innerText = rawContent.classList.contains('show') ? 'Ascunde Transcrierea' : 'Vezi Transcrierea Audio';
+// ============ HELPERS ============
+function flash(msg, type = 'success') {
+    const el = document.getElementById('flashMsg');
+    el.textContent = msg;
+    el.className = `flash-msg show ${type}`;
+    setTimeout(() => el.className = 'flash-msg', 3500);
 }
 
-function renderLogs(daysArray) {
-    const container = document.getElementById('logsContainer');
-    container.innerHTML = '';
+const PRIORITY_CLASS = { High: 'priority-high', Med: 'priority-med', Low: 'priority-low' };
+const CAT_ICONS = {
+    Sanatate: '💪', Proiecte: '🔧', Scoala: '📚',
+    Personal: '🧠', Social: '👥', General: '📌'
+};
 
-    if (daysArray.length === 0) {
-        document.getElementById('noResults').style.display = 'block';
+// ============ LOAD ============
+let allGoals = [];
+
+function loadTargets() {
+    fetch('/api/targets')
+        .then(r => r.json())
+        .then(data => {
+            allGoals = data.goals || [];
+            renderTargets(allGoals);
+            renderSummary(allGoals);
+        });
+}
+
+function renderSummary(goals) {
+    const el = document.getElementById('targetSummary');
+    if (!el) return;
+    const high = goals.filter(g => g.priority === 'High').length;
+    const expiring = goals.filter(g => g.deadline && daysUntil(g.deadline) <= 7 && daysUntil(g.deadline) >= 0).length;
+    let txt = `${goals.length} targeturi active`;
+    if (high) txt += ` · ${high} urgente 🔴`;
+    if (expiring) txt += ` · ${expiring} expiră curând ⚠️`;
+    el.textContent = txt;
+}
+
+
+
+loadTargets();
+
+// ============ RENDER ============
+function renderTargets(goals) {
+    const grid = document.getElementById('targetsGrid');
+    if (!goals.length) {
+        grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1">Niciun target activ. Adaugă primul! 🚀</div>';
         return;
-    } else {
-        document.getElementById('noResults').style.display = 'none';
     }
 
-    daysArray.forEach(dayObj => {
-        const dayGroup = document.createElement('div');
-        dayGroup.className = 'day-group';
-        
-        const dateStr = new Date(dayObj.date).toLocaleDateString('ro-RO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-        dayGroup.innerHTML = `<div class="day-header">${dateStr}</div>`;
+    // Sort: High first, then Med, then Low
+    const sorted = [...goals].sort((a, b) => {
+        const order = { High: 0, Med: 1, Low: 2 };
+        return (order[a.priority] ?? 1) - (order[b.priority] ?? 1);
+    });
 
-        dayObj.logs.forEach(log => {
-            const analysis = log.analysis || {};
-            const scores = analysis.scores || {};
-            const tags = analysis.tags || [];
+    grid.innerHTML = sorted.map(g => {
+        const prog = Number(g.progress || 0);
+        const pClass = PRIORITY_CLASS[g.priority] || 'priority-med';
+        const catIcon = CAT_ICONS[g.category] || '📌';
+        const daysLeft = g.deadline ? daysUntil(g.deadline) : null;
+        const daysStr = daysLeft !== null
+            ? (daysLeft < 0 ? `<span style="color:var(--accent-red)">⚠️ Expirat acum ${Math.abs(daysLeft)}z</span>`
+                : daysLeft === 0 ? `<span style="color:var(--accent-orange)">🔥 Azi!</span>`
+                : `📅 ${daysLeft}z rămase`)
+            : '';
 
-            // Suportăm și vechiul format și noul format dur
-            const exec = scores.execution !== undefined ? scores.execution : (scores.productivity || '-');
-            const fulfill = scores.fulfillment !== undefined ? scores.fulfillment : (scores.happiness || '-');
-            const mental = scores.mental_load !== undefined ? scores.mental_load : (scores.burnout || '-');
-            const dopa = scores.dopamine_control !== undefined ? scores.dopamine_control : (scores.anger || '-');
+        return `
+        <div class="target-card" data-id="${g.id}">
+            <div class="target-card-header">
+                <h3>${catIcon} ${g.title || ''}</h3>
+                <span class="priority-badge ${pClass}">${g.priority || 'Med'}</span>
+            </div>
+            ${g.description ? `<div class="target-desc">${g.description}</div>` : ''}
+            <div class="target-meta">
+                ${daysStr}
+                ${g.category ? `<span>${g.category}</span>` : ''}
+            </div>
+            <div class="target-progress-label">
+                <span>Progres</span>
+                <span id="progLabel_${g.id}">${prog}%</span>
+            </div>
+            <div class="target-progress-bar">
+                <div class="progress-bar-fill ${prog >= 100 ? 'complete' : ''}" 
+                     id="progBar_${g.id}" style="width:${prog}%"></div>
+            </div>
+            <div class="target-controls">
+                <input type="number" class="progress-input" id="progInput_${g.id}"
+                       value="${prog}" min="0" max="100">
+                <button class="btn btn-secondary btn-sm" onclick="saveProgress('${g.id}')">Salvează</button>
+                <button class="btn btn-teal btn-sm" onclick="markDone('${g.id}')">✅ Finalizat</button>
+                <button class="btn btn-danger" onclick="deleteTarget('${g.id}', this)">🗑️</button>
+            </div>
+        </div>`;
+    }).join('');
+}
 
-            // Selectăm textul corect (log combinat sau log singular vechi)
-            const textToShow = log.combined_text || log.raw_text || "Fără text brut disponibil.";
+function daysUntil(dateStr) {
+    const d = new Date(dateStr);
+    const now = new Date();
+    now.setHours(0,0,0,0);
+    d.setHours(0,0,0,0);
+    return Math.round((d - now) / 86400000);
+}
 
-            const card = document.createElement('div');
-            card.className = 'log-card';
+// ============ ACTIONS ============
+function saveProgress(id) {
+    const val = parseInt(document.getElementById(`progInput_${id}`).value, 10);
+    if (isNaN(val)) return;
 
-            let tagsHtml = tags.map(t => `<span class="tag">${t}</span>`).join('');
-            
-            card.innerHTML = `
-                <div class="log-top">
-                    <div class="log-time">${log.type === 'daily_summary' ? 'Sinteza Zilei (Nightly Batch)' : log.display_time}</div>
-                </div>
-                <div class="log-summary">${analysis.short_summary || 'Fără rezumat'}</div>
-                
-                <div class="scores">
-                    <div class="score-badge">Execuție/Muncă <span>${exec}</span></div>
-                    <div class="score-badge">Împlinire Sufletească <span>${fulfill}</span></div>
-                    <div class="score-badge">Încărcare Mentală <span>${mental}</span></div>
-                    <div class="score-badge">Control Dopamină <span>${dopa}</span></div>
-                </div>
-
-                <div class="tags">${tagsHtml}</div>
-                
-                <button class="raw-btn" onclick="toggleRaw(this)">Vezi Transcrierea Completă</button>
-                <div class="raw-content">
-                    <b>Ce ai spus:</b><br>
-                    <p style="white-space: pre-wrap;">${textToShow}</p>
-                    <br><b>The Judge Feedback:</b><br>
-                    <p>${analysis.judge_feedback}</p>
-                </div>
-            `;
-            dayGroup.appendChild(card);
-        });
-
-        container.appendChild(dayGroup);
+    fetch('/api/targets/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, progress: val })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            flash('✅ Progres actualizat!');
+            // Update UI without full reload
+            const bar = document.getElementById(`progBar_${id}`);
+            const label = document.getElementById(`progLabel_${id}`);
+            if (bar) { bar.style.width = val + '%'; bar.className = `progress-bar-fill ${val >= 100 ? 'complete' : ''}`; }
+            if (label) label.textContent = val + '%';
+            if (val >= 100) {
+                flash('🎉 Target completat și arhivat!');
+                setTimeout(loadTargets, 1500);
+            }
+        } else {
+            flash('❌ Eroare: ' + data.message, 'error');
+        }
     });
 }
 
-document.getElementById('searchInput').addEventListener('input', function(e) {
-    const query = e.target.value.toLowerCase().trim();
-    if (!query) { renderLogs(allData); return; }
-
-    const filteredDays = [];
-    allData.forEach(dayObj => {
-        const matchingLogs = dayObj.logs.filter(log => {
-            const analysis = log.analysis || {};
-            const scores = analysis.scores || {};
-            
-            const searchableText = `
-                ${log.combined_text || ''} ${log.raw_text || ''} 
-                ${analysis.short_summary} ${analysis.judge_feedback}
-                ${(analysis.tags || []).join(" ")}
-                executie ${scores.execution} implinire ${scores.fulfillment}
-            `.toLowerCase();
-
-            return searchableText.includes(query);
-        });
-
-        if (matchingLogs.length > 0) {
-            filteredDays.push({ date: dayObj.date, logs: matchingLogs });
+function markDone(id) {
+    fetch('/api/targets/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, progress: 100 })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            flash('🎉 Target completat și arhivat!');
+            setTimeout(loadTargets, 800);
+        } else {
+            flash('❌ Eroare', 'error');
         }
     });
-    renderLogs(filteredDays);
+}
+
+function deleteTarget(id, btn) {
+    if (!confirm('Ștergi acest target?')) return;
+    btn.disabled = true;
+    fetch('/api/targets/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            flash('🗑️ Target șters.');
+            loadTargets();
+        } else {
+            flash('❌ Eroare', 'error');
+            btn.disabled = false;
+        }
+    });
+}
+
+// ============ ADD MODAL ============
+document.getElementById('openAddModal').addEventListener('click', () => {
+    document.getElementById('addModal').classList.add('open');
+});
+document.getElementById('closeAddModal').addEventListener('click', () => {
+    document.getElementById('addModal').classList.remove('open');
+});
+document.getElementById('addModal').addEventListener('click', function(e) {
+    if (e.target === this) this.classList.remove('open');
+});
+
+document.getElementById('confirmAddBtn').addEventListener('click', function () {
+    const title = document.getElementById('newTitle').value.trim();
+    if (!title) { flash('❌ Titlul e obligatoriu!', 'error'); return; }
+
+    this.disabled = true;
+    this.textContent = 'Se salvează...';
+
+    fetch('/api/targets/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            title,
+            description: document.getElementById('newDesc').value.trim(),
+            deadline: document.getElementById('newDeadline').value,
+            priority: document.getElementById('newPriority').value,
+            category: document.getElementById('newCategory').value
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        this.disabled = false;
+        this.textContent = 'Salvează Targetul';
+        if (data.status === 'success') {
+            document.getElementById('addModal').classList.remove('open');
+            document.getElementById('newTitle').value = '';
+            document.getElementById('newDesc').value = '';
+            document.getElementById('newDeadline').value = '';
+            flash('✅ Target adăugat!');
+            loadTargets();
+        } else {
+            flash('❌ Eroare: ' + data.message, 'error');
+        }
+    });
 });

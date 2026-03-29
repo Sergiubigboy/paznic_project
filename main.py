@@ -16,12 +16,14 @@ from config import (
     SILENCE_THRESHOLD, 
     SILENCE_DURATION, 
     MIN_RECORD_SECONDS, 
-    MAX_RECORD_SECONDS
+    MAX_RECORD_SECONDS,
+    USE_LOCAL_MIC
 )
 
 from dispatcher import CommandDispatcher
 from wled_specialist import WLEDStateManager
 from music_specialist import MusicHandler
+import threading
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 TEMP_WAV = "temp_command.wav"
@@ -51,12 +53,43 @@ def main():
     dispatcher = CommandDispatcher(music_expert, wled_mechanic)
 
     porcupine = pvporcupine.create(access_key=PICOVOICE_KEY, keyword_paths=[KEYWORD_PATH])
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", UDP_PORT))
-    sock.settimeout(0.05)
+    
+    sock = None
+    audio_stream = None
+    if USE_LOCAL_MIC:
+        import pyaudio
+        pa = pyaudio.PyAudio()
+        audio_stream = pa.open(rate=porcupine.sample_rate, channels=1, format=pyaudio.paInt16, input=True, frames_per_buffer=porcupine.frame_length)
+        logging.info("🎤 Sursa Audio: MICROFON LOCAL LAPTOP")
+    else:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("0.0.0.0", UDP_PORT))
+        sock.settimeout(0.05)
+        logging.info("🎤 Sursa Audio: RETEA UDP (ESP32)")
 
     logging.info("🚀 CHRONOS CORE pornit.")
     
+    # === THREAD PENTRU TERMINAL ===
+    def terminal_listener():
+        while True:
+            try:
+                cmd = input("\n[Terminal] Scrie o comanda: ")
+                if cmd.strip():
+                    dispatcher.process_text_command(cmd, sock)
+            except Exception: pass
+
+    threading.Thread(target=terminal_listener, daemon=True).start()
+
+    # === AUTO-START WEB DASHBOARD ===
+    def start_web_server():
+        import sys as _sys
+        web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+        _sys.path.insert(0, web_dir)
+        from web.web_dashboard import app
+        logging.info("🌐 Pornesc Dashboard-ul Chronos pe portul 5000...")
+        app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    threading.Thread(target=start_web_server, daemon=True).start()
+
     # === VERIFICĂ ZILELE LIPSĂ IMEDIAT LA PORNIRE ===
     dispatcher.jural_expert.check_and_generate_missing_summaries()
 
@@ -77,14 +110,22 @@ def main():
                 dispatcher.jural_expert.check_and_generate_missing_summaries()
                 last_summary_check = time.time()
 
-            try:
-                data, _ = sock.recvfrom(2048)
-            except socket.timeout:
-                continue
+            if USE_LOCAL_MIC:
+                try:
+                    pcm = audio_stream.read(porcupine.frame_length, exception_on_overflow=False)
+                    chunk = struct.unpack_from("h" * porcupine.frame_length, pcm)
+                    data = True
+                except Exception:
+                    continue
+            else:
+                try:
+                    data, _ = sock.recvfrom(2048)
+                    if data:
+                        chunk = struct.unpack_from("h" * (len(data) // 2), data)
+                except socket.timeout:
+                    continue
 
             if data:
-                chunk = struct.unpack_from("h" * (len(data) // 2), data)
-
                 if not is_recording:
                     audio_buffer.extend(chunk)
                     
@@ -94,7 +135,7 @@ def main():
                         
                         if porcupine.process(frame) >= 0:
                             logging.info("🎤 Wake Word Detectat! Ascult...")
-                            wled_mechanic.save_state()            
+                            wled_mechanic.save_state(slot="wake")            
                             wled_mechanic.start_loading_animation() 
                             music_expert.pause_playback() 
 
@@ -130,9 +171,9 @@ def main():
                             should_restore = dispatcher.process_text_command(text, sock)
                             if should_restore:
                                 logging.info("Revin la luminile anterioare...")
-                                wled_mechanic.restore_state()
+                                wled_mechanic.restore_state(slot="wake")
                         else:
-                            wled_mechanic.restore_state()
+                            wled_mechanic.restore_state(slot="wake")
                         
                         cuvinte_muzica = ["pune", "bagă", "schimbă", "stop", "oprește", "oprit", "muzic", "pauză", "pauza", "next", "următoarea", "sari", "lasă"]
                         if text and not any(kw in text.lower() for kw in cuvinte_muzica):
@@ -147,7 +188,8 @@ def main():
         logging.info("Oprire sistem...")
     finally:
         porcupine.delete()
-        sock.close()
+        if sock: sock.close()
+        if audio_stream: audio_stream.close()
 
 if __name__ == "__main__":
     main()
