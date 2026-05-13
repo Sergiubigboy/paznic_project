@@ -138,15 +138,31 @@
 <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 <script>
 // Populate sidebar today status from day status data
-document.addEventListener('dayStatusLoaded', (e) => {
+document.addEventListener('dayStatusLoaded', async (e) => {
     const s = e.detail;
     const el = document.getElementById('sidebarStatusItems');
     if (!el) return;
 
+    // Load daily tasks count
+    let tasksLabel = '—';
+    let tasksDone = false;
+    try {
+        const dtData = await fetch('/api/daily-tasks').then(r => r.json());
+        const today = offsetDate(0);
+        const total = (dtData.tasks || []).length;
+        const checked = ((dtData.checks || {})[today] || []).length;
+        if (total > 0) {
+            tasksLabel = `${checked}/${total}`;
+            tasksDone = checked === total;
+        } else {
+            tasksLabel = 'Niciun task';
+        }
+    } catch(e) {}
+
     const items = [
         { icon: '⚖️', label: 'Greutate', done: s.weight?.logged, val: s.weight?.logged ? s.weight.value + ' kg' : (s.last_weight_ever ? s.last_weight_ever + ' kg' : '—'), href: '/gym' },
-        { icon: '📱', label: 'Screen time', done: s.screen_time?.logged, val: s.screen_time?.logged ? fmtMinsStr(s.screen_time.minutes) : '—', href: '/day' },
-        { icon: '🍽️', label: 'Alimentație', done: s.food_check?.logged, val: s.food_check?.logged ? s.food_check.level.replace('_', ' ') : '—', href: '/day' },
+        { icon: '🍽️', label: 'Alimentație', done: s.food_check?.logged, val: s.food_check?.logged ? s.food_check.level.replace('_', ' ') : '—', href: '/gym' },
+        { icon: '✅', label: 'Task-uri zilnice', done: tasksDone, val: tasksLabel, href: '/targets' },
     ];
 
     el.innerHTML = items.map(item => `
@@ -163,5 +179,6 @@ function fmtMinsStr(m) {
     const h = Math.floor(m / 60), min = m % 60;
     return min > 0 ? `${h}h ${min}m` : `${h}h`;
 }
+
 </script>
 {% endblock %}

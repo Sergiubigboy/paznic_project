@@ -41,6 +41,12 @@ SCREEN_TIME_FILE = os.path.join(DATA_DIR, "screen_time.json")
 # --- DAY SCHEDULE ---
 DAY_SCHEDULE_FILE = os.path.join(DATA_DIR, "day_schedule.json")
 
+# --- DAILY TASKS ---
+DAILY_TASKS_FILE = os.path.join(DATA_DIR, "daily_tasks.json")
+
+# --- FINANCE ---
+FINANCE_FILE = os.path.join(DATA_DIR, "finance.json")
+
 # --- AUTH TRUST DEVICE ---
 TRUSTED_DEVICES_FILE = os.path.join(DATA_DIR, "trusted_devices.json")
 
@@ -213,7 +219,7 @@ def gym():
 @app.route('/day')
 @requires_auth
 def day_page():
-    return render_template('day.html', active_page='day')
+    return redirect('/')
 
 @app.route('/terminal')
 @requires_auth
@@ -264,7 +270,7 @@ def day_status():
     # --- Journal entries today ---
     journal_data = {"entries_today": 0, "entries": [], "last_scores": None}
     try:
-        logfile = get_log_file_path(datetime.now().year, datetime.now().month)
+        logfile = _get_log_file_for_date(datetime.now().strftime("%Y-%m-%d"))
         if os.path.exists(logfile):
             with open(logfile, 'r', encoding='utf-8') as f:
                 for line in f:
@@ -374,8 +380,6 @@ def terminal_command():
         return jsonify({"status": "error", "message": "Comandă goală"}), 400
 
     try:
-        # Import dispatcher lazily — it needs the main process context
-        # We use a lightweight version: just classify intent + handle general chat
         import sys
         sys.path.insert(0, BASE_DIR)
         from ai_core import ask_gemini_json
@@ -412,6 +416,7 @@ def terminal_command():
         actions = []
         reply = None
 
+        # --- AICI INTERVIN MODIFICĂRILE REALE ---
         for intent in intents:
             if intent == 'general':
                 chat_schema = {
@@ -429,18 +434,41 @@ def terminal_command():
                 chat_res = ask_gemini_json(chat_prompt, schema=chat_schema, temperature=0.7)
                 if chat_res:
                     reply = chat_res.get('response_text', '')
+            
             elif intent == 'led':
-                actions.append('Comandă LED trimisă (necesită main.py activ cu WLED)')
+                actions.append('Comandă LED trimisă către sistemul WLED.')
+                try:
+                    from wled_specialist import WLEDDispatcher
+                    WLEDDispatcher().execute(text, "Web Terminal")
+                except Exception as e:
+                    actions.append(f"Eroare WLED: {e}")
+            
             elif intent == 'music':
-                actions.append('Comandă muzică trimisă (necesită main.py activ)')
+                actions.append('Comandă muzică trimisă către Spotify.')
+                try:
+                    from music_specialist import MusicHandler
+                    MusicHandler().process_command(text, "Web Terminal")
+                except Exception as e:
+                    actions.append(f"Eroare Muzică: {e}")
+            
             elif intent == 'journal':
-                actions.append('Pentru jurnal, folosește pagina Jurnal din web sau microfonul')
+                actions.append('Pentru jurnal, folosește pagina Jurnal din web.')
+            
             elif intent == 'target':
-                actions.append('Pentru targeturi, folosește pagina Targeturi din web')
+                actions.append('Pentru targeturi, folosește pagina Targeturi din web.')
+            
             elif intent == 'study_timer':
-                actions.append('Timer Pomodoro pornit (necesită main.py activ)')
+                actions.append('Timer Pomodoro se poate porni doar din serviciul vocal (momentan).')
+            
             elif intent == 'hype_mode':
-                actions.append('🔥 HYPE MODE (necesită main.py activ cu WLED + muzică)')
+                actions.append('🔥 HYPE MODE! Lumini și muzică declanșate.')
+                try:
+                    from wled_specialist import WLEDStateManager
+                    WLEDStateManager().trigger_hype_mode()
+                    from music_specialist import MusicHandler
+                    MusicHandler().process_command("baga muzica super hype rapida", "")
+                except Exception as e:
+                    actions.append(f"Eroare Hype Mode: {e}")
 
         return jsonify({
             "status": "success",
@@ -452,7 +480,6 @@ def terminal_command():
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
-
 
 # ============ STATIC MEDIA ============
 @app.route('/media/gym/photos/<filename>')
@@ -1181,6 +1208,619 @@ Fii direct, nu verbos. Vorbi-i ca unui prieten.
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# ============ DAILY TASKS API ============
+def load_daily_tasks():
+    if os.path.exists(DAILY_TASKS_FILE):
+        with open(DAILY_TASKS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"tasks": [], "checks": {}}
+
+def save_daily_tasks(data):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(DAILY_TASKS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+@app.route('/api/daily-tasks', methods=['GET'])
+@requires_auth
+def get_daily_tasks():
+    data = load_daily_tasks()
+    return jsonify(data)
+
+@app.route('/api/daily-tasks/add', methods=['POST'])
+@requires_auth
+def add_daily_task():
+    req = request.json or {}
+    name = req.get('name', '').strip()
+    emoji = req.get('emoji', '✅')
+    if not name:
+        return jsonify({"status": "error", "message": "Nume lipsă"}), 400
+    import time
+    data = load_daily_tasks()
+    task = {
+        "id": str(int(time.time() * 1000)),
+        "name": name,
+        "emoji": emoji,
+        "created_at": datetime.now().strftime("%Y-%m-%d")
+    }
+    data["tasks"].append(task)
+    save_daily_tasks(data)
+    return jsonify({"status": "success", "task": task})
+
+@app.route('/api/daily-tasks/delete', methods=['POST'])
+@requires_auth
+def delete_daily_task():
+    req = request.json or {}
+    task_id = req.get('id')
+    if not task_id:
+        return jsonify({"status": "error", "message": "ID lipsă"}), 400
+    data = load_daily_tasks()
+    data["tasks"] = [t for t in data["tasks"] if t["id"] != task_id]
+    # Also remove all checks for this task
+    for date_key in data["checks"]:
+        data["checks"][date_key] = [tid for tid in data["checks"][date_key] if tid != task_id]
+    save_daily_tasks(data)
+    return jsonify({"status": "success"})
+
+@app.route('/api/daily-tasks/check', methods=['POST'])
+@requires_auth
+def check_daily_task():
+    req = request.json or {}
+    task_id = req.get('id')
+    date = req.get('date', datetime.now().strftime("%Y-%m-%d"))
+    done = req.get('done', True)  # True = bifat, False = debifat
+    if not task_id:
+        return jsonify({"status": "error", "message": "ID lipsă"}), 400
+    data = load_daily_tasks()
+    if date not in data["checks"]:
+        data["checks"][date] = []
+    if done:
+        if task_id not in data["checks"][date]:
+            data["checks"][date].append(task_id)
+    else:
+        data["checks"][date] = [tid for tid in data["checks"][date] if tid != task_id]
+    save_daily_tasks(data)
+    return jsonify({"status": "success"})
+
+@app.route('/api/daily-tasks/history', methods=['GET'])
+@requires_auth
+def daily_tasks_history():
+    """Returns check history for the last N days per task."""
+    days = int(request.args.get('days', 30))
+    data = load_daily_tasks()
+    end = datetime.now()
+    start = end - timedelta(days=days)
+    # Build list of dates
+    date_range = []
+    cur = start
+    while cur <= end:
+        date_range.append(cur.strftime("%Y-%m-%d"))
+        cur += timedelta(days=1)
+    result = []
+    for task in data["tasks"]:
+        tid = task["id"]
+        # Count from created_at
+        created = task.get("created_at", date_range[0])
+        days_active = max(1, (datetime.now() - datetime.strptime(max(created, date_range[0]), "%Y-%m-%d")).days + 1)
+        checked_dates = [d for d in date_range if d >= created and tid in data["checks"].get(d, [])]
+        possible_dates = [d for d in date_range if d >= created]
+        result.append({
+            "id": tid,
+            "name": task["name"],
+            "emoji": task.get("emoji", "✅"),
+            "created_at": created,
+            "date_range": date_range,
+            "checked_dates": checked_dates,
+            "days_done": len(checked_dates),
+            "days_possible": len(possible_dates),
+            "streak_pct": round(len(checked_dates) / max(len(possible_dates), 1) * 100)
+        })
+    return jsonify({"tasks": result, "checks": data["checks"]})
+
+# ============ FINANCE / BANI ============
+
+def _load_finance():
+    if os.path.exists(FINANCE_FILE):
+        with open(FINANCE_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"accounts": [], "transactions": [], "debts": [], "inventory": [], "investment_log": []}
+
+def _save_finance(data):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(FINANCE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+def _calc_balance(account_id, transactions):
+    """Calculate current balance for one account (all tx types included)."""
+    total = 0.0
+    for tx in transactions:
+        if tx.get('account_id') == account_id:
+            if tx.get('type') == 'in':
+                total += float(tx.get('amount', 0))
+            else:
+                total -= float(tx.get('amount', 0))
+    return round(total, 2)
+
+def _calc_inv_summary(inventory, investment_log):
+    """Calculate investment statistics for the Investment Hub."""
+    active = [i for i in inventory if i.get('status') == 'active']
+    sold   = [i for i in inventory if i.get('status') == 'sold']
+
+    capital_invested   = sum(float(i.get('cost_basis', 0)) for i in inventory)
+    estimated_value    = sum(float(i.get('estimated_value', 0)) for i in active)
+    potential_profit   = estimated_value - sum(float(i.get('cost_basis', 0)) for i in active)
+
+    total_recovered    = sum(float(i.get('sold_amount', 0)) for i in sold)
+    total_cost_sold    = sum(float(i.get('cost_basis', 0)) for i in sold)
+    realized_profit    = total_recovered - total_cost_sold
+
+    # Breakeven: percentage of total invested that has been recovered via sales
+    breakeven_pct = round((total_recovered / capital_invested * 100) if capital_invested > 0 else 0, 1)
+    breakeven_pct = min(breakeven_pct, 100.0)
+
+    return {
+        'capital_invested':  round(capital_invested, 2),
+        'estimated_value':   round(estimated_value, 2),
+        'potential_profit':  round(potential_profit, 2),
+        'potential_roi_pct': round((potential_profit / capital_invested * 100) if capital_invested > 0 else 0, 1),
+        'total_recovered':   round(total_recovered, 2),
+        'realized_profit':   round(realized_profit, 2),
+        'breakeven_pct':     breakeven_pct,
+        'active_count':      len(active),
+        'sold_count':        len(sold),
+    }
+
+@app.route('/bani')
+@requires_auth
+def bani_page():
+    return render_template('finance.html', active_page='bani')
+
+@app.route('/api/finance/data', methods=['GET'])
+@requires_auth
+def finance_data():
+    data = _load_finance()
+    accounts     = data.get('accounts', [])
+    transactions = data.get('transactions', [])
+    debts        = data.get('debts', [])
+    inventory    = data.get('inventory', [])
+    inv_log      = data.get('investment_log', [])
+
+    # Attach balances to accounts
+    for acc in accounts:
+        acc['balance'] = _calc_balance(acc['id'], transactions)
+
+    total_balance = sum(a['balance'] for a in accounts)
+
+    # P&L excludes invest/recover/transfer tags so totals reflect real cash flow
+    real_in  = sum(float(t['amount']) for t in transactions
+                   if t.get('type') == 'in'  and t.get('tag') not in ('transfer',))
+    real_out = sum(float(t['amount']) for t in transactions
+                   if t.get('type') == 'out' and t.get('tag') not in ('invest', 'transfer'))
+
+    inv_summary = _calc_inv_summary(inventory, inv_log)
+
+    return jsonify({
+        'accounts':      accounts,
+        'transactions':  sorted(transactions, key=lambda x: x.get('date',''), reverse=True),
+        'debts':         debts,
+        'inventory':     sorted(inventory, key=lambda x: x.get('date_bought',''), reverse=True),
+        'investment_log': sorted(inv_log, key=lambda x: x.get('date',''), reverse=True),
+        'summary': {
+            'total':     round(total_balance, 2),
+            'total_in':  round(real_in, 2),
+            'total_out': round(real_out, 2)
+        },
+        'inv_summary': inv_summary
+    })
+
+@app.route('/api/finance/history', methods=['GET'])
+@requires_auth
+def finance_history():
+    """Return cumulative balance per day, optionally filtered by account_id."""
+    account_id = request.args.get('account_id', None)
+    days_back = int(request.args.get('days', 60))
+    data = _load_finance()
+    transactions = data.get('transactions', [])
+    accounts = data.get('accounts', [])
+
+    if account_id and account_id != 'all':
+        txs = [t for t in transactions if t.get('account_id') == account_id]
+    else:
+        txs = transactions
+
+    # Build day-by-day history
+    today = datetime.now().date()
+    start_date = today - timedelta(days=days_back)
+    day_deltas = {}
+    for tx in txs:
+        d = tx.get('date', '')
+        try:
+            dt = datetime.strptime(d, '%Y-%m-%d').date()
+        except:
+            continue
+        if dt < start_date:
+            continue
+        delta = float(tx.get('amount', 0)) * (1 if tx.get('type') == 'in' else -1)
+        day_deltas[d] = day_deltas.get(d, 0) + delta
+
+    # Start balance = all transactions before start_date
+    start_balance = 0.0
+    for tx in txs:
+        try:
+            dt = datetime.strptime(tx.get('date', ''), '%Y-%m-%d').date()
+            if dt < start_date:
+                start_balance += float(tx.get('amount', 0)) * (1 if tx.get('type') == 'in' else -1)
+        except:
+            pass
+
+    labels = []
+    values = []
+    running = start_balance
+    cur = start_date
+    while cur <= today:
+        d_str = cur.strftime('%Y-%m-%d')
+        running += day_deltas.get(d_str, 0)
+        labels.append(d_str)
+        values.append(round(running, 2))
+        cur += timedelta(days=1)
+
+    return jsonify({'labels': labels, 'values': values})
+
+@app.route('/api/finance/account/add', methods=['POST'])
+@requires_auth
+def finance_account_add():
+    import time
+    data = _load_finance()
+    body = request.json or {}
+    name = body.get('name', '').strip()
+    if not name:
+        return jsonify({'status': 'error', 'message': 'Nume lipsă'}), 400
+    acc = {
+        'id': f"acc_{int(time.time()*1000)}",
+        'name': name,
+        'color': body.get('color', '#7c6aff'),
+        'icon': body.get('icon', '💰')
+    }
+    data.setdefault('accounts', []).append(acc)
+    _save_finance(data)
+    return jsonify({'status': 'success', 'account': acc})
+
+@app.route('/api/finance/account/edit', methods=['POST'])
+@requires_auth
+def finance_account_edit():
+    data = _load_finance()
+    body = request.json or {}
+    acc_id = body.get('id')
+    for acc in data.get('accounts', []):
+        if acc['id'] == acc_id:
+            if 'name' in body: acc['name'] = body['name']
+            if 'color' in body: acc['color'] = body['color']
+            if 'icon' in body: acc['icon'] = body['icon']
+            break
+    _save_finance(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/finance/account/delete', methods=['POST'])
+@requires_auth
+def finance_account_delete():
+    data = _load_finance()
+    body = request.json or {}
+    acc_id = body.get('id')
+    data['accounts'] = [a for a in data.get('accounts', []) if a['id'] != acc_id]
+    data['transactions'] = [t for t in data.get('transactions', []) if t.get('account_id') != acc_id]
+    _save_finance(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/finance/transaction/add', methods=['POST'])
+@requires_auth
+def finance_transaction_add():
+    import time
+    data = _load_finance()
+    body = request.json or {}
+    account_id = body.get('account_id', '')
+    amount = body.get('amount', 0)
+    tx_type = body.get('type', 'in')  # 'in' or 'out'
+    try:
+        amount = float(amount)
+        if amount <= 0:
+            raise ValueError
+    except:
+        return jsonify({'status': 'error', 'message': 'Sumă invalidă'}), 400
+    tx = {
+        'id': f"tx_{int(time.time()*1000)}",
+        'account_id': account_id,
+        'amount': amount,
+        'type': tx_type,
+        'note': body.get('note', '').strip(),
+        'date': body.get('date', datetime.now().strftime('%Y-%m-%d')),
+        'created_at': datetime.now().isoformat()
+    }
+    data.setdefault('transactions', []).append(tx)
+    _save_finance(data)
+    # Return updated balance for this account
+    new_balance = _calc_balance(account_id, data['transactions'])
+    return jsonify({'status': 'success', 'transaction': tx, 'new_balance': new_balance})
+
+@app.route('/api/finance/transaction/delete', methods=['POST'])
+@requires_auth
+def finance_transaction_delete():
+    data = _load_finance()
+    body = request.json or {}
+    tx_id = body.get('id')
+    data['transactions'] = [t for t in data.get('transactions', []) if t['id'] != tx_id]
+    _save_finance(data)
+    return jsonify({'status': 'success'})
+
+# --- DATORII ---
+@app.route('/api/finance/debt/add', methods=['POST'])
+@requires_auth
+def finance_debt_add():
+    import time
+    data = _load_finance()
+    body = request.json or {}
+    name = body.get('name', '').strip()
+    amount = body.get('amount', 0)
+    try:
+        amount = float(amount)
+        if amount <= 0: raise ValueError
+    except:
+        return jsonify({'status': 'error', 'message': 'Sumă invalidă'}), 400
+    debt = {
+        'id': f"debt_{int(time.time()*1000)}",
+        'name': name,
+        'amount': amount,
+        'direction': body.get('direction', 'owed_to_me'),  # 'owed_to_me' or 'i_owe'
+        'reason': body.get('reason', '').strip(),
+        'date': body.get('date', datetime.now().strftime('%Y-%m-%d')),
+        'settled': False,
+        'created_at': datetime.now().isoformat()
+    }
+    data.setdefault('debts', []).append(debt)
+    _save_finance(data)
+    return jsonify({'status': 'success', 'debt': debt})
+
+@app.route('/api/finance/debt/settle', methods=['POST'])
+@requires_auth
+def finance_debt_settle():
+    data = _load_finance()
+    body = request.json or {}
+    debt_id = body.get('id')
+    for d in data.get('debts', []):
+        if d['id'] == debt_id:
+            d['settled'] = not d.get('settled', False)
+            d['settled_at'] = datetime.now().isoformat()
+            break
+    _save_finance(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/finance/debt/delete', methods=['POST'])
+@requires_auth
+def finance_debt_delete():
+    data = _load_finance()
+    body = request.json or {}
+    debt_id = body.get('id')
+    data['debts'] = [d for d in data.get('debts', []) if d['id'] != debt_id]
+    _save_finance(data)
+    return jsonify({'status': 'success'})
+
+# --- TRANSFER ÎNTRE CONTURI ---
+@app.route('/api/finance/transfer', methods=['POST'])
+@requires_auth
+def finance_transfer():
+    """Move money from one account to another. Creates 2 tagged transactions."""
+    import time
+    data = _load_finance()
+    body = request.json or {}
+    src_id  = body.get('source_account_id', '')
+    dst_id  = body.get('dest_account_id', '')
+    amount  = body.get('amount', 0)
+    note    = body.get('note', '').strip()
+    date    = body.get('date', datetime.now().strftime('%Y-%m-%d'))
+
+    try:
+        amount = float(amount)
+        if amount <= 0: raise ValueError
+    except:
+        return jsonify({'status': 'error', 'message': 'Sumă invalidă'}), 400
+
+    if src_id == dst_id:
+        return jsonify({'status': 'error', 'message': 'Conturile sursă și destinație sunt identice'}), 400
+
+    ts = int(time.time() * 1000)
+    transfer_ref = f"transfer_{ts}"
+    out_tx = {
+        'id': f"tx_{ts}_out",
+        'account_id': src_id,
+        'amount': amount,
+        'type': 'out',
+        'tag': 'transfer',
+        'note': note or f'Transfer → cont',
+        'transfer_ref': transfer_ref,
+        'date': date,
+        'created_at': datetime.now().isoformat()
+    }
+    in_tx = {
+        'id': f"tx_{ts}_in",
+        'account_id': dst_id,
+        'amount': amount,
+        'type': 'in',
+        'tag': 'transfer',
+        'note': note or f'Transfer ← cont',
+        'transfer_ref': transfer_ref,
+        'date': date,
+        'created_at': datetime.now().isoformat()
+    }
+    data.setdefault('transactions', []).extend([out_tx, in_tx])
+    _save_finance(data)
+    return jsonify({'status': 'success', 'transfer_ref': transfer_ref})
+
+
+# --- INVEST MONEY ---
+@app.route('/api/finance/invest', methods=['POST'])
+@requires_auth
+def finance_invest():
+    """Deduct from source account and add product to inventory."""
+    import time
+    data = _load_finance()
+    body = request.json or {}
+    acc_id   = body.get('source_account_id', '')
+    amount   = body.get('amount', 0)
+    name     = body.get('name', '').strip()
+    est_val  = body.get('estimated_value', 0)
+    note     = body.get('note', '').strip()
+    date     = body.get('date', datetime.now().strftime('%Y-%m-%d'))
+
+    try:
+        amount  = float(amount)
+        est_val = float(est_val) if est_val else amount
+        if amount <= 0: raise ValueError
+    except:
+        return jsonify({'status': 'error', 'message': 'Sumă invalidă'}), 400
+
+    if not name:
+        return jsonify({'status': 'error', 'message': 'Introduceți un nume pentru produs'}), 400
+
+    ts = int(time.time() * 1000)
+    # Transaction that reduces account balance
+    tx = {
+        'id': f"tx_{ts}",
+        'account_id': acc_id,
+        'amount': amount,
+        'type': 'out',
+        'tag': 'invest',
+        'note': f'Investiție: {name}',
+        'date': date,
+        'created_at': datetime.now().isoformat()
+    }
+    inv_id = f"inv_{ts}"
+    inv_item = {
+        'id': inv_id,
+        'name': name,
+        'cost_basis': amount,
+        'estimated_value': est_val,
+        'source_account_id': acc_id,
+        'date_bought': date,
+        'status': 'active',
+        'sold_at': None,
+        'sold_amount': None,
+        'sold_to_account_id': None,
+        'note': note,
+        'created_at': datetime.now().isoformat()
+    }
+    inv_log = {
+        'id': f"ilog_{ts}",
+        'type': 'invest',
+        'inventory_id': inv_id,
+        'amount': amount,
+        'account_id': acc_id,
+        'profit': None,
+        'date': date,
+        'note': note
+    }
+    data.setdefault('transactions', []).append(tx)
+    data.setdefault('inventory', []).append(inv_item)
+    data.setdefault('investment_log', []).append(inv_log)
+    _save_finance(data)
+    return jsonify({'status': 'success', 'inventory_item': inv_item})
+
+
+# --- RECOVER FUNDS (SELL) ---
+@app.route('/api/finance/recover', methods=['POST'])
+@requires_auth
+def finance_recover():
+    """Mark inventory item as sold and credit dest account. Calculate profit."""
+    import time
+    data = _load_finance()
+    body = request.json or {}
+    inv_id   = body.get('inventory_id', '')
+    dst_id   = body.get('dest_account_id', '')
+    amount   = body.get('amount', 0)
+    note     = body.get('note', '').strip()
+    date     = body.get('date', datetime.now().strftime('%Y-%m-%d'))
+
+    try:
+        amount = float(amount)
+        if amount <= 0: raise ValueError
+    except:
+        return jsonify({'status': 'error', 'message': 'Sumă invalidă'}), 400
+
+    inv_item = next((i for i in data.get('inventory', []) if i['id'] == inv_id), None)
+    if not inv_item:
+        return jsonify({'status': 'error', 'message': 'Produs negăsit'}), 404
+    if inv_item.get('status') == 'sold':
+        return jsonify({'status': 'error', 'message': 'Produsul a fost deja vândut'}), 400
+
+    profit = round(amount - float(inv_item.get('cost_basis', 0)), 2)
+    ts = int(time.time() * 1000)
+
+    # Update inventory
+    inv_item['status']             = 'sold'
+    inv_item['sold_at']            = date
+    inv_item['sold_amount']        = amount
+    inv_item['sold_to_account_id'] = dst_id
+
+    # Transaction crediting dest account
+    tx = {
+        'id': f"tx_{ts}",
+        'account_id': dst_id,
+        'amount': amount,
+        'type': 'in',
+        'tag': 'recover',
+        'note': note or f'Vânzare: {inv_item["name"]}',
+        'date': date,
+        'created_at': datetime.now().isoformat()
+    }
+    inv_log = {
+        'id': f"ilog_{ts}",
+        'type': 'recover',
+        'inventory_id': inv_id,
+        'name': inv_item['name'],
+        'amount': amount,
+        'cost_basis': inv_item.get('cost_basis', 0),
+        'account_id': dst_id,
+        'profit': profit,
+        'date': date,
+        'note': note
+    }
+    data.setdefault('transactions', []).append(tx)
+    data.setdefault('investment_log', []).append(inv_log)
+    _save_finance(data)
+    return jsonify({'status': 'success', 'profit': profit, 'transaction': tx})
+
+
+# --- INVENTORY CRUD ---
+@app.route('/api/finance/inventory/edit', methods=['POST'])
+@requires_auth
+def finance_inventory_edit():
+    data = _load_finance()
+    body = request.json or {}
+    inv_id = body.get('id')
+    for item in data.get('inventory', []):
+        if item['id'] == inv_id:
+            if 'name' in body:            item['name']            = body['name']
+            if 'cost_basis' in body:      item['cost_basis']      = float(body['cost_basis'])
+            if 'estimated_value' in body: item['estimated_value'] = float(body['estimated_value'])
+            if 'note' in body:            item['note']            = body['note']
+            break
+    _save_finance(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/finance/inventory/delete', methods=['POST'])
+@requires_auth
+def finance_inventory_delete():
+    data = _load_finance()
+    body = request.json or {}
+    inv_id = body.get('id')
+    item = next((i for i in data.get('inventory', []) if i['id'] == inv_id), None)
+    if item and item.get('status') == 'sold':
+        return jsonify({'status': 'error', 'message': 'Nu poți șterge un produs vândut'}), 400
+    data['inventory'] = [i for i in data.get('inventory', []) if i['id'] != inv_id]
+    # Also remove associated invest log + reverse the account deduction tx
+    data['investment_log'] = [l for l in data.get('investment_log', [])
+                               if not (l.get('inventory_id') == inv_id and l.get('type') == 'invest')]
+    _save_finance(data)
+    return jsonify({'status': 'success'})
+
+
 if __name__ == '__main__':
-    print("🌐 Pornesc Dashboard-ul Chronos...")
+    print("Pornesc Dashboard-ul Chronos...")
     app.run(host='0.0.0.0', port=5000, debug=True)

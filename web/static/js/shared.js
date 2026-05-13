@@ -33,8 +33,12 @@ function closeModal(id) {
 function offsetDate(days) {
     const d = new Date();
     d.setDate(d.getDate() + days);
-    return d.toISOString().split('T')[0];
+    // Corectie pentru fusul orar local
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    const localISOTime = (new Date(d - tzOffset)).toISOString().slice(0, 10);
+    return localISOTime;
 }
+
 
 // Format date
 function fmtDate(dateStr) {

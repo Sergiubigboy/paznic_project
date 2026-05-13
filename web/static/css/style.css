@@ -1131,3 +1131,18 @@ input[type="number"]:focus, input[type="date"]:focus {
     0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
     40% { opacity: 1; transform: scale(1); }
 }
+
+/* ===================== FIX NAV & TARGET BARS ===================== */
+@media (min-width: 701px) {
+    .mobile-nav { display: none !important; }
+}
+
+.target-progress-bar .progress-bar-fill {
+    height: 100%; 
+    background: var(--primary); 
+    border-radius: 4px; 
+    transition: width 0.3s;
+}
+.target-progress-bar .progress-bar-fill.complete { 
+    background: var(--teal); 
+}

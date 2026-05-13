@@ -3,8 +3,7 @@
 const output = document.getElementById('terminalOutput');
 let cmdHistory = [];
 let historyIdx = -1;
-let pendingEntryPhotoFiles = [];
-let currentEntryPhotoDate = null;
+let isConnected = false;
 
 function scrollToBottom() {
     output.scrollTop = output.scrollHeight;
@@ -82,6 +81,11 @@ async function sendCommand() {
     const text = input.value.trim();
     if (!text) return;
 
+    if (!isConnected) {
+        appendLine('ERROR', 'Serverul nu este conectat. Verifică că aplicația Python rulează.', 'error');
+        return;
+    }
+
     // Add to history
     cmdHistory.push(text);
     historyIdx = -1;
@@ -92,14 +96,21 @@ async function sendCommand() {
     appendLine('You', text, 'user');
 
     // Show thinking
-    const thinking = showThinking();
+    showThinking();
 
     try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+
         const res = await fetch('/api/terminal/command', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text })
-        }).then(r => r.json());
+            body: JSON.stringify({ text }),
+            signal: controller.signal
+        }).then(r => {
+            clearTimeout(timeout);
+            return r.json();
+        });
 
         removeThinking();
 
@@ -120,41 +131,54 @@ async function sendCommand() {
             appendHTML('Intent', badgesHtml, 'info');
         }
 
-        // Show response
         if (res.reply) {
             appendLine('Chronos', res.reply, 'system');
         }
 
-        if (res.actions) {
+        if (res.actions && res.actions.length > 0) {
             res.actions.forEach(a => appendLine('→', a, 'info'));
         }
 
-        if (!res.reply && !res.actions) {
+        if (!res.reply && (!res.actions || res.actions.length === 0)) {
             appendLine('→', 'Comandă procesată.', 'info');
         }
 
     } catch (e) {
         removeThinking();
-        appendLine('ERROR', 'Nu m-am putut conecta la dispatcher.', 'error');
-        updateStatus(false);
+        if (e.name === 'AbortError') {
+            appendLine('ERROR', 'Timeout — serverul nu a răspuns în 30 secunde. E posibil ca procesarea AI să fie lentă.', 'error');
+        } else {
+            appendLine('ERROR', 'Nu m-am putut conecta la dispatcher. Verifică că aplicația Chronos rulează.', 'error');
+            updateStatus(false);
+        }
     }
 }
 
 function updateStatus(connected) {
+    isConnected = connected;
     const dot = document.getElementById('statusDot');
     const txt = document.getElementById('statusText');
-    if (dot) dot.style.background = connected ? 'var(--green)' : 'var(--red)';
+    if (dot) {
+        dot.style.background = connected ? 'var(--green)' : 'var(--red)';
+        dot.style.boxShadow = connected ? '0 0 8px var(--green)' : '0 0 8px var(--red)';
+    }
     if (txt) txt.textContent = connected ? 'Conectat' : 'Deconectat';
 }
 
 // Ping to check connection
 async function pingServer() {
     try {
-        await fetch('/api/terminal/ping');
-        updateStatus(true);
+        const res = await fetch('/api/terminal/ping');
+        if (res.ok) {
+            updateStatus(true);
+        } else {
+            updateStatus(false);
+        }
     } catch {
         updateStatus(false);
     }
 }
+
+// Initial ping + periodic
 pingServer();
 setInterval(pingServer, 30000);

@@ -1,0 +1,460 @@
+{% extends "base.html" %}
+{% block title %}Bani — Chronos OS{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/finance.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="container-wide" id="finPage">
+
+  <!-- Page header -->
+  <div class="section-header" style="margin-bottom:20px">
+    <div>
+      <div class="section-title">💰 Bani</div>
+      <div class="section-subtitle">Gestiunea ta financiară personală</div>
+    </div>
+  </div>
+
+  <!-- Tab switcher -->
+  <div class="fin-tabs">
+    <button class="fin-tab active" id="tabConturi"    onclick="switchTab('conturi')">💳 Conturi Lichide</button>
+    <button class="fin-tab"        id="tabInvestitii" onclick="switchTab('investitii')">📦 Investiții & Marfă</button>
+    <button class="fin-tab"        id="tabDatorii"    onclick="switchTab('datorii')">🤝 Datorii</button>
+  </div>
+
+  <!-- ===== TAB: CONTURI LICHIDE ===== -->
+  <div class="fin-tab-panel active" id="panelConturi">
+
+    <!-- Summary row -->
+    <div class="fin-summary-row">
+      <div class="fin-sum-card fin-sum-total">
+        <div class="fin-sum-label">Disponibil Imediat</div>
+        <div class="fin-sum-value" id="sumTotal">—</div>
+        <div class="fin-sum-sub">suma tuturor conturilor</div>
+      </div>
+      <div class="fin-sum-card fin-sum-in">
+        <div class="fin-sum-label">Total intrat</div>
+        <div class="fin-sum-value" id="sumIn">—</div>
+        <div class="fin-sum-sub">all time (fără transferuri)</div>
+      </div>
+      <div class="fin-sum-card fin-sum-out">
+        <div class="fin-sum-label">Total ieșit</div>
+        <div class="fin-sum-value" id="sumOut">—</div>
+        <div class="fin-sum-sub">all time (fără investiții)</div>
+      </div>
+    </div>
+
+    <!-- Accounts header + actions -->
+    <div class="fin-accounts-header">
+      <div class="fin-accounts-title">Conturile mele</div>
+      <button class="fin-header-action-btn" id="transferBtnTop" onclick="openTransferModal()">⇄ Transfer</button>
+    </div>
+
+    <!-- Accounts grid -->
+    <div class="fin-accounts-grid" id="accountsGrid">
+      <div class="fin-acc-add-card" id="addAccountCard" onclick="openNewAccountModal()">
+        <div class="fin-acc-add-icon">＋</div>
+        <div>Cont nou</div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="fin-charts-row">
+      <div class="fin-chart-section">
+        <div class="fin-chart-header">
+          <div class="fin-chart-title">📈 Evoluție sold</div>
+          <div class="fin-chart-controls">
+            <select class="fin-chart-select" id="chartAccFilter" onchange="reloadChart()">
+              <option value="all">Toate conturile</option>
+            </select>
+            <select class="fin-chart-select" id="chartDaysFilter" onchange="reloadChart()">
+              <option value="30">30 zile</option>
+              <option value="60" selected>60 zile</option>
+              <option value="90">90 zile</option>
+            </select>
+          </div>
+        </div>
+        <div class="fin-chart-wrap">
+          <canvas id="lineChart"></canvas>
+        </div>
+      </div>
+
+      <div class="fin-chart-section">
+        <div class="fin-chart-header">
+          <div class="fin-chart-title">🍩 Distribuție</div>
+        </div>
+        <div class="fin-donut-wrap">
+          <canvas id="donutChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Transaction log -->
+    <div class="fin-log-section">
+      <div class="fin-log-header">
+        <div class="fin-log-title">Tranzacții recente</div>
+        <div class="fin-log-filters">
+          <button class="fin-filter-btn active" id="filterAll"      onclick="setTxFilter('all')">Toate</button>
+          <button class="fin-filter-btn"        id="filterIn"       onclick="setTxFilter('in')">Intrări</button>
+          <button class="fin-filter-btn"        id="filterOut"      onclick="setTxFilter('out')">Ieșiri</button>
+          <button class="fin-filter-btn"        id="filterTransfer" onclick="setTxFilter('transfer')">⇄ Transfer</button>
+        </div>
+      </div>
+      <div class="fin-tx-wrap">
+        <table class="fin-tx-table">
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Cont</th>
+              <th>Notă</th>
+              <th>Sumă</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="txTableBody">
+            <tr><td colspan="5" class="empty-state">Se încarcă...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div><!-- /panelConturi -->
+
+
+  <!-- ===== TAB: INVESTIȚII & MARFĂ ===== -->
+  <div class="fin-tab-panel" id="panelInvestitii">
+
+    <!-- Investment stat header -->
+    <div class="fin-inv-stats-row">
+      <div class="fin-inv-stat-card inv-cost">
+        <div class="fin-inv-stat-icon">💸</div>
+        <div class="fin-inv-stat-label">Capital Investit</div>
+        <div class="fin-inv-stat-value" id="invCapital">—</div>
+        <div class="fin-inv-stat-sub" id="invActiveCount">— produse active</div>
+      </div>
+      <div class="fin-inv-stat-card inv-value">
+        <div class="fin-inv-stat-icon">📦</div>
+        <div class="fin-inv-stat-label">Valoare Estimată Vânzare</div>
+        <div class="fin-inv-stat-value" id="invEstValue">—</div>
+        <div class="fin-inv-stat-sub" id="invSoldCount">— vândute</div>
+      </div>
+      <div class="fin-inv-stat-card inv-profit">
+        <div class="fin-inv-stat-icon">🚀</div>
+        <div class="fin-inv-stat-label">Profit Potențial (ROI)</div>
+        <div class="fin-inv-stat-value" id="invProfit">—</div>
+        <div class="fin-inv-stat-sub" id="invRoiPct">0.0%</div>
+      </div>
+    </div>
+
+    <!-- Breakeven Tracker -->
+    <div class="fin-breakeven-section">
+      <div class="fin-breakeven-header">
+        <div class="fin-breakeven-title">⚖️ Breakeven Tracker</div>
+        <div class="fin-breakeven-values">
+          <span id="breakevenRecovered">0 RON</span>
+          <span class="fin-breakeven-sep"> din </span>
+          <span id="breakevenTotal">0 RON</span>
+          <span class="fin-breakeven-sep"> recuperat</span>
+        </div>
+      </div>
+      <div class="fin-breakeven-bar-track">
+        <div class="fin-breakeven-bar" id="breakevenBar" style="width:0%">
+          <span class="fin-breakeven-pct" id="breakevenPct">0%</span>
+        </div>
+      </div>
+      <div class="fin-breakeven-legend">
+        <span class="fin-breakeven-legend-item red">● Pierdere</span>
+        <span class="fin-breakeven-legend-item orange">● Recuperare</span>
+        <span class="fin-breakeven-legend-item green">● Profit</span>
+      </div>
+      <div class="fin-breakeven-realized" id="breakevenRealized"></div>
+    </div>
+
+    <!-- Inventory section header -->
+    <div class="fin-inv-section-header">
+      <div class="fin-inv-section-title">Produse în Stoc</div>
+      <div class="fin-inv-header-actions">
+        <label class="fin-show-settled">
+          <input type="checkbox" id="showSoldItems" onchange="renderInventoryTab()" style="accent-color:var(--primary)">
+          Arată vândute
+        </label>
+        <button class="fin-header-action-btn primary" onclick="openInvestModal()">＋ Investiție Nouă</button>
+      </div>
+    </div>
+
+    <!-- Inventory grid -->
+    <div class="fin-inv-grid" id="inventoryGrid">
+      <div class="empty-state" style="padding:40px 0;grid-column:1/-1;text-align:center">
+        Nicio investiție înregistrată. Apasă <strong>＋ Investiție Nouă</strong> pentru a începe.
+      </div>
+    </div>
+
+    <!-- Investment transaction log -->
+    <div class="fin-log-section" style="margin-top:12px">
+      <div class="fin-log-header">
+        <div class="fin-log-title">📋 Log Vânzări & Investiții</div>
+      </div>
+      <div class="fin-tx-wrap">
+        <table class="fin-tx-table">
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Tip</th>
+              <th>Produs</th>
+              <th>Sumă</th>
+              <th>Profit</th>
+            </tr>
+          </thead>
+          <tbody id="invLogBody">
+            <tr><td colspan="5" class="empty-state">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /panelInvestitii -->
+
+
+  <!-- ===== TAB: DATORII ===== -->
+  <div class="fin-tab-panel" id="panelDatorii">
+
+    <!-- Net balance -->
+    <div class="fin-debt-net">
+      <div class="fin-debt-net-info">
+        <div class="fin-debt-net-label">Sold net datorii</div>
+        <div class="fin-debt-net-value" id="debtNetVal">—</div>
+        <div class="fin-debt-net-sub" id="debtNetSub"></div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openDebtModal()">＋ Datorie nouă</button>
+    </div>
+
+    <!-- Two columns: owed to me / I owe -->
+    <div class="fin-debts-row">
+      <div class="fin-debts-col">
+        <div class="fin-debts-col-title owed">
+          <span>💚 Ei îmi datorează</span>
+          <span class="fin-debts-col-sum" id="owedToMeSum">0 RON</span>
+        </div>
+        <div id="owedToMeList">
+          <div class="empty-state" style="padding:20px 0;text-align:left">Nimeni nu îți datorează nimic 🎉</div>
+        </div>
+      </div>
+
+      <div class="fin-debts-col">
+        <div class="fin-debts-col-title owing">
+          <span>❤️ Eu datorez</span>
+          <span class="fin-debts-col-sum" id="iOweSum">0 RON</span>
+        </div>
+        <div id="iOweList">
+          <div class="empty-state" style="padding:20px 0;text-align:left">Nu ești dator la nimeni 👌</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Show settled toggle -->
+    <label class="fin-show-settled">
+      <input type="checkbox" id="showSettled" onchange="renderDebts()" style="accent-color:var(--primary)">
+      Arată și datoriile reglate
+    </label>
+  </div><!-- /panelDatorii -->
+
+</div><!-- /container-wide -->
+
+
+<!-- ===== MODALS ===== -->
+
+<!-- New/Edit Account Modal -->
+<div class="modal-overlay" id="accountModal">
+  <div class="modal">
+    <h2 id="accountModalTitle">Cont nou</h2>
+
+    <div class="form-group">
+      <label class="form-label">Nume cont</label>
+      <input type="text" id="accNameInput" class="form-input" placeholder="ex: Cash, Card Revolut, Economii…" maxlength="30">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Icon</label>
+      <div class="fin-icon-picker" id="iconPicker">
+        {% for ico in ['💵','💳','🏦','💰','🐖','📈','💎','🏠','🚗','✈️','🎓','💻'] %}
+        <div class="fin-icon-opt" onclick="selectIcon(this, '{{ ico }}')" data-icon="{{ ico }}">{{ ico }}</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Culoare</label>
+      <div class="fin-color-picker-row" id="colorPicker">
+        {% for col in ['#7c6aff','#00d4aa','#ff4d6d','#ff8c42','#ffd166','#2ed573','#00b0ff','#e040fb','#ff6b35','#00e5ff'] %}
+        <div class="fin-color-opt" style="background:{{ col }}" onclick="selectColor(this, '{{ col }}')" data-color="{{ col }}"></div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <input type="hidden" id="accEditId" value="">
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" id="saveAccountBtn" onclick="saveAccount()">Salvează</button>
+      <button class="btn btn-ghost" onclick="closeAccountModal()">Anulează</button>
+      <button class="btn btn-danger btn-sm" id="deleteAccountBtn" style="margin-left:auto;display:none" onclick="deleteAccount()">🗑️ Șterge cont</button>
+    </div>
+  </div>
+</div>
+
+<!-- Transfer Modal -->
+<div class="modal-overlay" id="transferModal">
+  <div class="modal">
+    <h2>⇄ Transfer între conturi</h2>
+
+    <div class="form-group">
+      <label class="form-label">Cont Sursă</label>
+      <select class="form-select" id="transferSrc"></select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Cont Destinație</label>
+      <select class="form-select" id="transferDst"></select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Sumă (RON)</label>
+      <input type="number" id="transferAmount" class="form-input" placeholder="0.00" min="0.01" step="0.01">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Notă (opțional)</label>
+      <input type="text" id="transferNote" class="form-input" placeholder="ex: mutare economii…" maxlength="100">
+    </div>
+
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" onclick="saveTransfer()">⇄ Transferă</button>
+      <button class="btn btn-ghost" onclick="closeTransferModal()">Anulează</button>
+    </div>
+  </div>
+</div>
+
+<!-- Invest Modal -->
+<div class="modal-overlay" id="investModal">
+  <div class="modal">
+    <h2>📦 Investiție Nouă</h2>
+
+    <div class="form-group">
+      <label class="form-label">Cont Sursă (de unde ies banii)</label>
+      <select class="form-select" id="investSrcAccount"></select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Sumă investită (RON)</label>
+      <input type="number" id="investAmount" class="form-input" placeholder="0.00" min="0.01" step="0.01">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Nume Produs</label>
+      <input type="text" id="investName" class="form-input" placeholder="ex: iPhone 14, Pantofi Nike…" maxlength="80">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Preț estimat vânzare (RON)</label>
+      <input type="number" id="investEstValue" class="form-input" placeholder="0.00 (opțional)" min="0" step="0.01">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Notă (opțional)</label>
+      <input type="text" id="investNote" class="form-input" placeholder="detalii suplimentare…" maxlength="150">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Dată</label>
+      <input type="date" id="investDate" class="form-input">
+    </div>
+
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" onclick="saveInvest()">💸 Investește</button>
+      <button class="btn btn-ghost" onclick="closeInvestModal()">Anulează</button>
+    </div>
+  </div>
+</div>
+
+<!-- Recover Modal -->
+<div class="modal-overlay" id="recoverModal">
+  <div class="modal">
+    <h2 id="recoverModalTitle">💰 Vânzare Produs</h2>
+
+    <div class="fin-recover-product-info" id="recoverProductInfo"></div>
+
+    <input type="hidden" id="recoverInvId">
+
+    <div class="form-group">
+      <label class="form-label">Suma Recuperată (Preț Vânzare)</label>
+      <input type="number" id="recoverAmount" class="form-input" placeholder="0.00" min="0.01" step="0.01">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">În ce cont au intrat banii?</label>
+      <select class="form-select" id="recoverDstAccount"></select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Notă (opțional)</label>
+      <input type="text" id="recoverNote" class="form-input" placeholder="ex: vândut pe OLX…" maxlength="150">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Dată</label>
+      <input type="date" id="recoverDate" class="form-input">
+    </div>
+
+    <div class="fin-recover-profit-preview" id="recoverProfitPreview"></div>
+
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" onclick="saveRecover()">✅ Confirmă Vânzarea</button>
+      <button class="btn btn-ghost" onclick="closeRecoverModal()">Anulează</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Debt Modal -->
+<div class="modal-overlay" id="debtModal">
+  <div class="modal">
+    <h2>Datorie nouă</h2>
+
+    <div class="form-group">
+      <label class="form-label">Nume persoană</label>
+      <input type="text" id="debtName" class="form-input" placeholder="ex: Andrei, Mama…" maxlength="40">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Sumă (RON)</label>
+      <input type="number" id="debtAmount" class="form-input" placeholder="0" min="0.01" step="0.01">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Direcție</label>
+      <select class="form-select" id="debtDirection">
+        <option value="owed_to_me">💚 Ei îmi datorează mie</option>
+        <option value="i_owe">❤️ Eu datorez</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Motiv (opțional)</label>
+      <input type="text" id="debtReason" class="form-input" placeholder="ex: pizza vineri, împrumut…" maxlength="100">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Dată</label>
+      <input type="date" id="debtDate" class="form-input">
+    </div>
+
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" onclick="saveDebt()">Salvează</button>
+      <button class="btn btn-ghost" onclick="closeDebtModal()">Anulează</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/finance.js') }}"></script>
+{% endblock %}

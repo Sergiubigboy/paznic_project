@@ -30,6 +30,20 @@ async function init() {
     document.getElementById('measureDate').value = offsetDate(0);
     document.getElementById('checkDate').value = offsetDate(0);
     document.getElementById('weightDate').value = offsetDate(0);
+
+    // Highlight check when date changes
+    const checkDateEl = document.getElementById('checkDate');
+    if (checkDateEl) {
+        checkDateEl.addEventListener('change', () => {
+            const date = checkDateEl.value;
+            const existing = allDailyChecks.find(c => c.date === date);
+            if (existing) highlightCheck(existing.level);
+            else {
+                document.querySelectorAll('.check-btn').forEach(b => b.classList.remove('selected'));
+                document.getElementById('checkStatus').textContent = '';
+            }
+        });
+    }
 }
 
 // ===== DATE QUICK BUTTONS =====
@@ -328,10 +342,26 @@ function renderWeightChart() {
     if (weightChart) weightChart.destroy();
     const canvas = document.getElementById('weightChart');
     if (!canvas) return;
+    
+    let empty = document.getElementById('weightEmpty');
+    if (!empty) {
+        empty = document.createElement('div');
+        empty.id = 'weightEmpty';
+        empty.className = 'empty-state';
+        empty.style.padding = '50px 0';
+        empty.innerHTML = 'Loghează zilnic greutatea pentru grafic 💪';
+        canvas.parentElement.appendChild(empty);
+    }
+    
     if (!filtered.length) {
-        canvas.parentElement.innerHTML = '<div class="empty-state" style="padding:50px 0">Loghează zilnic greutatea pentru grafic 💪</div>';
+        empty.style.display = 'block';
+        canvas.style.display = 'none';
         return;
     }
+    
+    empty.style.display = 'none';
+    canvas.style.display = 'block';
+    
     const ctx = canvas.getContext('2d');
     const grad = ctx.createLinearGradient(0,0,0,200);
     grad.addColorStop(0,'rgba(0,212,170,0.25)'); grad.addColorStop(1,'rgba(0,212,170,0.01)');
@@ -351,10 +381,26 @@ function renderBodyChart() {
     if (bodyChart) bodyChart.destroy();
     const canvas = document.getElementById('bodyChart');
     if (!canvas) return;
+    
+    let empty = document.getElementById('bodyEmpty');
+    if (!empty) {
+        empty = document.createElement('div');
+        empty.id = 'bodyEmpty';
+        empty.className = 'empty-state';
+        empty.style.padding = '50px 0';
+        empty.innerHTML = 'Adaugă măsurători periodice pentru grafic';
+        canvas.parentElement.appendChild(empty);
+    }
+    
     if (!filtered.length) {
-        canvas.parentElement.innerHTML = '<div class="empty-state" style="padding:50px 0">Adaugă măsurători periodice pentru grafic</div>';
+        empty.style.display = 'block';
+        canvas.style.display = 'none';
         return;
     }
+    
+    empty.style.display = 'none';
+    canvas.style.display = 'block';
+
     const ctx = canvas.getContext('2d');
     const grad = ctx.createLinearGradient(0,0,0,200);
     grad.addColorStop(0,'rgba(124,106,255,0.25)'); grad.addColorStop(1,'rgba(124,106,255,0.01)');
@@ -372,7 +418,26 @@ function renderCaloriesChart() {
     if (caloriesChart) caloriesChart.destroy();
     const canvas = document.getElementById('caloriesChart');
     if (!canvas) return;
-    if (!filtered.length) { canvas.parentElement.innerHTML = '<div class="empty-state" style="padding:30px 0">Bifează check-urile zilnice</div>'; return; }
+    
+    let empty = document.getElementById('caloriesEmpty');
+    if (!empty) {
+        empty = document.createElement('div');
+        empty.id = 'caloriesEmpty';
+        empty.className = 'empty-state';
+        empty.style.padding = '30px 0';
+        empty.innerHTML = 'Bifează check-urile zilnice';
+        canvas.parentElement.appendChild(empty);
+    }
+    
+    if (!filtered.length) {
+        empty.style.display = 'block';
+        canvas.style.display = 'none';
+        return;
+    }
+    
+    empty.style.display = 'none';
+    canvas.style.display = 'block';
+    
     const COLORS = { surplus_mare: '#2ed573', mentinere: '#7c6aff', deficit: '#ffd166', deficit_mare: '#ff4d6d' };
     const VALS = { surplus_mare: 4, mentinere: 3, deficit: 2, deficit_mare: 1 };
     const ctx = canvas.getContext('2d');
@@ -380,16 +445,21 @@ function renderCaloriesChart() {
         type: 'bar',
         data: { labels: filtered.map(e => fmtDateShort(e.date).split(' ').slice(0,2).join(' ')),
             datasets: [{ data: filtered.map(e => VALS[e.level]||0), backgroundColor: filtered.map(e => COLORS[e.level]||'#1e1e30'), borderRadius: 5, borderSkipped: false }] },
-        options: { ...CHART_OPT, scales: { ...CHART_OPT.scales, y: { ...CHART_OPT.scales.y, min:0, max:4, ticks: { ...CHART_OPT.scales.y.ticks, callback: v => ['',' Def. Mare','Deficit','Menținere','Surplus'][v] } } } }
+        options: { ...CHART_OPT, scales: { ...CHART_OPT.scales, y: { ...CHART_OPT.scales.y, min:0, max:4, ticks: { ...CHART_OPT.scales.y.ticks, stepSize: 1, callback: v => ['',' Def. Mare','Deficit','Menținere','Surplus'][v] } } } }
     });
 }
 
 // ===== DAILY CHECK =====
 async function loadDailyChecks() {
     allDailyChecks = await fetch('/api/gym/daily-checks').then(r => r.json());
-    const today = offsetDate(0);
-    const todayCheck = allDailyChecks.find(c => c.date === today);
-    if (todayCheck) highlightCheck(todayCheck.level);
+    const selectedDate = document.getElementById('checkDate')?.value || offsetDate(0);
+    const selectedCheck = allDailyChecks.find(c => c.date === selectedDate);
+    if (selectedCheck) highlightCheck(selectedCheck.level);
+    else {
+        document.querySelectorAll('.check-btn').forEach(b => b.classList.remove('selected'));
+        const statusEl = document.getElementById('checkStatus');
+        if (statusEl) statusEl.textContent = '';
+    }
     renderCaloriesChart();
 }
 

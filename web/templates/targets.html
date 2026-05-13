@@ -3,19 +3,210 @@
 
 {% block title %}Chronos OS | Targeturi{% endblock %}
 
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+/* ===== TAB BAR ===== */
+.page-tab-bar {
+    display: flex; gap: 0; margin-bottom: 24px;
+    border-bottom: 2px solid var(--border);
+}
+.page-tab {
+    padding: 10px 24px; font-size: 13px; font-weight: 700;
+    color: var(--text-faint); background: none; border: none;
+    cursor: pointer; position: relative; transition: color 0.2s;
+    font-family: inherit; letter-spacing: 0.3px;
+}
+.page-tab.active { color: var(--primary); }
+.page-tab.active::after {
+    content: ''; position: absolute; bottom: -2px; left: 0; right: 0;
+    height: 2px; background: var(--primary); border-radius: 2px 2px 0 0;
+}
+.page-tab:hover:not(.active) { color: var(--text-muted); }
+
+/* ===== DAILY TASKS ===== */
+#dailyTasksSection { display: none; }
+#targetsSection { display: block; }
+
+.dt-top-row {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 20px; flex-wrap: wrap;
+}
+.dt-date-bar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1;
+}
+.dt-date-label {
+    font-size: 11px; font-weight: 700; color: var(--text-faint);
+    text-transform: uppercase; letter-spacing: 1px;
+}
+
+.dt-list { display: flex; flex-direction: column; gap: 12px; }
+
+.dt-task-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    transition: border-color 0.2s;
+}
+.dt-task-card:hover { border-color: var(--border-light); }
+.dt-task-card.dt-checked { border-color: rgba(0,212,170,0.3); background: rgba(0,212,170,0.04); }
+
+.dt-task-header {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+}
+.dt-check-btn {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 2px solid var(--border-light);
+    background: none; cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s; flex-shrink: 0; color: transparent;
+}
+.dt-check-btn.checked {
+    background: var(--teal); border-color: var(--teal); color: white;
+}
+.dt-task-name {
+    font-size: 14px; font-weight: 700; color: var(--text); flex: 1;
+}
+.dt-task-emoji { font-size: 18px; flex-shrink: 0; }
+.dt-task-meta {
+    font-size: 11px; color: var(--text-faint);
+}
+.dt-delete-btn {
+    background: none; border: none; color: var(--text-faint);
+    cursor: pointer; font-size: 13px; padding: 4px 6px;
+    border-radius: var(--radius-xs); transition: all 0.15s;
+}
+.dt-delete-btn:hover { color: var(--red); background: rgba(255,77,109,0.1); }
+
+/* Streak bar */
+.dt-streak-row {
+    display: flex; gap: 3px; align-items: flex-end; margin-top: 10px;
+    height: 28px;
+}
+.dt-streak-day {
+    flex: 1; border-radius: 3px; min-height: 4px;
+    transition: all 0.2s;
+}
+.dt-streak-day.done { background: var(--teal); }
+.dt-streak-day.miss { background: var(--surface2); }
+.dt-streak-day.future { background: var(--surface2); opacity: 0.4; }
+.dt-streak-day.no-task { background: transparent; }
+
+.dt-stats-row {
+    display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;
+}
+.dt-stat {
+    background: var(--surface2); border-radius: var(--radius-xs);
+    padding: 6px 12px; font-size: 11px;
+}
+.dt-stat strong { color: var(--primary); font-size: 14px; font-weight: 900; }
+
+/* Add task area */
+.dt-add-area {
+    background: var(--surface); border: 1px dashed var(--border-light);
+    border-radius: var(--radius); padding: 16px;
+    display: flex; gap: 10px; align-items: flex-end;
+    margin-top: 16px;
+}
+.dt-add-area input { flex: 1; }
+.dt-emoji-row {
+    display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px;
+}
+.dt-emoji-opt {
+    width: 32px; height: 32px; border-radius: var(--radius-xs);
+    border: 1.5px solid var(--border); background: none;
+    font-size: 16px; cursor: pointer; transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center;
+}
+.dt-emoji-opt.selected { border-color: var(--primary); background: rgba(124,106,255,0.1); }
+.dt-empty {
+    text-align: center; padding: 40px 20px; color: var(--text-faint); font-size: 14px;
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container">
-    <div class="section-header">
-        <div>
-            <div class="section-title">🎯 Targeturile Mele</div>
-            <div class="section-subtitle" id="targetSummary">Se încarcă...</div>
-        </div>
-        <button class="btn btn-primary" id="openAddModal">+ Adaugă</button>
+
+    <!-- TAB BAR -->
+    <div class="page-tab-bar">
+        <button class="page-tab active" id="tabTargets" onclick="switchTab('targets')">🎯 Targeturi</button>
+        <button class="page-tab" id="tabDailyTasks" onclick="switchTab('daily')">✅ Task-uri Zilnice</button>
     </div>
 
-    <div id="targetsGrid" class="targets-grid">
-        <div class="empty-state" style="grid-column:1/-1">Se încarcă...</div>
+    <!-- ===== TARGETURI SECTION ===== -->
+    <div id="targetsSection">
+        <div class="section-header">
+            <div>
+                <div class="section-title">🎯 Targeturile Mele</div>
+                <div class="section-subtitle" id="targetSummary">Se încarcă...</div>
+            </div>
+            <button class="btn btn-primary" id="openAddModal">+ Adaugă</button>
+        </div>
+
+        <div id="targetsGrid" class="targets-grid">
+            <div class="empty-state" style="grid-column:1/-1">Se încarcă...</div>
+        </div>
     </div>
+
+    <!-- ===== DAILY TASKS SECTION ===== -->
+    <div id="dailyTasksSection">
+        <div class="section-header" style="margin-bottom: 16px">
+            <div>
+                <div class="section-title">✅ Task-uri Zilnice</div>
+                <div class="section-subtitle" id="dtSubtitle">Bifează ce ai făcut azi</div>
+            </div>
+            <button class="btn btn-primary" onclick="openAddTaskModal()">+ Task Nou</button>
+        </div>
+
+        <!-- Date picker -->
+        <div class="dt-top-row">
+            <div class="dt-date-bar">
+                <span class="dt-date-label">Data:</span>
+                <button class="date-quick-btn active" onclick="setDtDate(0, this)">Azi</button>
+                <button class="date-quick-btn" onclick="setDtDate(-1, this)">Ieri</button>
+                <button class="date-quick-btn" onclick="setDtDate(-2, this)">-2z</button>
+                <button class="date-quick-btn" onclick="setDtDate(-3, this)">-3z</button>
+                <span class="date-sep">sau</span>
+                <input type="date" id="dtDateInput" class="form-input"
+                       style="max-width:150px;resize:none;min-height:0;padding:6px 10px"
+                       onchange="onDtDateChange()">
+            </div>
+            <div id="dtDateDisplay" style="font-size:12px;color:var(--text-faint)"></div>
+        </div>
+
+        <!-- Tasks list -->
+        <div id="dtList" class="dt-list">
+            <div class="dt-empty">Se încarcă...</div>
+        </div>
+
+        <!-- Add task inline form -->
+        <div class="dt-add-area" id="addTaskArea" style="display:none">
+            <div style="flex:1">
+                <div class="form-label" style="margin-bottom:6px">Nume task</div>
+                <input type="text" id="newTaskName" class="form-input" placeholder="Ex: Sală, Citit 30 min, Somn 8h..."
+                       onkeydown="if(event.key==='Enter') confirmAddTask()">
+                <div class="dt-emoji-row" id="emojiRow">
+                    <button class="dt-emoji-opt selected" data-emoji="✅" onclick="selectEmoji('✅',this)">✅</button>
+                    <button class="dt-emoji-opt" data-emoji="💪" onclick="selectEmoji('💪',this)">💪</button>
+                    <button class="dt-emoji-opt" data-emoji="📚" onclick="selectEmoji('📚',this)">📚</button>
+                    <button class="dt-emoji-opt" data-emoji="🥗" onclick="selectEmoji('🥗',this)">🥗</button>
+                    <button class="dt-emoji-opt" data-emoji="💧" onclick="selectEmoji('💧',this)">💧</button>
+                    <button class="dt-emoji-opt" data-emoji="🧘" onclick="selectEmoji('🧘',this)">🧘</button>
+                    <button class="dt-emoji-opt" data-emoji="🎯" onclick="selectEmoji('🎯',this)">🎯</button>
+                    <button class="dt-emoji-opt" data-emoji="🔧" onclick="selectEmoji('🔧',this)">🔧</button>
+                    <button class="dt-emoji-opt" data-emoji="😴" onclick="selectEmoji('😴',this)">😴</button>
+                    <button class="dt-emoji-opt" data-emoji="🚫" onclick="selectEmoji('🚫',this)">🚫</button>
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; padding-bottom: 2px">
+                <button class="btn btn-primary" onclick="confirmAddTask()">Adaugă</button>
+                <button class="btn btn-secondary" onclick="closeAddTaskModal()">✕</button>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <!-- ADD TARGET MODAL -->
@@ -70,4 +261,5 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/target.js') }}"></script>
+<script src="{{ url_for('static', filename='js/daily-tasks.js') }}"></script>
 {% endblock %}

@@ -201,7 +201,7 @@ document.getElementById('confirmAddBtn').addEventListener('click', function () {
     .then(r => r.json())
     .then(data => {
         this.disabled = false;
-        this.textContent = 'Salvează Targetul';
+        this.textContent = 'Salvează';
         if (data.status === 'success') {
             document.getElementById('addModal').classList.remove('open');
             document.getElementById('newTitle').value = '';

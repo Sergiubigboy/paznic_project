@@ -10,6 +10,41 @@ async function loadDayStatus() {
     } catch (e) {
         // Silence - status strip stays in loading state
     }
+    // Load daily tasks count separately
+    try {
+        await loadDailyTasksStatus();
+    } catch (e) {}
+}
+
+async function loadDailyTasksStatus() {
+    const data = await fetch('/api/daily-tasks').then(r => r.json());
+    const today = new Date();
+    const tzOffset = today.getTimezoneOffset() * 60000;
+    const todayStr = (new Date(today - tzOffset)).toISOString().slice(0, 10);
+
+    const tasks = data.tasks || [];
+    const checks = data.checks || {};
+    const checkedToday = (checks[todayStr] || []).length;
+    const total = tasks.length;
+
+    const pill = document.getElementById('sp-tasks');
+    const pillVal = document.getElementById('spv-tasks');
+    if (!pillVal) return;
+
+    if (total === 0) {
+        pillVal.textContent = 'Adaugă ↗';
+        pill?.classList.remove('done');
+    } else {
+        pillVal.textContent = `${checkedToday}/${total}`;
+        if (checkedToday === total && total > 0) {
+            pill?.classList.add('done');
+        } else {
+            pill?.classList.remove('done');
+        }
+    }
+
+    // Update day progress bar (4 items: weight, food, journal, tasks)
+    if (_dayStatus) renderProgressBar(_dayStatus, checkedToday === total && total > 0);
 }
 
 const FOOD_LABELS = {
@@ -47,21 +82,8 @@ function renderStatusStrip(s) {
             spW?.classList.add('done');
         } else {
             const lw = s.last_weight_ever;
-            spvW.textContent = lw ? `${lw}kg (ieri)` : 'Log ↗';
+            spvW.textContent = lw ? `${lw}kg` : 'Log ↗';
             spW?.classList.remove('done');
-        }
-    }
-
-    // Screen time pill
-    const spS = document.getElementById('sp-screen');
-    const spvS = document.getElementById('spv-screen');
-    if (spvS) {
-        if (s.screen_time?.logged) {
-            spvS.textContent = fmtMinsShort(s.screen_time.minutes);
-            spS?.classList.add('done');
-        } else {
-            spvS.textContent = 'Log ↗';
-            spS?.classList.remove('done');
         }
     }
 
@@ -90,22 +112,6 @@ function renderStatusStrip(s) {
         else spJ?.classList.remove('done');
     }
 
-    // Progress bar
-    const doneCount = [
-        s.weight?.logged,
-        s.screen_time?.logged,
-        s.food_check?.logged,
-        (s.journal?.entries_today || 0) > 0
-    ].filter(Boolean).length;
-
-    const fill = document.getElementById('dayProgressFill');
-    const txt = document.getElementById('dayProgressTxt');
-    if (fill) fill.style.width = (doneCount / 4 * 100) + '%';
-    if (txt) {
-        txt.textContent = `${doneCount}/4`;
-        if (doneCount === 4) txt.style.color = 'var(--green)';
-    }
-
     // Measurements due pill — add dynamically
     if (s.measurements_due && !document.getElementById('measDuePill')) {
         const strip = document.getElementById('statusStrip');
@@ -119,6 +125,24 @@ function renderStatusStrip(s) {
             pill.innerHTML = `<span class="sp-icon">⏰</span><span class="sp-val">${s.days_since_measurements || '?'}z</span>`;
             strip.insertBefore(pill, spacer);
         }
+    }
+}
+
+function renderProgressBar(s, tasksAllDone) {
+    const doneCount = [
+        s.weight?.logged,
+        s.food_check?.logged,
+        (s.journal?.entries_today || 0) > 0,
+        tasksAllDone
+    ].filter(Boolean).length;
+
+    const fill = document.getElementById('dayProgressFill');
+    const txt = document.getElementById('dayProgressTxt');
+    if (fill) fill.style.width = (doneCount / 4 * 100) + '%';
+    if (txt) {
+        txt.textContent = `${doneCount}/4`;
+        if (doneCount === 4) txt.style.color = 'var(--green)';
+        else txt.style.color = '';
     }
 }
 

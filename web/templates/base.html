@@ -13,19 +13,19 @@
 
 <!-- ===== NAVBAR ===== -->
 <nav class="navbar">
-    <a href="/day" class="nav-brand">
+    <a href="/" class="nav-brand">
         Chronos <span class="brand-dot">●</span>
         <span class="brand-sub">OS</span>
     </a>
     <div class="nav-links">
-        <a href="/day"     {% if active_page == 'day'      %}class="active"{% endif %}>
-            <span class="nav-icon">🌅</span> Azi</a>
         <a href="/"        {% if active_page == 'journal'  %}class="active"{% endif %}>
             <span class="nav-icon">📘</span> Jurnal</a>
         <a href="/targets" {% if active_page == 'targets'  %}class="active"{% endif %}>
             <span class="nav-icon">🎯</span> Targeturi</a>
         <a href="/gym"     {% if active_page == 'gym'      %}class="active"{% endif %}>
             <span class="nav-icon">💪</span> Fitness</a>
+        <a href="/bani"    {% if active_page == 'bani'     %}class="active"{% endif %}>
+            <span class="nav-icon">💰</span> Bani</a>
         <a href="/terminal"{% if active_page == 'terminal' %}class="active"{% endif %}>
             <span class="nav-icon">⌨️</span> Terminal</a>
     </div>
@@ -36,37 +36,14 @@
 
 <!-- ===== MOBILE NAV ===== -->
 <div class="mobile-nav" id="mobileNav">
-    <a href="/day"     {% if active_page == 'day'      %}class="active"{% endif %}><span>🌅</span> Azi</a>
     <a href="/"        {% if active_page == 'journal'  %}class="active"{% endif %}><span>📘</span> Jurnal</a>
     <a href="/targets" {% if active_page == 'targets'  %}class="active"{% endif %}><span>🎯</span> Targeturi</a>
     <a href="/gym"     {% if active_page == 'gym'      %}class="active"{% endif %}><span>💪</span> Fitness</a>
+    <a href="/bani"    {% if active_page == 'bani'     %}class="active"{% endif %}><span>💰</span> Bani</a>
     <a href="/terminal"{% if active_page == 'terminal' %}class="active"{% endif %}><span>⌨️</span> Terminal</a>
 </div>
 
-<!-- ===== GLOBAL STATUS STRIP ===== -->
-<div class="status-strip" id="statusStrip">
-    <a href="/gym" class="status-pill" id="sp-weight" title="Greutate azi">
-        <span class="sp-icon">⚖️</span>
-        <span class="sp-val" id="spv-weight">…</span>
-    </a>
-    <a href="/day" class="status-pill" id="sp-screen" title="Screen time azi">
-        <span class="sp-icon">📱</span>
-        <span class="sp-val" id="spv-screen">…</span>
-    </a>
-    <a href="/gym" class="status-pill" id="sp-food" title="Alimentație azi">
-        <span class="sp-icon">🍽️</span>
-        <span class="sp-val" id="spv-food">…</span>
-    </a>
-    <a href="/" class="status-pill" id="sp-journal" title="Jurnal azi">
-        <span class="sp-icon">📘</span>
-        <span class="sp-val" id="spv-journal">…</span>
-    </a>
-    <div class="status-pill-spacer"></div>
-    <div class="status-day-progress" title="Progres zi">
-        <div class="sdp-bar"><div class="sdp-fill" id="dayProgressFill" style="width:0%"></div></div>
-        <span class="sdp-txt" id="dayProgressTxt">0/4</span>
-    </div>
-</div>
+<!-- STATUS STRIP REMOVED -->
 
 <!-- ===== PAGE CONTENT ===== -->
 {% block content %}{% endblock %}
