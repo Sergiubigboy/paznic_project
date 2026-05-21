@@ -93,6 +93,10 @@ def main():
     music_expert = MusicHandler()
     dispatcher = CommandDispatcher(music_expert, wled_mechanic)
 
+    import web.web_dashboard as web_dashboard
+    web_dashboard.shared_dispatcher = dispatcher
+    logging.info("✅ Core Dispatcher injectat în Web Dashboard!")
+
     # === VERIFICĂ ZILELE LIPSĂ (dar auto-generarea e dezactivată în logger) ===
     try:
         dispatcher.jural_expert.check_and_generate_missing_summaries()

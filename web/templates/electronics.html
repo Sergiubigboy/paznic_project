@@ -46,16 +46,11 @@
     <!-- Toolbar -->
     <div class="elab-toolbar">
       <div class="elab-category-filters" id="catFilters">
-        <button class="elab-cat-btn active" data-cat="all" onclick="setCatFilter('all')">Toate</button>
-        <button class="elab-cat-btn" data-cat="Rezistențe"   onclick="setCatFilter('Rezistențe')">⬜ Rezistențe</button>
-        <button class="elab-cat-btn" data-cat="Condensatoare" onclick="setCatFilter('Condensatoare')">⚡ Condensatoare</button>
-        <button class="elab-cat-btn" data-cat="MCU"          onclick="setCatFilter('MCU')">🧠 MCU</button>
-        <button class="elab-cat-btn" data-cat="Senzori"      onclick="setCatFilter('Senzori')">👁️ Senzori</button>
-        <button class="elab-cat-btn" data-cat="Module"       onclick="setCatFilter('Module')">📡 Module</button>
-        <button class="elab-cat-btn" data-cat="Altele"       onclick="setCatFilter('Altele')">🔩 Altele</button>
-      </div>
+        </div>
       <button class="btn btn-primary btn-sm" onclick="openCompModal()">＋ Adaugă componentă</button>
     </div>
+
+    <datalist id="catList"></datalist>
 
     <!-- Inventory table -->
     <div class="elab-table-wrap">
@@ -143,7 +138,6 @@
 <!--  MODALS                                               -->
 <!-- ===================================================== -->
 
-<!-- Add/Edit Component Modal -->
 <div class="modal-overlay" id="compModal">
   <div class="modal modal-wide">
     <h2 id="compModalTitle">➕ Componentă nouă</h2>
@@ -155,14 +149,7 @@
       </div>
       <div class="form-group">
         <label class="form-label">Categorie *</label>
-        <select class="form-select" id="compCat">
-          <option value="Rezistențe">Rezistențe</option>
-          <option value="Condensatoare">Condensatoare</option>
-          <option value="MCU">MCU / Microcontrolere</option>
-          <option value="Senzori">Senzori</option>
-          <option value="Module">Module</option>
-          <option value="Altele">Altele</option>
-        </select>
+        <input type="text" id="compCat" class="form-input" list="catList" placeholder="Alege sau scrie una nouă..." maxlength="50">
       </div>
     </div>
 
@@ -381,17 +368,12 @@
       <label class="form-label">Cantitate cumpărată *</label>
       <input type="number" id="buyQty" class="form-input" placeholder="1" min="1" step="1">
     </div>
+    
     <div class="form-group">
       <label class="form-label">Categoria în inventar</label>
-      <select class="form-select" id="buyCat">
-        <option value="Rezistențe">Rezistențe</option>
-        <option value="Condensatoare">Condensatoare</option>
-        <option value="MCU">MCU / Microcontrolere</option>
-        <option value="Senzori">Senzori</option>
-        <option value="Module">Module</option>
-        <option value="Altele">Altele</option>
-      </select>
+      <input type="text" id="buyCat" class="form-input" list="catList" placeholder="Alege sau scrie una nouă..." maxlength="50">
     </div>
+    
     <div class="form-group">
       <label class="form-label">Specificații (opțional)</label>
       <input type="text" id="buySpecs" class="form-input" placeholder="Spec tehnice…" maxlength="120">

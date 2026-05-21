@@ -2,6 +2,7 @@ import os
 import json
 import glob
 import sys
+from time import time
 import uuid
 import shutil
 from collections import defaultdict
@@ -61,6 +62,12 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max upload
 
 # Lazy-loaded journal core
+class DispatcherProxy:
+    def __getattr__(self, name):
+        # Dacă cineva încearcă să acceseze ceva și dispecerul e gol, aruncă o eroare clară
+        raise Exception("Dispecerul central nu a fost conectat din main.py!")
+
+shared_dispatcher = DispatcherProxy()
 _journal_core = None
 
 def get_journal():
@@ -875,128 +882,40 @@ def terminal_ping():
 @app.route('/api/terminal/command', methods=['POST'])
 @requires_auth
 def terminal_command():
-    """Send a text command to the dispatcher and return the result."""
     data = request.json or {}
     text = data.get('text', '').strip()
     if not text:
         return jsonify({"status": "error", "message": "Comandă goală"}), 400
 
     try:
-        import sys
-        sys.path.insert(0, BASE_DIR)
-        from ai_core import ask_gemini_json
-
-        # Classify intent
-        intent_schema = {
-            "type": "OBJECT",
-            "properties": {
-                "intents": {
-                    "type": "ARRAY",
-                    "items": {"type": "STRING", "enum": ["led","music","general","journal","target","study_timer","hype_mode","unknown"]}
-                },
-                "reasoning": {"type": "STRING"}
-            },
-            "required": ["intents", "reasoning"]
-        }
-
-        prompt = f"""
-        Ești Dispecerul Asistentului Inteligent. Clasifică intenția comenzii:
-        - "led": lumini, culori
-        - "music": melodii, muzică
-        - "journal": scrie în jurnal, înregistrează
-        - "target": adaugă task/obiectiv
-        - "study_timer": timer pomodoro
-        - "hype_mode": motivație extremă, petrecere
-        - "general": întrebări, conversație
-
-        COMANDĂ: "{text}"
-        """
-
-        intent_result = ask_gemini_json(prompt, schema=intent_schema, temperature=0.1)
-        intents = intent_result.get('intents', ['general']) if intent_result else ['general']
-
-        # Each action is now {"text": "...", "status": "ok"|"error"|"info"}
-        actions = []
-        reply = None
-
-        for intent in intents:
-            if intent == 'general':
-                chat_schema = {
-                    "type": "OBJECT",
-                    "properties": {
-                        "response_text": {"type": "STRING"},
-                        "emotion": {"type": "STRING"}
-                    },
-                    "required": ["response_text"]
-                }
-                chat_prompt = f"""
-                Ești Chronos, asistent AI inteligent. Răspunde concis în română.
-                COMANDĂ: "{text}"
-                """
-                chat_res = ask_gemini_json(chat_prompt, schema=chat_schema, temperature=0.7)
-                if chat_res:
-                    reply = chat_res.get('response_text', '')
-
-            elif intent == 'led':
-                try:
-                    import logging
-                    logger.info(f"🔌 Web Terminal LED: Procesez '{text}'")
-                    from wled_specialist import WLEDDispatcher
-                    dispatcher = WLEDDispatcher()
-                    logger.info(f"🔌 Apez dispatcher.execute()")
-                    dispatcher.execute(text, "Web Terminal")
-                    logger.info(f"✅ Dispatcher finalizat cu succes")
-                    actions.append({"text": "✅ Comandă LED trimisă și executată cu succes.", "status": "ok"})
-                except Exception as e:
-                    logger.error(f"❌ WLED eșuat: {type(e).__name__}: {e}", exc_info=True)
-                    actions.append({"text": f"❌ WLED eșuat: {type(e).__name__}: {e}", "status": "error"})
-
-            elif intent == 'music':
-                try:
-                    from music_specialist import MusicHandler
-                    MusicHandler().process_command(text, "Web Terminal")
-                    actions.append({"text": "✅ Comandă muzică trimisă cu succes.", "status": "ok"})
-                except Exception as e:
-                    actions.append({"text": f"❌ Muzică eșuată: {type(e).__name__}: {e}", "status": "error"})
-
-            elif intent == 'journal':
-                actions.append({"text": "📘 Jurnal: folosește pagina Jurnal din web pentru a scrie intrări.", "status": "info"})
-
-            elif intent == 'target':
-                actions.append({"text": "🎯 Targeturi: folosește pagina Targeturi din web.", "status": "info"})
-
-            elif intent == 'study_timer':
-                actions.append({"text": "⏱️ Timer Pomodoro: disponibil doar din serviciul vocal momentan.", "status": "info"})
-
-            elif intent == 'hype_mode':
-                hype_ok = True
-                try:
-                    from wled_specialist import WLEDStateManager
-                    WLEDStateManager().trigger_hype_mode()
-                except Exception as e:
-                    actions.append({"text": f"❌ Hype LED eșuat: {type(e).__name__}: {e}", "status": "error"})
-                    hype_ok = False
-                try:
-                    from music_specialist import MusicHandler
-                    MusicHandler().process_command("baga muzica super hype rapida", "")
-                except Exception as e:
-                    actions.append({"text": f"❌ Hype muzică eșuată: {type(e).__name__}: {e}", "status": "error"})
-                    hype_ok = False
-                if hype_ok:
-                    actions.append({"text": "🔥 HYPE MODE activat! Lumini și muzică declanșate.", "status": "ok"})
+        global shared_dispatcher
+        
+        # Apelează DISPECERUL CENTRAL (cel real, cu memorie)
+        if shared_dispatcher:
+            shared_dispatcher.process_text_command(text, None)
+            res = getattr(shared_dispatcher, 'last_result', {})
+        else:
+            return jsonify({"status": "error", "message": "Dispecerul central nu este conectat."}), 500
+        
+        # Extragem lista de acțiuni pentru UI-ul din browser
+        actions_list = []
+        for a in res.get("actions", []):
+            if isinstance(a, dict):
+                actions_list.append(a.get("text", ""))
+            else:
+                actions_list.append(str(a))
 
         return jsonify({
             "status": "success",
-            "intents": intents,
-            "reply": reply,
-            "actions": actions,
-            "reasoning": intent_result.get('reasoning', '') if intent_result else ''
+            "intents": res.get("intents", ["general"]),
+            "reply": res.get("reply"),
+            "actions": actions_list,
+            "reasoning": res.get("reasoning", "")
         })
 
     except Exception as e:
         import traceback
-        return jsonify({"status": "error", "message": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()}), 500
-
+        return jsonify({"status": "error", "message": str(e)}), 500
 # ============ STATIC MEDIA ============
 @app.route('/media/gym/photos/<filename>')
 @requires_auth

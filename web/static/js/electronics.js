@@ -115,6 +115,8 @@ async function loadAll() {
         _components = data.components || [];
         _projects   = data.projects   || [];
         _wishlist   = data.wishlist   || [];
+        
+        renderCategories(); // <-- Generează filtrele dinamic
         renderHeaderStats();
         renderCompTable();
         renderProjectsList();
@@ -138,12 +140,37 @@ function renderHeaderStats() {
 //  TAB 1 — INVENTORY / COMPONENTS
 // ============================================================
 
-// --- Category filter ---
+// --- Category filter & Dynamic Categories ---
+function renderCategories() {
+    // Extragem toate categoriile unice din componentele existente
+    const cats = [...new Set(_components.map(c => c.category))].filter(Boolean).sort();
+    
+    // Dacă am șters ultima componentă dintr-o categorie activă, resetăm pe 'all'
+    if (_catFilter !== 'all' && !cats.includes(_catFilter)) {
+        _catFilter = 'all';
+    }
+
+    // 1. Actualizăm bara de butoane
+    const filtersDiv = document.getElementById('catFilters');
+    if (filtersDiv) {
+        let html = `<button class="elab-cat-btn ${_catFilter === 'all' ? 'active' : ''}" data-cat="all" onclick="setCatFilter('all')">Toate</button>`;
+        cats.forEach(c => {
+            const active = _catFilter === c ? 'active' : '';
+            html += `<button class="elab-cat-btn ${active}" data-cat="${escHtml(c)}" onclick="setCatFilter('${escHtml(c)}')">${catIcon(c)} ${escHtml(c)}</button>`;
+        });
+        filtersDiv.innerHTML = html;
+    }
+
+    // 2. Actualizăm autocompletarea pentru input-uri
+    const datalist = document.getElementById('catList');
+    if (datalist) {
+        datalist.innerHTML = cats.map(c => `<option value="${escHtml(c)}">`).join('');
+    }
+}
+
 function setCatFilter(cat) {
     _catFilter = cat;
-    document.querySelectorAll('.elab-category-filters .elab-cat-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.cat === cat);
-    });
+    renderCategories(); // Re-randează butoanele pentru a muta clasa 'active'
     renderCompTable();
 }
 
@@ -238,7 +265,7 @@ function closeCompModal() { document.getElementById('compModal').classList.remov
 
 async function saveComp() {
     const name     = document.getElementById('compName').value.trim();
-    const category = document.getElementById('compCat').value;
+    const category = document.getElementById('compCat').value.trim() || 'Altele';
     const qty      = parseInt(document.getElementById('compQty').value) || 0;
     const specs    = document.getElementById('compSpecs').value.trim();
     const notes    = document.getElementById('compNotes').value.trim();
@@ -1025,7 +1052,7 @@ function closeBuyModal() { document.getElementById('buyModal').classList.remove(
 async function saveBuy() {
     const wishId   = document.getElementById('buyWishId').value;
     const qty      = parseInt(document.getElementById('buyQty').value);
-    const category = document.getElementById('buyCat').value;
+    const category = document.getElementById('buyCat').value.trim() || 'Altele';
     const specs    = document.getElementById('buySpecs').value.trim();
     const item     = _wishlist.find(w => w.id === wishId);
 

@@ -21,6 +21,7 @@ class CommandDispatcher:
         self.jural_expert = JournalCore(self.wled_mechanic)
         self.memory_manager = MemoryManager()
         self.conversation_history = []
+        self.last_result = {}
         import threading
         self.study_timer_thread: Optional[threading.Thread] = None
         self.study_timer_stop_event = threading.Event()
@@ -162,7 +163,6 @@ class CommandDispatcher:
         self.music_expert.process_command("baga muzica super hype rapida motivanta bass boosted pt petrecere", "")
 
     def process_text_command(self, text, sock):
-        """Procesează textul transcris de main.py"""
         if not text:
             return True
 
@@ -174,31 +174,68 @@ class CommandDispatcher:
         self.conversation_history.append((current_time, f"User: {text}"))
 
         should_restore_lights = True
+        reply_text = None
+        actions_list = []
 
         if not intent_result or not isinstance(intent_result, dict):
             logging.error("Eroare la parsarea intenției.")
+            self.last_result = {"intents": [], "reply": "Eroare AI.", "actions": [], "reasoning": ""}
             return should_restore_lights
 
-        # Suportă atât formatul nou (intents=[...]) cât și cel vechi (intent="...")
         actiuni = intent_result.get("intents") or [intent_result.get("intent", "unknown")]
-        logging.info(f"📋 Intenții rutate: {actiuni} | Motiv: {intent_result.get('reasoning')}")
+        reasoning = intent_result.get("reasoning", "")
 
         for actiune in actiuni:
             if actiune == "journal":
-                self.jural_expert.start_journal_session(sock)
+                if sock is not None:
+                    self.jural_expert.start_journal_session(sock) # Merge vocal
+                else:
+                    try:
+                        self.jural_expert._process_daily_entry(text) # Salvează textul direct de pe web
+                        reply_text = "Am notat textul în jurnal."
+                        actions_list.append({"text": "📘 Salvat în jurnal.", "status": "ok"})
+                    except Exception as e:
+                        actions_list.append({"text": f"❌ Eroare jurnal: {e}", "status": "error"})
+            
             elif actiune == "target":
-                self.jural_expert.start_target_session(sock)
+                if sock is not None:
+                    self.jural_expert.start_target_session(sock) # Merge vocal
+                else:
+                    try:
+                        import json
+                        from logger_specialist import TARGETS_FILE
+                        from datetime import datetime
+                        target = {
+                            "id": str(int(time.time() * 1000)),
+                            "title": text, "progress": 0, "created_at": datetime.now().isoformat()
+                        }
+                        with open(TARGETS_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
+                        data.setdefault('goals', []).append(target)
+                        with open(TARGETS_FILE, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=4)
+                        reply_text = f"Am adăugat targetul: {text}"
+                        actions_list.append({"text": "🎯 Target salvat.", "status": "ok"})
+                    except Exception as e:
+                        actions_list.append({"text": f"❌ Eroare target: {e}", "status": "error"})
+            
             elif actiune == "study_timer":
                 self.handle_study_timer(text)
                 should_restore_lights = False
+                actions_list.append({"text": "⏱️ Timer procesat.", "status": "ok"})
+            
             elif actiune == "hype_mode":
                 self.start_hype_mode()
                 should_restore_lights = False
+                actions_list.append({"text": "🔥 Hype mode activat.", "status": "ok"})
+            
             elif actiune == "led":
                 self.wled_expert.execute(text, history_str)
                 should_restore_lights = False
+                actions_list.append({"text": "💡 Comandă WLED trimisă.", "status": "ok"})
+            
             elif actiune == "music":
                 self.music_expert.process_command(text, history_str)
+                actions_list.append({"text": "🎵 Comandă Spotify trimisă.", "status": "ok"})
+            
             elif actiune == "general":
                 past_context = self.memory_manager.query_memory(text, n_results=5)
                 response = self.handle_general_chat(text, history_str, past_context)
@@ -207,4 +244,12 @@ class CommandDispatcher:
                     print(f"\n🤖 Chronos: {reply_text}\n")
                     self.conversation_history.append((time.time(), f"Chronos: {reply_text}"))
 
+        # Salvăm rezultatul pentru a fi trimis către Web Terminal
+        self.last_result = {
+            "intents": actiuni,
+            "reply": reply_text,
+            "actions": actions_list,
+            "reasoning": reasoning
+        }
+        
         return should_restore_lights
