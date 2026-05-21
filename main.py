@@ -17,7 +17,8 @@ from config import (
     SILENCE_DURATION, 
     MIN_RECORD_SECONDS, 
     MAX_RECORD_SECONDS,
-    USE_LOCAL_MIC
+    USE_LOCAL_MIC,
+    USE_PICOVOICE
 )
 
 from dispatcher import CommandDispatcher
@@ -52,8 +53,16 @@ def main():
     music_expert = MusicHandler()
     dispatcher = CommandDispatcher(music_expert, wled_mechanic)
 
-    porcupine = pvporcupine.create(access_key=PICOVOICE_KEY, keyword_paths=[KEYWORD_PATH])
-    
+    porcupine = None
+    if USE_PICOVOICE:
+        try:
+            porcupine = pvporcupine.create(access_key=PICOVOICE_KEY, keyword_paths=[KEYWORD_PATH])
+            # (Aici pornești și recorder-ul pentru microfon)
+        except Exception as e:
+            print(f"⚠️ [PICOVOICE] Eroare la inițializare: {e}")
+    else:
+        print("ℹ️ [SISTEM] Picovoice este DEZACTIVAT din config. Pornesc restul modulelor (Dashboard, Muzică)...")
+
     sock = None
     audio_stream = None
     if USE_LOCAL_MIC:
