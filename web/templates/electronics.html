@@ -312,8 +312,8 @@
     <div class="form-group" style="margin-top:12px">
       <label class="form-label">📸 Poze (opțional)</label>
       <div class="elab-photo-upload" id="devlogPhotoUpload">
-        <input type="file" id="devlogPhotoInput" accept="image/*" style="display:none" onchange="addDevlogPhoto(event)">
-        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('devlogPhotoInput').click()">+ Adaugă poze</button>
+        <input type="file" id="devlogPhotoInput" accept="image/*" multiple style="display:none" onchange="addDevlogPhotos(event)">
+        <button class="btn btn-secondary btn-sm" type="button" onclick="document.getElementById('devlogPhotoInput').click()">+ Adaugă poze</button>
         <div id="devlogPhotoPreview" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px"></div>
       </div>
     </div>

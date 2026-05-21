@@ -184,7 +184,8 @@ function renderCompTable() {
             <td><div class="elab-specs-cell">${escHtml(comp.specs || '—')}</div></td>
             <td>
                 <div class="elab-row-actions">
-                    <button class="elab-btn-reserve" onclick="openReserveModal('${comp.id}')">📌</button>
+                    <button class="elab-btn-reserve" onclick="openReserveModal('${comp.id}')" title="Rezervă pe proiect">📌</button>
+                    <button class="elab-btn-wishlist" onclick="quickAddToWishlist('${comp.id}', '${escHtml(comp.name)}')" title="Adaugă în coș">🛒</button>
                     <button class="elab-btn-edit"    onclick="openCompModal('${comp.id}')">✏️</button>
                     <button class="elab-btn-del"     onclick="deleteCompConfirm('${comp.id}')">🗑️</button>
                 </div>
@@ -283,6 +284,31 @@ async function deleteCompConfirm(id) {
         await loadAll();
     } else {
         flash(data.message || 'Eroare la ștergere', 'error');
+    }
+}
+
+// ---- Quick add to wishlist ----
+async function quickAddToWishlist(compId, compName) {
+    const qty = prompt(`Câte bucăți din "${compName}" adaugi în coș?`, '1');
+    if (!qty) return;
+    
+    const qtyNum = parseInt(qty);
+    if (!qtyNum || qtyNum < 1) {
+        flash('Cantitate invalidă', 'error');
+        return;
+    }
+    
+    const data = await postJSON('/api/electronics/wishlist/add', {
+        name: compName,
+        qty: qtyNum,
+        priority: 'normal'
+    });
+    
+    if (data.status === 'success') {
+        flash(`✅ ${compName} (${qtyNum}× ) adăugat în coș!`, 'success');
+        await loadAll();
+    } else {
+        flash(data.message || 'Eroare', 'error');
     }
 }
 
@@ -647,22 +673,21 @@ function openDevlogModal(projId, entryId = null) {
     document.getElementById('devlogText').value    = entry?.text  || '';
     document.getElementById('devlogDeleteBtn').style.display = entry ? '' : 'none';
     
-    // Load existing photos if editing
+    // Clear and reload photo preview
     const preview = document.getElementById('devlogPhotoPreview');
     preview.innerHTML = '';
+    window._devlogExistingPhotos = [];
+    
     if (entry?.photos) {
+        window._devlogExistingPhotos = entry.photos.slice();
         entry.photos.forEach(photo => {
-            const img = document.createElement('img');
-            img.src = `/api/electronics/devlog/photo/${photo}`;
-            img.style.cssText = 'max-width:80px;max-height:80px;border-radius:4px;object-fit:cover;position:relative;cursor:pointer';
-            img.title = 'Click to remove';
-            img.onclick = () => removeDevlogPhoto(photo);
-            preview.appendChild(img);
+            addPhotoThumbnail(photo, true);
         });
     }
     
-    // Store current entry photos for reference
-    window._currentDevlogPhotos = (entry?.photos || []).slice();
+    // Reset file input
+    document.getElementById('devlogPhotoInput').value = '';
+    window._devlogNewFiles = [];
     
     document.getElementById('devlogModal').classList.add('open');
     document.getElementById('devlogTitle').focus();
@@ -672,45 +697,76 @@ function closeDevlogModal() {
     document.getElementById('devlogModal').classList.remove('open');
     document.getElementById('devlogPhotoInput').value = '';
     document.getElementById('devlogPhotoPreview').innerHTML = '';
+    window._devlogNewFiles = [];
+    window._devlogExistingPhotos = [];
 }
 
-function addDevlogPhoto(event) {
-    const file = event.target.files[0];
-    if (!file) return;
+function addDevlogPhotos(event) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
     
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        const preview = document.getElementById('devlogPhotoPreview');
-        const div = document.createElement('div');
-        div.style.cssText = 'position:relative;display:inline-block';
-        
-        const img = document.createElement('img');
-        img.src = e.target.result;
-        img.style.cssText = 'max-width:80px;max-height:80px;border-radius:4px;object-fit:cover';
-        
-        const btn = document.createElement('button');
-        btn.textContent = '✕';
-        btn.style.cssText = 'position:absolute;top:-6px;right:-6px;background:#f44;color:#fff;border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:12px';
-        btn.onclick = (e) => { e.preventDefault(); div.remove(); };
-        
-        div.appendChild(img);
-        div.appendChild(btn);
-        div.dataset.file = file.name;
-        div.dataset.tempFile = true;
-        preview.appendChild(div);
-    };
-    reader.readAsDataURL(file);
-    event.target.value = '';
+    // Store files globally for upload later
+    window._devlogNewFiles = Array.from(files);
+    
+    const preview = document.getElementById('devlogPhotoPreview');
+    
+    for (let file of files) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const div = document.createElement('div');
+            div.style.cssText = 'position:relative;display:inline-block';
+            
+            const img = document.createElement('img');
+            img.src = e.target.result;
+            img.style.cssText = 'max-width:80px;max-height:80px;border-radius:4px;object-fit:cover';
+            
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = '✕';
+            btn.style.cssText = 'position:absolute;top:-6px;right:-6px;background:#f44;color:#fff;border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:12px';
+            btn.onclick = (e) => { 
+                e.preventDefault();
+                window._devlogNewFiles = window._devlogNewFiles.filter((_, idx) => window._devlogNewFiles[idx] !== file);
+                div.remove();
+            };
+            
+            div.appendChild(img);
+            div.appendChild(btn);
+            div.dataset.tempFile = 'true';
+            preview.appendChild(div);
+        };
+        reader.readAsDataURL(file);
+    }
 }
 
-function removeDevlogPhoto(filename) {
+function addPhotoThumbnail(filename, isExisting = false) {
     const preview = document.getElementById('devlogPhotoPreview');
-    const existing = Array.from(preview.querySelectorAll('img')).find(img => 
-        img.src.includes(filename)
-    );
-    if (existing) {
-        existing.parentElement.remove();
-    }
+    
+    const div = document.createElement('div');
+    div.style.cssText = 'position:relative;display:inline-block';
+    
+    const img = document.createElement('img');
+    img.src = `/api/electronics/devlog/photo/${filename}`;
+    img.style.cssText = 'max-width:80px;max-height:80px;border-radius:4px;object-fit:cover;cursor:pointer';
+    img.title = 'Click to view';
+    img.onclick = () => window.open(`/api/electronics/devlog/photo/${filename}`, '_blank');
+    
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '✕';
+    btn.style.cssText = 'position:absolute;top:-6px;right:-6px;background:#f44;color:#fff;border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:12px';
+    btn.onclick = (e) => { 
+        e.preventDefault();
+        if (isExisting) {
+            window._devlogExistingPhotos = window._devlogExistingPhotos.filter(p => p !== filename);
+        }
+        div.remove();
+    };
+    
+    div.appendChild(img);
+    div.appendChild(btn);
+    div.dataset.existingFile = isExisting ? 'true' : 'false';
+    preview.appendChild(div);
 }
 
 async function saveDevlog() {
@@ -727,66 +783,81 @@ async function saveDevlog() {
     if (editId) payload.entry_id = editId;
 
     const url  = editId ? '/api/electronics/project/devlog/edit' : '/api/electronics/project/devlog/add';
-    let data = await postJSON(url, payload);
+    const data = await postJSON(url, payload);
     
-    if (data.status === 'success') {
-        // Now upload photos
-        const entryId = editId || data.entry?.id;
-        const preview = document.getElementById('devlogPhotoPreview');
-        const photoInputs = preview.querySelectorAll('div[data-tempFile="true"]');
-        
-        // Re-create file input to get actual files
-        const fileInput = document.getElementById('devlogPhotoInput');
-        const files = fileInput.files;
-        
-        if (files && files.length > 0) {
+    if (data.status !== 'success') {
+        flash(data.message || 'Eroare la salvare', 'error');
+        return;
+    }
+    
+    // Get entry ID (from response if new, from editId if editing)
+    const entryId = editId || data.entry?.id;
+    if (!entryId) {
+        flash('Eroare: Nu pot determina ID-ul intrării', 'error');
+        return;
+    }
+    
+    // Upload new photos
+    if (window._devlogNewFiles && window._devlogNewFiles.length > 0) {
+        for (let file of window._devlogNewFiles) {
             const formData = new FormData();
             formData.append('project_id', projId);
             formData.append('entry_id', entryId);
+            formData.append('file', file);
             
-            for (let file of files) {
-                formData.append('file', file);
+            try {
+                const photoRes = await fetch('/api/electronics/devlog/photo/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const photoData = await photoRes.json();
+                if (photoData.status !== 'success') {
+                    console.error('Photo upload failed:', photoData.message);
+                }
+            } catch (e) {
+                console.error('Photo upload error:', e);
             }
-            
-            // Upload one by one
-            for (let file of files) {
-                const fd = new FormData();
-                fd.append('project_id', projId);
-                fd.append('entry_id', entryId);
-                fd.append('file', file);
-                
+        }
+    }
+    
+    // Delete removed existing photos
+    if (window._devlogExistingPhotos) {
+        const proj = _projects.find(p => p.id === projId);
+        const entry = proj?.devlog?.find(e => e.id === entryId);
+        if (entry?.photos) {
+            const toDelete = entry.photos.filter(p => !window._devlogExistingPhotos.includes(p));
+            for (let filename of toDelete) {
                 try {
-                    const photoRes = await fetch('/api/electronics/devlog/photo/upload', {
-                        method: 'POST',
-                        body: fd
+                    await postJSON('/api/electronics/devlog/photo/delete', {
+                        project_id: projId,
+                        entry_id: entryId,
+                        filename: filename
                     });
-                    const photoData = await photoRes.json();
-                    if (photoData.status !== 'success') {
-                        flash(`❌ Eroare upload poză: ${photoData.message}`, 'error');
-                    }
                 } catch (e) {
-                    console.error('Upload error:', e);
+                    console.error('Photo delete error:', e);
                 }
             }
         }
-        
-        closeDevlogModal();
-        flash(editId ? '✏️ Intrare actualizată!' : '📝 Intrare devlog adăugată!', 'success');
-        await loadAll();
-        setTimeout(() => {
-            const card = document.getElementById(`proj-${projId}`);
-            if (card) card.classList.add('expanded');
-        }, 50);
-    } else {
-        flash(data.message || 'Eroare', 'error');
     }
+    
+    closeDevlogModal();
+    flash(editId ? '✏️ Intrare actualizată!' : '📝 Intrare devlog adăugată!', 'success');
+    await loadAll();
+    setTimeout(() => {
+        const card = document.getElementById(`proj-${projId}`);
+        if (card) card.classList.add('expanded');
+    }, 50);
 }
 
 async function deleteDevlog() {
     const projId = document.getElementById('devlogProjId').value;
     const editId = document.getElementById('devlogEditId').value;
     if (!confirm('Ștergi această intrare devlog?')) return;
-    const data = await postJSON('/api/electronics/project/devlog/delete', { project_id: projId, entry_id: editId });
+    
+    const data = await postJSON('/api/electronics/project/devlog/delete', { 
+        project_id: projId, 
+        entry_id: editId 
+    });
     if (data.status === 'success') {
         closeDevlogModal();
         flash('🗑️ Intrare ștearsă', 'success');
@@ -802,7 +873,10 @@ async function deleteDevlog() {
 
 async function deleteDevlogEntry(projId, entryId) {
     if (!confirm('Ștergi această intrare devlog?')) return;
-    const data = await postJSON('/api/electronics/project/devlog/delete', { project_id: projId, entry_id: entryId });
+    const data = await postJSON('/api/electronics/project/devlog/delete', { 
+        project_id: projId, 
+        entry_id: entryId 
+    });
     if (data.status === 'success') {
         flash('🗑️ Intrare ștearsă', 'success');
         await loadAll();

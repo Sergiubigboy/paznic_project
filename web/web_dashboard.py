@@ -939,10 +939,16 @@ def terminal_command():
 
             elif intent == 'led':
                 try:
+                    import logging
+                    logger.info(f"🔌 Web Terminal LED: Procesez '{text}'")
                     from wled_specialist import WLEDDispatcher
-                    WLEDDispatcher().execute(text, "Web Terminal")
+                    dispatcher = WLEDDispatcher()
+                    logger.info(f"🔌 Apez dispatcher.execute()")
+                    dispatcher.execute(text, "Web Terminal")
+                    logger.info(f"✅ Dispatcher finalizat cu succes")
                     actions.append({"text": "✅ Comandă LED trimisă și executată cu succes.", "status": "ok"})
                 except Exception as e:
+                    logger.error(f"❌ WLED eșuat: {type(e).__name__}: {e}", exc_info=True)
                     actions.append({"text": f"❌ WLED eșuat: {type(e).__name__}: {e}", "status": "error"})
 
             elif intent == 'music':
