@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% set active_page = "settings" %}
+
+{% block title %}Chronos OS | Settings{% endblock %}
+
+{% block content %}
+<div class="settings-layout">
+
+    <!-- LEFT: File Tree -->
+    <div class="settings-sidebar">
+        <div class="settings-sidebar-header">
+            <div class="section-title" style="font-size:16px">⚙️ Setări & Fișiere</div>
+            <div class="section-subtitle">Editează direct din browser</div>
+        </div>
+
+        <div class="file-tree-section">
+            <div class="file-tree-group-label">📄 Configurare</div>
+            <div class="file-tree" id="configTree"></div>
+        </div>
+
+        <div class="file-tree-section">
+            <div class="file-tree-group-label">📁 chronos_data/</div>
+            <div class="file-tree" id="dataTree"></div>
+        </div>
+    </div>
+
+    <!-- RIGHT: Editor -->
+    <div class="settings-editor-panel">
+        <div class="editor-empty-state" id="editorEmpty">
+            <div style="font-size:48px;margin-bottom:16px">📝</div>
+            <div style="font-size:16px;font-weight:700;color:#fff;margin-bottom:8px">Selectează un fișier</div>
+            <div style="font-size:13px;color:var(--text-faint)">Alege un fișier din panoul stâng pentru a-l edita direct din browser.</div>
+        </div>
+
+        <div class="editor-active" id="editorActive" style="display:none">
+            <div class="editor-topbar">
+                <div class="editor-file-info">
+                    <span class="editor-file-icon" id="editorFileIcon">📄</span>
+                    <span class="editor-file-path" id="editorFilePath">-</span>
+                    <span class="editor-file-type" id="editorFileType">-</span>
+                </div>
+                <div class="editor-actions">
+                    <span class="editor-status" id="editorStatus"></span>
+                    <button class="btn btn-sm" id="btnFormat" onclick="formatEditor()" title="Format JSON">🔧 Format</button>
+                    <button class="btn btn-primary btn-sm" id="btnSave" onclick="saveFile()">💾 Salvează</button>
+                </div>
+            </div>
+
+            <div class="editor-warning" id="editorWarning" style="display:none">
+                <span>⚠️</span>
+                <span id="editorWarningText">JSON invalid</span>
+            </div>
+
+            <div class="editor-wrap">
+                <div class="editor-line-nums" id="lineNums"></div>
+                <textarea 
+                    id="editorTextarea" 
+                    class="editor-textarea"
+                    spellcheck="false"
+                    autocorrect="off"
+                    autocomplete="off"
+                    oninput="onEditorChange()"
+                    onkeydown="handleEditorKey(event)"
+                    onscroll="syncScroll()"
+                ></textarea>
+            </div>
+
+            <div class="editor-footer">
+                <span id="editorLineCol">Ln 1, Col 1</span>
+                <span id="editorSize">-</span>
+                <span id="editorLastSaved">-</span>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+{% endblock %}

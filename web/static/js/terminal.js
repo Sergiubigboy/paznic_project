@@ -116,6 +116,11 @@ async function sendCommand() {
 
         if (res.status === 'error') {
             appendLine('ERROR', res.message || 'Eroare necunoscută', 'error');
+            // Show traceback if available
+            if (res.traceback) {
+                const traceLines = res.traceback.split('\n').filter(l => l.trim());
+                traceLines.slice(-3).forEach(l => appendLine('···', l, 'error'));
+            }
             return;
         }
 
@@ -135,8 +140,17 @@ async function sendCommand() {
             appendLine('Chronos', res.reply, 'system');
         }
 
+        // Actions with status coloring
         if (res.actions && res.actions.length > 0) {
-            res.actions.forEach(a => appendLine('→', a, 'info'));
+            res.actions.forEach(a => {
+                // Support both old string format and new {text, status} format
+                if (typeof a === 'string') {
+                    appendLine('→', a, 'info');
+                } else {
+                    const lineType = a.status === 'error' ? 'error' : (a.status === 'ok' ? 'success' : 'info');
+                    appendLine('→', a.text, lineType);
+                }
+            });
         }
 
         if (!res.reply && (!res.actions || res.actions.length === 0)) {

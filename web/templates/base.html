@@ -18,16 +18,20 @@
         <span class="brand-sub">OS</span>
     </a>
     <div class="nav-links">
-        <a href="/"        {% if active_page == 'journal'  %}class="active"{% endif %}>
+        <a href="/"        {% if active_page == 'journal'     %}class="active"{% endif %}>
             <span class="nav-icon">📘</span> Jurnal</a>
-        <a href="/targets" {% if active_page == 'targets'  %}class="active"{% endif %}>
+        <a href="/targets" {% if active_page == 'targets'     %}class="active"{% endif %}>
             <span class="nav-icon">🎯</span> Targeturi</a>
-        <a href="/gym"     {% if active_page == 'gym'      %}class="active"{% endif %}>
+        <a href="/gym"     {% if active_page == 'gym'         %}class="active"{% endif %}>
             <span class="nav-icon">💪</span> Fitness</a>
-        <a href="/bani"    {% if active_page == 'bani'     %}class="active"{% endif %}>
+        <a href="/bani"    {% if active_page == 'bani'        %}class="active"{% endif %}>
             <span class="nav-icon">💰</span> Bani</a>
-        <a href="/terminal"{% if active_page == 'terminal' %}class="active"{% endif %}>
+        <a href="/electronics" {% if active_page == 'electronics' %}class="active"{% endif %}>
+            <span class="nav-icon">⚡</span> Electronics</a>
+        <a href="/terminal"{% if active_page == 'terminal'   %}class="active"{% endif %}>
             <span class="nav-icon">⌨️</span> Terminal</a>
+        <a href="/settings" {% if active_page == 'settings'  %}class="active"{% endif %} class="nav-settings-btn" title="Setări">
+            <span class="nav-icon">⚙️</span></a>
     </div>
     <button class="hamburger" id="hamburgerBtn" aria-label="Menu">
         <span></span><span></span><span></span>
@@ -36,11 +40,13 @@
 
 <!-- ===== MOBILE NAV ===== -->
 <div class="mobile-nav" id="mobileNav">
-    <a href="/"        {% if active_page == 'journal'  %}class="active"{% endif %}><span>📘</span> Jurnal</a>
-    <a href="/targets" {% if active_page == 'targets'  %}class="active"{% endif %}><span>🎯</span> Targeturi</a>
-    <a href="/gym"     {% if active_page == 'gym'      %}class="active"{% endif %}><span>💪</span> Fitness</a>
-    <a href="/bani"    {% if active_page == 'bani'     %}class="active"{% endif %}><span>💰</span> Bani</a>
-    <a href="/terminal"{% if active_page == 'terminal' %}class="active"{% endif %}><span>⌨️</span> Terminal</a>
+    <a href="/"           {% if active_page == 'journal'     %}class="active"{% endif %}><span>📘</span> Jurnal</a>
+    <a href="/targets"    {% if active_page == 'targets'     %}class="active"{% endif %}><span>🎯</span> Targeturi</a>
+    <a href="/gym"        {% if active_page == 'gym'         %}class="active"{% endif %}><span>💪</span> Fitness</a>
+    <a href="/bani"       {% if active_page == 'bani'        %}class="active"{% endif %}><span>💰</span> Bani</a>
+    <a href="/electronics"{% if active_page == 'electronics' %}class="active"{% endif %}><span>⚡</span> Electronics</a>
+    <a href="/terminal"   {% if active_page == 'terminal'    %}class="active"{% endif %}><span>⌨️</span> Terminal</a>
+    <a href="/settings"   {% if active_page == 'settings'    %}class="active"{% endif %}><span>⚙️</span> Setări</a>
 </div>
 
 <!-- STATUS STRIP REMOVED -->

@@ -1,0 +1,402 @@
+{% extends "base.html" %}
+{% block title %}Electronics Lab — Chronos OS{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/electronics.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="container-wide" id="elabPage">
+
+  <!-- Page header -->
+  <div class="section-header" style="margin-bottom:20px">
+    <div>
+      <div class="section-title">⚡ Electronics Lab</div>
+      <div class="section-subtitle">Inventar componente, proiecte și lista de cumpărături</div>
+    </div>
+    <div class="elab-header-stats" id="elabHeaderStats">
+      <div class="elab-stat-pill">
+        <span class="elab-stat-icon">📦</span>
+        <span id="hStatComponents">—</span>
+        <span class="elab-stat-lbl">componente</span>
+      </div>
+      <div class="elab-stat-pill">
+        <span class="elab-stat-icon">🔧</span>
+        <span id="hStatProjects">—</span>
+        <span class="elab-stat-lbl">proiecte</span>
+      </div>
+      <div class="elab-stat-pill">
+        <span class="elab-stat-icon">🛒</span>
+        <span id="hStatWishlist">—</span>
+        <span class="elab-stat-lbl">în coș</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab switcher -->
+  <div class="elab-tabs">
+    <button class="elab-tab active" id="tabInventar"  onclick="switchTab('inventar')">📦 Inventar Componente</button>
+    <button class="elab-tab"        id="tabProiecte"  onclick="switchTab('proiecte')">🔧 Proiecte</button>
+    <button class="elab-tab"        id="tabWishlist"  onclick="switchTab('wishlist')">🛒 Coș Cumpărături</button>
+  </div>
+
+  <!-- ===== TAB: INVENTAR ===== -->
+  <div class="elab-tab-panel active" id="panelInventar">
+
+    <!-- Toolbar -->
+    <div class="elab-toolbar">
+      <div class="elab-category-filters" id="catFilters">
+        <button class="elab-cat-btn active" data-cat="all" onclick="setCatFilter('all')">Toate</button>
+        <button class="elab-cat-btn" data-cat="Rezistențe"   onclick="setCatFilter('Rezistențe')">⬜ Rezistențe</button>
+        <button class="elab-cat-btn" data-cat="Condensatoare" onclick="setCatFilter('Condensatoare')">⚡ Condensatoare</button>
+        <button class="elab-cat-btn" data-cat="MCU"          onclick="setCatFilter('MCU')">🧠 MCU</button>
+        <button class="elab-cat-btn" data-cat="Senzori"      onclick="setCatFilter('Senzori')">👁️ Senzori</button>
+        <button class="elab-cat-btn" data-cat="Module"       onclick="setCatFilter('Module')">📡 Module</button>
+        <button class="elab-cat-btn" data-cat="Altele"       onclick="setCatFilter('Altele')">🔩 Altele</button>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openCompModal()">＋ Adaugă componentă</button>
+    </div>
+
+    <!-- Inventory table -->
+    <div class="elab-table-wrap">
+      <table class="elab-table" id="compTable">
+        <thead>
+          <tr>
+            <th>Componentă</th>
+            <th>Categorie</th>
+            <th>Total</th>
+            <th>Disponibil</th>
+            <th>Specificații</th>
+            <th style="width:140px">Acțiuni</th>
+          </tr>
+        </thead>
+        <tbody id="compTableBody">
+          <tr><td colspan="6" class="empty-state">Se încarcă...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div><!-- /panelInventar -->
+
+
+  <!-- ===== TAB: PROIECTE ===== -->
+  <div class="elab-tab-panel" id="panelProiecte">
+
+    <!-- Projects toolbar -->
+    <div class="elab-toolbar" style="margin-bottom:16px">
+      <div class="elab-proj-status-filters">
+        <button class="elab-cat-btn active" data-status="all"       onclick="setProjFilter('all')">Toate</button>
+        <button class="elab-cat-btn"        data-status="idee"      onclick="setProjFilter('idee')">💡 Idee</button>
+        <button class="elab-cat-btn"        data-status="activ"     onclick="setProjFilter('activ')">⚡ Activ</button>
+        <button class="elab-cat-btn"        data-status="finalizat" onclick="setProjFilter('finalizat')">✅ Finalizat</button>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openProjModal()">＋ Proiect Nou</button>
+    </div>
+
+    <!-- Projects list -->
+    <div id="projectsList">
+      <div class="empty-state">Se încarcă...</div>
+    </div>
+
+  </div><!-- /panelProiecte -->
+
+
+  <!-- ===== TAB: WISHLIST ===== -->
+  <div class="elab-tab-panel" id="panelWishlist">
+
+    <!-- Wishlist toolbar -->
+    <div class="elab-toolbar" style="margin-bottom:16px">
+      <div class="elab-wish-priority-filters">
+        <button class="elab-cat-btn active" data-prio="all"    onclick="setWishFilter('all')">Toate</button>
+        <button class="elab-cat-btn"        data-prio="urgent" onclick="setWishFilter('urgent')">🔴 Urgent</button>
+        <button class="elab-cat-btn"        data-prio="normal" onclick="setWishFilter('normal')">🟡 Normal</button>
+        <button class="elab-cat-btn"        data-prio="cand"   onclick="setWishFilter('cand')">🟢 Când apare</button>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openWishModal()">＋ Adaugă în coș</button>
+    </div>
+
+    <!-- Wishlist table -->
+    <div class="elab-table-wrap">
+      <table class="elab-table" id="wishTable">
+        <thead>
+          <tr>
+            <th>Componentă</th>
+            <th>Cantitate</th>
+            <th>Prioritate</th>
+            <th>Link</th>
+            <th>Motiv</th>
+            <th style="width:160px">Acțiuni</th>
+          </tr>
+        </thead>
+        <tbody id="wishTableBody">
+          <tr><td colspan="6" class="empty-state">Se încarcă...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div><!-- /panelWishlist -->
+
+</div><!-- /container-wide -->
+
+
+<!-- ===================================================== -->
+<!--  MODALS                                               -->
+<!-- ===================================================== -->
+
+<!-- Add/Edit Component Modal -->
+<div class="modal-overlay" id="compModal">
+  <div class="modal modal-wide">
+    <h2 id="compModalTitle">➕ Componentă nouă</h2>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Nume componentă *</label>
+        <input type="text" id="compName" class="form-input" placeholder="ex: Rezistență 10kΩ, ESP32-WROOM…" maxlength="80">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Categorie *</label>
+        <select class="form-select" id="compCat">
+          <option value="Rezistențe">Rezistențe</option>
+          <option value="Condensatoare">Condensatoare</option>
+          <option value="MCU">MCU / Microcontrolere</option>
+          <option value="Senzori">Senzori</option>
+          <option value="Module">Module</option>
+          <option value="Altele">Altele</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Cantitate totală *</label>
+        <input type="number" id="compQty" class="form-input" placeholder="0" min="0" step="1">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Specificații</label>
+        <input type="text" id="compSpecs" class="form-input" placeholder="ex: 10kΩ 1/4W, 100nF 50V…" maxlength="120">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Notițe</label>
+      <textarea id="compNotes" class="form-input" placeholder="Detalii suplimentare, unde le-am cumpărat, etc…" style="min-height:60px"></textarea>
+    </div>
+
+    <input type="hidden" id="compEditId" value="">
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" onclick="saveComp()">Salvează</button>
+      <button class="btn btn-ghost"   onclick="closeCompModal()">Anulează</button>
+      <button class="btn btn-danger btn-sm" id="compDeleteBtn" style="margin-left:auto;display:none" onclick="deleteComp()">🗑️ Șterge</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reserve Component Modal -->
+<div class="modal-overlay" id="reserveModal">
+  <div class="modal">
+    <h2>📌 Rezervare pe proiect</h2>
+    <div class="elab-reserve-comp-info" id="reserveCompInfo"></div>
+    <input type="hidden" id="reserveCompId">
+
+    <div class="form-group">
+      <label class="form-label">Proiect *</label>
+      <select class="form-select" id="reserveProjSel"></select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Cantitate de rezervat *</label>
+      <input type="number" id="reserveQty" class="form-input" placeholder="0" min="1" step="1">
+    </div>
+
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" onclick="saveReserve()">📌 Rezervă</button>
+      <button class="btn btn-ghost"   onclick="closeReserveModal()">Anulează</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add/Edit Project Modal -->
+<div class="modal-overlay" id="projModal">
+  <div class="modal modal-wide">
+    <h2 id="projModalTitle">🔧 Proiect nou</h2>
+
+    <div class="form-group">
+      <label class="form-label">Titlu proiect *</label>
+      <input type="text" id="projTitle" class="form-input" placeholder="ex: Stație meteo ESP32, Robot urmăritor linie…" maxlength="80">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Descriere</label>
+      <textarea id="projDesc" class="form-input" placeholder="Ce face proiectul, cum funcționează…" style="min-height:70px"></textarea>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Status</label>
+        <select class="form-select" id="projStatus">
+          <option value="idee">💡 Idee</option>
+          <option value="activ">⚡ Activ</option>
+          <option value="finalizat">✅ Finalizat</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Tehnologii (separate prin virgulă)</label>
+        <input type="text" id="projTech" class="form-input" placeholder="ESP32, Arduino, Python, MQTT…">
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Link GitHub (opțional)</label>
+        <input type="text" id="projGithub" class="form-input" placeholder="https://github.com/…">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Link YouTube (opțional)</label>
+        <input type="text" id="projYoutube" class="form-input" placeholder="https://youtube.com/…">
+      </div>
+    </div>
+
+    <input type="hidden" id="projEditId" value="">
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" onclick="saveProj()">Salvează</button>
+      <button class="btn btn-ghost"   onclick="closeProjModal()">Anulează</button>
+      <button class="btn btn-danger btn-sm" id="projDeleteBtn" style="margin-left:auto;display:none" onclick="deleteProj()">🗑️ Șterge proiect</button>
+    </div>
+  </div>
+</div>
+
+<!-- Allocate Component to Project Modal -->
+<div class="modal-overlay" id="allocModal">
+  <div class="modal">
+    <h2>⚙️ Alocă componentă</h2>
+    <input type="hidden" id="allocProjId">
+
+    <div class="form-group">
+      <label class="form-label">Componentă *</label>
+      <select class="form-select" id="allocCompSel"></select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Cantitate *</label>
+      <input type="number" id="allocQty" class="form-input" placeholder="1" min="1" step="1">
+    </div>
+
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" onclick="saveAlloc()">Alocă</button>
+      <button class="btn btn-ghost"   onclick="closeAllocModal()">Anulează</button>
+    </div>
+  </div>
+</div>
+
+<!-- Devlog Add/Edit Modal -->
+<div class="modal-overlay" id="devlogModal">
+  <div class="modal modal-wide">
+    <h2 id="devlogModalTitle">📝 Intrare devlog</h2>
+    <input type="hidden" id="devlogProjId">
+    <input type="hidden" id="devlogEditId">
+
+    <div style="display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end">
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">Titlu intrare *</label>
+        <input type="text" id="devlogTitle" class="form-input" placeholder="ex: Primul test WiFi, Rezolvat bug I2C…" maxlength="100">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">Data</label>
+        <input type="date" id="devlogDate" class="form-input" style="width:150px">
+      </div>
+    </div>
+
+    <div class="form-group" style="margin-top:12px">
+      <label class="form-label">Detalii</label>
+      <textarea id="devlogText" class="form-input" placeholder="Ce am făcut, ce am descoperit, ce a mers sau nu…" style="min-height:100px"></textarea>
+    </div>
+
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" onclick="saveDevlog()">Salvează</button>
+      <button class="btn btn-ghost"   onclick="closeDevlogModal()">Anulează</button>
+      <button class="btn btn-danger btn-sm" id="devlogDeleteBtn" style="margin-left:auto;display:none" onclick="deleteDevlog()">🗑️ Șterge</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Wishlist Item Modal -->
+<div class="modal-overlay" id="wishModal">
+  <div class="modal modal-wide">
+    <h2 id="wishModalTitle">🛒 Adaugă în coș</h2>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Componentă *</label>
+        <input type="text" id="wishName" class="form-input" placeholder="ex: ESP32-CAM, Senzor DHT22…" maxlength="80">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Cantitate *</label>
+        <input type="number" id="wishQty" class="form-input" placeholder="1" min="1" step="1">
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Prioritate</label>
+        <select class="form-select" id="wishPrio">
+          <option value="urgent">🔴 Urgent</option>
+          <option value="normal" selected>🟡 Normal</option>
+          <option value="cand">🟢 Când apare</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Link produs (opțional)</label>
+        <input type="text" id="wishLink" class="form-input" placeholder="https://…">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Motiv / De ce am nevoie</label>
+      <input type="text" id="wishReason" class="form-input" placeholder="ex: pentru proiectul stație meteo, am terminat stocul…" maxlength="150">
+    </div>
+
+    <input type="hidden" id="wishEditId" value="">
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" onclick="saveWish()">Salvează</button>
+      <button class="btn btn-ghost"   onclick="closeWishModal()">Anulează</button>
+    </div>
+  </div>
+</div>
+
+<!-- Buy Wishlist Item Modal -->
+<div class="modal-overlay" id="buyModal">
+  <div class="modal">
+    <h2>✅ Confirm cumpărare</h2>
+    <div class="elab-buy-info" id="buyItemInfo"></div>
+    <input type="hidden" id="buyWishId">
+
+    <div class="form-group">
+      <label class="form-label">Cantitate cumpărată *</label>
+      <input type="number" id="buyQty" class="form-input" placeholder="1" min="1" step="1">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Categoria în inventar</label>
+      <select class="form-select" id="buyCat">
+        <option value="Rezistențe">Rezistențe</option>
+        <option value="Condensatoare">Condensatoare</option>
+        <option value="MCU">MCU / Microcontrolere</option>
+        <option value="Senzori">Senzori</option>
+        <option value="Module">Module</option>
+        <option value="Altele">Altele</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Specificații (opțional)</label>
+      <input type="text" id="buySpecs" class="form-input" placeholder="Spec tehnice…" maxlength="120">
+    </div>
+
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-teal" onclick="saveBuy()">✅ Adaugă în inventar</button>
+      <button class="btn btn-ghost" onclick="closeBuyModal()">Anulează</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/electronics.js') }}"></script>
+{% endblock %}

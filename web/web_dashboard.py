@@ -226,6 +226,418 @@ def day_page():
 def terminal():
     return render_template('terminal.html', active_page='terminal')
 
+@app.route('/settings')
+@requires_auth
+def settings_page():
+    return render_template('settings.html', active_page='settings')
+
+@app.route('/electronics')
+@requires_auth
+def electronics_page():
+    return render_template('electronics.html', active_page='electronics')
+
+# ============ SETTINGS API ============
+SETTINGS_ALLOWED_PATHS = None  # Lazy init
+
+def _get_allowed_base_paths():
+    """Returns list of allowed directories/files for Settings editor."""
+    return [
+        os.path.join(BASE_DIR, "chronos_data"),
+        os.path.join(BASE_DIR, "config.py"),
+    ]
+
+def _is_safe_path(requested_path):
+    """Check that requested_path is inside one of the allowed base paths."""
+    real = os.path.realpath(requested_path)
+    for allowed in _get_allowed_base_paths():
+        allowed_real = os.path.realpath(allowed)
+        if real == allowed_real or real.startswith(allowed_real + os.sep):
+            return True
+    return False
+
+def _build_file_tree(directory, rel_root=None):
+    """Recursively build file tree for a directory."""
+    if rel_root is None:
+        rel_root = BASE_DIR
+    items = []
+    try:
+        entries = sorted(os.scandir(directory), key=lambda e: (not e.is_dir(), e.name.lower()))
+        for entry in entries:
+            rel_path = os.path.relpath(entry.path, BASE_DIR).replace('\\', '/')
+            if entry.name.startswith('.') or entry.name == '__pycache__':
+                continue
+            if entry.is_dir():
+                children = _build_file_tree(entry.path, rel_root)
+                items.append({"type": "dir", "name": entry.name, "path": rel_path, "children": children})
+            else:
+                ext = entry.name.rsplit('.', 1)[-1].lower() if '.' in entry.name else ''
+                if ext in ('json', 'jsonl', 'py', 'txt', 'md'):
+                    items.append({
+                        "type": "file", "name": entry.name,
+                        "path": rel_path, "ext": ext,
+                        "size": entry.stat().st_size
+                    })
+    except PermissionError:
+        pass
+    return items
+
+@app.route('/api/settings/tree', methods=['GET'])
+@requires_auth
+def settings_tree():
+    """Return file tree for config.py and chronos_data/."""
+    config_rel = os.path.relpath(os.path.join(BASE_DIR, "config.py"), BASE_DIR).replace('\\', '/')
+    config_files = [{
+        "type": "file", "name": "config.py", "path": config_rel,
+        "ext": "py", "size": os.path.getsize(os.path.join(BASE_DIR, "config.py"))
+    }]
+    data_dir = os.path.join(BASE_DIR, "chronos_data")
+    data_files = _build_file_tree(data_dir)
+    return jsonify({"config_files": config_files, "data_files": data_files})
+
+@app.route('/api/settings/file', methods=['GET'])
+@requires_auth
+def settings_read_file():
+    """Read a file content. path is relative to BASE_DIR."""
+    rel_path = request.args.get('path', '').strip()
+    if not rel_path:
+        return jsonify({"status": "error", "message": "Path lipsă"}), 400
+    abs_path = os.path.realpath(os.path.join(BASE_DIR, rel_path))
+    if not _is_safe_path(abs_path):
+        return jsonify({"status": "error", "message": "Acces interzis la această cale"}), 403
+    if not os.path.isfile(abs_path):
+        return jsonify({"status": "error", "message": "Fișierul nu există"}), 404
+    try:
+        with open(abs_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        ext = abs_path.rsplit('.', 1)[-1].lower() if '.' in abs_path else ''
+        return jsonify({"status": "success", "content": content, "ext": ext, "path": rel_path})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/settings/file', methods=['POST'])
+@requires_auth
+def settings_write_file():
+    """Write file content. body: {path, content}."""
+    body = request.json or {}
+    rel_path = body.get('path', '').strip()
+    content = body.get('content', '')
+    if not rel_path:
+        return jsonify({"status": "error", "message": "Path lipsă"}), 400
+    abs_path = os.path.realpath(os.path.join(BASE_DIR, rel_path))
+    if not _is_safe_path(abs_path):
+        return jsonify({"status": "error", "message": "Acces interzis la această cale"}), 403
+    try:
+        with open(abs_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return jsonify({"status": "success", "bytes_written": len(content.encode('utf-8'))})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# ============ ELECTRONICS API ============
+ELECTRONICS_FILE = os.path.join(DATA_DIR, "electronics_data.json")
+
+def _load_electronics():
+    if os.path.exists(ELECTRONICS_FILE):
+        with open(ELECTRONICS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"components": [], "projects": [], "wishlist": []}
+
+def _save_electronics(data):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(ELECTRONICS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+@app.route('/api/electronics/data', methods=['GET'])
+@requires_auth
+def electronics_data():
+    data = _load_electronics()
+    # Compute available quantities
+    for comp in data.get('components', []):
+        reserved = sum(
+            r.get('qty', 0)
+            for proj in data.get('projects', [])
+            for r in proj.get('reservations', [])
+            if r.get('component_id') == comp['id']
+        )
+        comp['reserved'] = reserved
+        comp['available'] = max(0, comp.get('qty', 0) - reserved)
+    return jsonify(data)
+
+@app.route('/api/electronics/component/add', methods=['POST'])
+@requires_auth
+def electronics_component_add():
+    import time
+    data = _load_electronics()
+    body = request.json or {}
+    name = body.get('name', '').strip()
+    if not name:
+        return jsonify({'status': 'error', 'message': 'Nume lipsă'}), 400
+    comp = {
+        'id': f"comp_{int(time.time()*1000)}",
+        'name': name,
+        'category': body.get('category', 'Altele'),
+        'qty': int(body.get('qty', 0)),
+        'specs': body.get('specs', ''),
+        'notes': body.get('notes', ''),
+        'created_at': datetime.now().isoformat()
+    }
+    data.setdefault('components', []).append(comp)
+    _save_electronics(data)
+    return jsonify({'status': 'success', 'component': comp})
+
+@app.route('/api/electronics/component/edit', methods=['POST'])
+@requires_auth
+def electronics_component_edit():
+    data = _load_electronics()
+    body = request.json or {}
+    cid = body.get('id')
+    for comp in data.get('components', []):
+        if comp['id'] == cid:
+            for field in ['name', 'category', 'specs', 'notes']:
+                if field in body: comp[field] = body[field]
+            if 'qty' in body: comp['qty'] = int(body['qty'])
+            comp['updated_at'] = datetime.now().isoformat()
+            break
+    _save_electronics(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/electronics/component/delete', methods=['POST'])
+@requires_auth
+def electronics_component_delete():
+    data = _load_electronics()
+    body = request.json or {}
+    cid = body.get('id')
+    data['components'] = [c for c in data.get('components', []) if c['id'] != cid]
+    # Remove reservations for this component from all projects
+    for proj in data.get('projects', []):
+        proj['reservations'] = [r for r in proj.get('reservations', []) if r.get('component_id') != cid]
+    _save_electronics(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/electronics/project/add', methods=['POST'])
+@requires_auth
+def electronics_project_add():
+    import time
+    data = _load_electronics()
+    body = request.json or {}
+    name = body.get('name', '').strip()
+    if not name:
+        return jsonify({'status': 'error', 'message': 'Nume lipsă'}), 400
+    proj = {
+        'id': f"proj_{int(time.time()*1000)}",
+        'name': name,
+        'description': body.get('description', ''),
+        'status': body.get('status', 'idea'),  # idea, active, done
+        'technologies': body.get('technologies', []),
+        'links': body.get('links', []),
+        'reservations': [],
+        'devlog': [],
+        'created_at': datetime.now().isoformat()
+    }
+    data.setdefault('projects', []).append(proj)
+    _save_electronics(data)
+    return jsonify({'status': 'success', 'project': proj})
+
+@app.route('/api/electronics/project/edit', methods=['POST'])
+@requires_auth
+def electronics_project_edit():
+    data = _load_electronics()
+    body = request.json or {}
+    pid = body.get('id')
+    for proj in data.get('projects', []):
+        if proj['id'] == pid:
+            for field in ['name', 'description', 'status', 'technologies', 'links']:
+                if field in body: proj[field] = body[field]
+            proj['updated_at'] = datetime.now().isoformat()
+            break
+    _save_electronics(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/electronics/project/delete', methods=['POST'])
+@requires_auth
+def electronics_project_delete():
+    data = _load_electronics()
+    body = request.json or {}
+    pid = body.get('id')
+    data['projects'] = [p for p in data.get('projects', []) if p['id'] != pid]
+    _save_electronics(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/electronics/project/devlog/add', methods=['POST'])
+@requires_auth
+def electronics_devlog_add():
+    import time
+    data = _load_electronics()
+    body = request.json or {}
+    pid = body.get('project_id')
+    title = body.get('title', '').strip()
+    text = body.get('text', '').strip()
+    if not pid or not title:
+        return jsonify({'status': 'error', 'message': 'Date lipsă'}), 400
+    entry = {
+        'id': f"dlog_{int(time.time()*1000)}",
+        'date': body.get('date', datetime.now().strftime('%Y-%m-%d')),
+        'title': title,
+        'text': text,
+        'created_at': datetime.now().isoformat()
+    }
+    for proj in data.get('projects', []):
+        if proj['id'] == pid:
+            proj.setdefault('devlog', []).append(entry)
+            proj['devlog'].sort(key=lambda x: x.get('date', ''), reverse=True)
+            break
+    _save_electronics(data)
+    return jsonify({'status': 'success', 'entry': entry})
+
+@app.route('/api/electronics/project/devlog/edit', methods=['POST'])
+@requires_auth
+def electronics_devlog_edit():
+    data = _load_electronics()
+    body = request.json or {}
+    pid = body.get('project_id')
+    eid = body.get('entry_id')
+    for proj in data.get('projects', []):
+        if proj['id'] == pid:
+            for entry in proj.get('devlog', []):
+                if entry['id'] == eid:
+                    for field in ['date', 'title', 'text']:
+                        if field in body: entry[field] = body[field]
+                    entry['updated_at'] = datetime.now().isoformat()
+                    break
+            proj['devlog'].sort(key=lambda x: x.get('date', ''), reverse=True)
+            break
+    _save_electronics(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/electronics/project/devlog/delete', methods=['POST'])
+@requires_auth
+def electronics_devlog_delete():
+    data = _load_electronics()
+    body = request.json or {}
+    pid = body.get('project_id')
+    eid = body.get('entry_id')
+    for proj in data.get('projects', []):
+        if proj['id'] == pid:
+            proj['devlog'] = [e for e in proj.get('devlog', []) if e['id'] != eid]
+            break
+    _save_electronics(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/electronics/reserve', methods=['POST'])
+@requires_auth
+def electronics_reserve():
+    """Add or update a reservation of a component for a project."""
+    data = _load_electronics()
+    body = request.json or {}
+    pid = body.get('project_id')
+    cid = body.get('component_id')
+    qty = int(body.get('qty', 0))
+
+    # Find the component to check stock
+    comp = next((c for c in data.get('components', []) if c['id'] == cid), None)
+    if not comp:
+        return jsonify({'status': 'error', 'message': 'Componentă negăsită'}), 404
+
+    # Calculate currently reserved by OTHER projects
+    other_reserved = sum(
+        r.get('qty', 0)
+        for proj in data.get('projects', [])
+        for r in proj.get('reservations', [])
+        if r.get('component_id') == cid and proj['id'] != pid
+    )
+    available_for_this = comp.get('qty', 0) - other_reserved
+    if qty > available_for_this:
+        return jsonify({'status': 'error', 'message': f'Stoc insuficient. Disponibil pentru acest proiect: {available_for_this}'}), 400
+
+    for proj in data.get('projects', []):
+        if proj['id'] == pid:
+            existing = next((r for r in proj.get('reservations', []) if r.get('component_id') == cid), None)
+            if existing:
+                if qty == 0:
+                    proj['reservations'] = [r for r in proj['reservations'] if r.get('component_id') != cid]
+                else:
+                    existing['qty'] = qty
+                    existing['updated_at'] = datetime.now().isoformat()
+            elif qty > 0:
+                proj.setdefault('reservations', []).append({
+                    'component_id': cid,
+                    'qty': qty,
+                    'reserved_at': datetime.now().isoformat()
+                })
+            break
+    _save_electronics(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/electronics/wishlist/add', methods=['POST'])
+@requires_auth
+def electronics_wishlist_add():
+    import time
+    data = _load_electronics()
+    body = request.json or {}
+    name = body.get('name', '').strip()
+    if not name:
+        return jsonify({'status': 'error', 'message': 'Nume lipsă'}), 400
+    item = {
+        'id': f"wish_{int(time.time()*1000)}",
+        'name': name,
+        'qty': int(body.get('qty', 1)),
+        'priority': body.get('priority', 'normal'),  # urgent, normal, low
+        'link': body.get('link', ''),
+        'reason': body.get('reason', ''),
+        'created_at': datetime.now().isoformat()
+    }
+    data.setdefault('wishlist', []).append(item)
+    _save_electronics(data)
+    return jsonify({'status': 'success', 'item': item})
+
+@app.route('/api/electronics/wishlist/delete', methods=['POST'])
+@requires_auth
+def electronics_wishlist_delete():
+    data = _load_electronics()
+    body = request.json or {}
+    wid = body.get('id')
+    data['wishlist'] = [w for w in data.get('wishlist', []) if w['id'] != wid]
+    _save_electronics(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/electronics/wishlist/buy', methods=['POST'])
+@requires_auth
+def electronics_wishlist_buy():
+    """Mark wishlist item as bought: remove from wishlist, add to inventory."""
+    import time
+    data = _load_electronics()
+    body = request.json or {}
+    wid = body.get('id')
+    bought_qty = int(body.get('qty', 0))
+    category = body.get('category', 'Altele')
+    specs = body.get('specs', '')
+
+    wish = next((w for w in data.get('wishlist', []) if w['id'] == wid), None)
+    if not wish:
+        return jsonify({'status': 'error', 'message': 'Item negăsit'}), 404
+
+    # Check if component with same name already exists → update qty
+    existing_comp = next((c for c in data.get('components', []) if c['name'].lower() == wish['name'].lower()), None)
+    if existing_comp:
+        existing_comp['qty'] = existing_comp.get('qty', 0) + bought_qty
+        existing_comp['updated_at'] = datetime.now().isoformat()
+        comp = existing_comp
+    else:
+        comp = {
+            'id': f"comp_{int(time.time()*1000)}",
+            'name': wish['name'],
+            'category': category,
+            'qty': bought_qty,
+            'specs': specs,
+            'notes': f"Cumpărat din wishlist ({datetime.now().strftime('%Y-%m-%d')})",
+            'created_at': datetime.now().isoformat()
+        }
+        data.setdefault('components', []).append(comp)
+
+    data['wishlist'] = [w for w in data['wishlist'] if w['id'] != wid]
+    _save_electronics(data)
+    return jsonify({'status': 'success', 'component': comp})
+
 # ============ DAY STATUS AGGREGATOR ============
 @app.route('/api/day/status', methods=['GET'])
 @requires_auth
@@ -413,10 +825,10 @@ def terminal_command():
         intent_result = ask_gemini_json(prompt, schema=intent_schema, temperature=0.1)
         intents = intent_result.get('intents', ['general']) if intent_result else ['general']
 
+        # Each action is now {"text": "...", "status": "ok"|"error"|"info"}
         actions = []
         reply = None
 
-        # --- AICI INTERVIN MODIFICĂRILE REALE ---
         for intent in intents:
             if intent == 'general':
                 chat_schema = {
@@ -434,41 +846,48 @@ def terminal_command():
                 chat_res = ask_gemini_json(chat_prompt, schema=chat_schema, temperature=0.7)
                 if chat_res:
                     reply = chat_res.get('response_text', '')
-            
+
             elif intent == 'led':
-                actions.append('Comandă LED trimisă către sistemul WLED.')
                 try:
                     from wled_specialist import WLEDDispatcher
                     WLEDDispatcher().execute(text, "Web Terminal")
+                    actions.append({"text": "✅ Comandă LED trimisă și executată cu succes.", "status": "ok"})
                 except Exception as e:
-                    actions.append(f"Eroare WLED: {e}")
-            
+                    actions.append({"text": f"❌ WLED eșuat: {type(e).__name__}: {e}", "status": "error"})
+
             elif intent == 'music':
-                actions.append('Comandă muzică trimisă către Spotify.')
                 try:
                     from music_specialist import MusicHandler
                     MusicHandler().process_command(text, "Web Terminal")
+                    actions.append({"text": "✅ Comandă muzică trimisă cu succes.", "status": "ok"})
                 except Exception as e:
-                    actions.append(f"Eroare Muzică: {e}")
-            
+                    actions.append({"text": f"❌ Muzică eșuată: {type(e).__name__}: {e}", "status": "error"})
+
             elif intent == 'journal':
-                actions.append('Pentru jurnal, folosește pagina Jurnal din web.')
-            
+                actions.append({"text": "📘 Jurnal: folosește pagina Jurnal din web pentru a scrie intrări.", "status": "info"})
+
             elif intent == 'target':
-                actions.append('Pentru targeturi, folosește pagina Targeturi din web.')
-            
+                actions.append({"text": "🎯 Targeturi: folosește pagina Targeturi din web.", "status": "info"})
+
             elif intent == 'study_timer':
-                actions.append('Timer Pomodoro se poate porni doar din serviciul vocal (momentan).')
-            
+                actions.append({"text": "⏱️ Timer Pomodoro: disponibil doar din serviciul vocal momentan.", "status": "info"})
+
             elif intent == 'hype_mode':
-                actions.append('🔥 HYPE MODE! Lumini și muzică declanșate.')
+                hype_ok = True
                 try:
                     from wled_specialist import WLEDStateManager
                     WLEDStateManager().trigger_hype_mode()
+                except Exception as e:
+                    actions.append({"text": f"❌ Hype LED eșuat: {type(e).__name__}: {e}", "status": "error"})
+                    hype_ok = False
+                try:
                     from music_specialist import MusicHandler
                     MusicHandler().process_command("baga muzica super hype rapida", "")
                 except Exception as e:
-                    actions.append(f"Eroare Hype Mode: {e}")
+                    actions.append({"text": f"❌ Hype muzică eșuată: {type(e).__name__}: {e}", "status": "error"})
+                    hype_ok = False
+                if hype_ok:
+                    actions.append({"text": "🔥 HYPE MODE activat! Lumini și muzică declanșate.", "status": "ok"})
 
         return jsonify({
             "status": "success",
@@ -479,7 +898,8 @@ def terminal_command():
         })
 
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        import traceback
+        return jsonify({"status": "error", "message": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()}), 500
 
 # ============ STATIC MEDIA ============
 @app.route('/media/gym/photos/<filename>')

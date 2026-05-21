@@ -17,6 +17,13 @@ LOGS_DIR = os.path.join(DATA_DIR, "logs")
 ARCHIVE_DIR = os.path.join(DATA_DIR, "archive")
 DB_DIR = os.path.join(DATA_DIR, "vector_db")
 
+# =====================================================
+# AUTO_GENERATE_SUMMARIES = False → dezactivează generarea
+# automată de judecăți/scoruri la pornire și periodic.
+# Butonul "Rejudecă" din interfața web funcționează în continuare.
+# =====================================================
+AUTO_GENERATE_SUMMARIES = False
+
 TARGETS_FILE = os.path.join(DATA_DIR, "targets.json")
 COMPLETED_FILE = os.path.join(ARCHIVE_DIR, "completed_goals.json")
 TEMP_WAV = os.path.join(BASE_DIR, "temp_input.wav")
@@ -231,6 +238,11 @@ class JournalCore:
 
     # ==================== SISTEMUL DE JUDECATĂ ====================
     def check_and_generate_missing_summaries(self):
+        # ⚠️ Auto-generarea e dezactivată — foloseşte butonul "Rejudecă" din interfaţă
+        if not AUTO_GENERATE_SUMMARIES:
+            logging.info("⏭️ Auto-generare judecăţi DEZACTIVATĂ (AUTO_GENERATE_SUMMARIES=False). Skip.")
+            return
+
         logging.info("🔍 Verific dacă există zile din trecut care nu au primit 'Judecata'...")
         if not os.path.exists(LOGS_DIR): return
 
