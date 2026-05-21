@@ -523,6 +523,96 @@ def electronics_devlog_delete():
     _save_electronics(data)
     return jsonify({'status': 'success'})
 
+# ============ DEVLOG PHOTOS ============
+DEVLOG_PHOTOS_DIR = os.path.join(DATA_DIR, 'electronics_devlog_photos')
+os.makedirs(DEVLOG_PHOTOS_DIR, exist_ok=True)
+
+@app.route('/api/electronics/devlog/photo/upload', methods=['POST'])
+@requires_auth
+def electronics_devlog_photo_upload():
+    """Upload a photo for a devlog entry."""
+    if 'file' not in request.files:
+        return jsonify({'status': 'error', 'message': 'Niciun fișier'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'status': 'error', 'message': 'Niciun fișier selectat'}), 400
+    
+    if not allowed_file(file.filename):
+        return jsonify({'status': 'error', 'message': 'Format neacceptat'}), 400
+    
+    proj_id = request.form.get('project_id')
+    entry_id = request.form.get('entry_id')
+    
+    if not proj_id or not entry_id:
+        return jsonify({'status': 'error', 'message': 'Date lipsă'}), 400
+    
+    # Generate filename
+    filename = secure_filename(f"{proj_id}_{entry_id}_{int(time.time()*1000)}_{file.filename}")
+    filepath = os.path.join(DEVLOG_PHOTOS_DIR, filename)
+    file.save(filepath)
+    
+    # Update devlog entry with photo reference
+    data = _load_electronics()
+    for proj in data.get('projects', []):
+        if proj['id'] == proj_id:
+            for entry in proj.get('devlog', []):
+                if entry['id'] == entry_id:
+                    entry.setdefault('photos', []).append(filename)
+                    entry['updated_at'] = datetime.now().isoformat()
+                    break
+            break
+    _save_electronics(data)
+    
+    return jsonify({
+        'status': 'success',
+        'filename': filename,
+        'url': f'/api/electronics/devlog/photo/{filename}'
+    })
+
+@app.route('/api/electronics/devlog/photo/<filename>', methods=['GET'])
+def electronics_devlog_photo_get(filename):
+    """Serve devlog photo."""
+    try:
+        return send_from_directory(DEVLOG_PHOTOS_DIR, filename)
+    except:
+        return jsonify({'status': 'error', 'message': 'Fișier negăsit'}), 404
+
+@app.route('/api/electronics/devlog/photo/delete', methods=['POST'])
+@requires_auth
+def electronics_devlog_photo_delete():
+    """Delete a photo from devlog entry."""
+    data = _load_electronics()
+    body = request.json or {}
+    proj_id = body.get('project_id')
+    entry_id = body.get('entry_id')
+    filename = body.get('filename')
+    
+    if not all([proj_id, entry_id, filename]):
+        return jsonify({'status': 'error', 'message': 'Date lipsă'}), 400
+    
+    # Remove from devlog entry
+    for proj in data.get('projects', []):
+        if proj['id'] == proj_id:
+            for entry in proj.get('devlog', []):
+                if entry['id'] == entry_id:
+                    if 'photos' in entry and filename in entry['photos']:
+                        entry['photos'].remove(filename)
+                        entry['updated_at'] = datetime.now().isoformat()
+                    break
+            break
+    _save_electronics(data)
+    
+    # Delete file
+    filepath = os.path.join(DEVLOG_PHOTOS_DIR, filename)
+    if os.path.exists(filepath):
+        try:
+            os.remove(filepath)
+        except:
+            pass
+    
+    return jsonify({'status': 'success'})
+
 @app.route('/api/electronics/reserve', methods=['POST'])
 @requires_auth
 def electronics_reserve():

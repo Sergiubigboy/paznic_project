@@ -161,78 +161,11 @@ class WLEDDispatcher:
 
         return ask_gemini_json(system_prompt, schema=wled_schema, temperature=0.85)
 
-    def execute(self, user_text, conversation_history=""):
-        logging.info(f"🎨 Dual-Zone AI: '{user_text}'")
-        full_scene = self._get_ai_dual_decision(user_text, conversation_history)
-        
-        if not full_scene: return
-        
-        # AICI VOM VEDEA DE CE A ALES EFECTELE
-        logging.info(f"💡 LOGICĂ WLED: {full_scene.get('reasoning', 'Fără explicație')}")
-
-        try:
-            with ThreadPoolExecutor() as executor:
-                if "main" in full_scene:
-                    executor.submit(self._send_request, WLED_IP_MAIN, full_scene["main"])
-                if "floor" in full_scene:
-                    executor.submit(self._send_request, WLED_IP_FLOOR, full_scene["floor"])
-        except Exception as e:
-            logging.error(f"Eroare execuție WLED: {e}")
-
-        # SCHEMA STRICTĂ PENTRU LUMINILE WLED
-        wled_schema = {
-            "type": "OBJECT",
-            "properties": {
-                "main": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "on": {"type": "BOOLEAN"},
-                        "bri": {"type": "INTEGER"},
-                        "seg": {
-                            "type": "ARRAY",
-                            "items": {
-                                "type": "OBJECT",
-                                "properties": {
-                                    "fx": {"type": "INTEGER"},
-                                    "pal": {"type": "INTEGER"},
-                                    "sx": {"type": "INTEGER"},
-                                    "ix": {"type": "INTEGER"}
-                                },
-                                "required": ["fx", "pal", "sx", "ix"]
-                            }
-                        }
-                    },
-                    "required": ["on", "bri", "seg"]
-                },
-                "floor": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "on": {"type": "BOOLEAN"},
-                        "bri": {"type": "INTEGER"},
-                        "seg": {
-                            "type": "ARRAY",
-                            "items": {
-                                "type": "OBJECT",
-                                "properties": {
-                                    "fx": {"type": "INTEGER"},
-                                    "pal": {"type": "INTEGER"},
-                                    "sx": {"type": "INTEGER"},
-                                    "ix": {"type": "INTEGER"}
-                                },
-                                "required": ["fx", "pal", "sx", "ix"]
-                            }
-                        }
-                    },
-                    "required": ["on", "bri", "seg"]
-                }
-            }
-        }
-
     def _send_request(self, ip, data):
         try:
-            requests.post(f"http://{ip}/json/state", json=data, timeout=1.5)
+            requests.post(f"http://{ip}/json/state", json=data, timeout=2.0)
         except Exception as e:
-            logging.error(f"Eroare trimitere către {ip}: {e}")
+            logging.error(f"❌ WLED Error {ip}: {e}")
 
     def execute(self, user_text, conversation_history=""):
         logging.info(f"🎨 Dual-Zone AI: '{user_text}'")

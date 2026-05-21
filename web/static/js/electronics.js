@@ -472,18 +472,31 @@ function buildDevlog(proj) {
         return `<div style="color:var(--text-faint);font-size:12px;font-style:italic">Nicio intrare devlog încă. Apasă <strong>＋ Intrare nouă</strong>.</div>`;
     }
     return `<div class="elab-devlog-timeline">
-        ${entries.map(e => `
-        <div class="elab-devlog-entry">
-            <div class="elab-devlog-entry-header">
-                <span class="elab-devlog-date">${fmtDate(e.date)}</span>
-                <span class="elab-devlog-title">${escHtml(e.title)}</span>
-                <div class="elab-devlog-actions">
-                    <button class="elab-devlog-btn"     onclick="openDevlogModal('${proj.id}','${e.id}')">✏️</button>
-                    <button class="elab-devlog-btn del" onclick="deleteDevlogEntry('${proj.id}','${e.id}')">🗑️</button>
+        ${entries.map(e => {
+            const photosHtml = (e.photos || []).length > 0 
+                ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+                    ${(e.photos || []).map(ph => `
+                        <img src="/api/electronics/devlog/photo/${ph}" 
+                             style="max-width:150px;max-height:150px;border-radius:4px;object-fit:cover;cursor:pointer"
+                             onclick="window.open('/api/electronics/devlog/photo/${ph}', '_blank')"
+                             title="Click to open">
+                    `).join('')}
+                   </div>`
+                : '';
+            return `
+            <div class="elab-devlog-entry">
+                <div class="elab-devlog-entry-header">
+                    <span class="elab-devlog-date">${fmtDate(e.date)}</span>
+                    <span class="elab-devlog-title">${escHtml(e.title)}</span>
+                    <div class="elab-devlog-actions">
+                        <button class="elab-devlog-btn"     onclick="openDevlogModal('${proj.id}','${e.id}')">✏️</button>
+                        <button class="elab-devlog-btn del" onclick="deleteDevlogEntry('${proj.id}','${e.id}')">🗑️</button>
+                    </div>
                 </div>
-            </div>
-            ${e.text ? `<div class="elab-devlog-text">${escHtml(e.text)}</div>` : ''}
-        </div>`).join('')}
+                ${e.text ? `<div class="elab-devlog-text">${escHtml(e.text)}</div>` : ''}
+                ${photosHtml}
+            </div>`;
+        }).join('')}
     </div>`;
 }
 
@@ -633,11 +646,72 @@ function openDevlogModal(projId, entryId = null) {
     document.getElementById('devlogDate').value    = entry?.date  || todayStr();
     document.getElementById('devlogText').value    = entry?.text  || '';
     document.getElementById('devlogDeleteBtn').style.display = entry ? '' : 'none';
+    
+    // Load existing photos if editing
+    const preview = document.getElementById('devlogPhotoPreview');
+    preview.innerHTML = '';
+    if (entry?.photos) {
+        entry.photos.forEach(photo => {
+            const img = document.createElement('img');
+            img.src = `/api/electronics/devlog/photo/${photo}`;
+            img.style.cssText = 'max-width:80px;max-height:80px;border-radius:4px;object-fit:cover;position:relative;cursor:pointer';
+            img.title = 'Click to remove';
+            img.onclick = () => removeDevlogPhoto(photo);
+            preview.appendChild(img);
+        });
+    }
+    
+    // Store current entry photos for reference
+    window._currentDevlogPhotos = (entry?.photos || []).slice();
+    
     document.getElementById('devlogModal').classList.add('open');
     document.getElementById('devlogTitle').focus();
 }
 
-function closeDevlogModal() { document.getElementById('devlogModal').classList.remove('open'); }
+function closeDevlogModal() { 
+    document.getElementById('devlogModal').classList.remove('open');
+    document.getElementById('devlogPhotoInput').value = '';
+    document.getElementById('devlogPhotoPreview').innerHTML = '';
+}
+
+function addDevlogPhoto(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const preview = document.getElementById('devlogPhotoPreview');
+        const div = document.createElement('div');
+        div.style.cssText = 'position:relative;display:inline-block';
+        
+        const img = document.createElement('img');
+        img.src = e.target.result;
+        img.style.cssText = 'max-width:80px;max-height:80px;border-radius:4px;object-fit:cover';
+        
+        const btn = document.createElement('button');
+        btn.textContent = '✕';
+        btn.style.cssText = 'position:absolute;top:-6px;right:-6px;background:#f44;color:#fff;border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:12px';
+        btn.onclick = (e) => { e.preventDefault(); div.remove(); };
+        
+        div.appendChild(img);
+        div.appendChild(btn);
+        div.dataset.file = file.name;
+        div.dataset.tempFile = true;
+        preview.appendChild(div);
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+}
+
+function removeDevlogPhoto(filename) {
+    const preview = document.getElementById('devlogPhotoPreview');
+    const existing = Array.from(preview.querySelectorAll('img')).find(img => 
+        img.src.includes(filename)
+    );
+    if (existing) {
+        existing.parentElement.remove();
+    }
+}
 
 async function saveDevlog() {
     const projId = document.getElementById('devlogProjId').value;
@@ -653,8 +727,49 @@ async function saveDevlog() {
     if (editId) payload.entry_id = editId;
 
     const url  = editId ? '/api/electronics/project/devlog/edit' : '/api/electronics/project/devlog/add';
-    const data = await postJSON(url, payload);
+    let data = await postJSON(url, payload);
+    
     if (data.status === 'success') {
+        // Now upload photos
+        const entryId = editId || data.entry?.id;
+        const preview = document.getElementById('devlogPhotoPreview');
+        const photoInputs = preview.querySelectorAll('div[data-tempFile="true"]');
+        
+        // Re-create file input to get actual files
+        const fileInput = document.getElementById('devlogPhotoInput');
+        const files = fileInput.files;
+        
+        if (files && files.length > 0) {
+            const formData = new FormData();
+            formData.append('project_id', projId);
+            formData.append('entry_id', entryId);
+            
+            for (let file of files) {
+                formData.append('file', file);
+            }
+            
+            // Upload one by one
+            for (let file of files) {
+                const fd = new FormData();
+                fd.append('project_id', projId);
+                fd.append('entry_id', entryId);
+                fd.append('file', file);
+                
+                try {
+                    const photoRes = await fetch('/api/electronics/devlog/photo/upload', {
+                        method: 'POST',
+                        body: fd
+                    });
+                    const photoData = await photoRes.json();
+                    if (photoData.status !== 'success') {
+                        flash(`❌ Eroare upload poză: ${photoData.message}`, 'error');
+                    }
+                } catch (e) {
+                    console.error('Upload error:', e);
+                }
+            }
+        }
+        
         closeDevlogModal();
         flash(editId ? '✏️ Intrare actualizată!' : '📝 Intrare devlog adăugată!', 'success');
         await loadAll();
