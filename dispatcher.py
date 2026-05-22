@@ -68,11 +68,50 @@ class CommandDispatcher:
 
         return ask_gemini_json(prompt_text, schema=intent_schema, temperature=0.1)
 
+    def extract_memory_parameters(self, text):
+            from datetime import datetime
+            azi = datetime.now()
+            
+            prompt = f"""
+            Suntem în data de: {azi.strftime('%Y-%m-%d')}
+            Comanda utilizatorului: "{text}"
+            
+            Sarcina ta:
+            1. Extrage intervalul de timp (start_date și end_date în format YYYY-MM-DD). Dacă se cere "săptămâna asta", calculează datele. Dacă nu se specifică timpul, setează has_time_filter pe false.
+            2. Generează o listă de 3-5 fraze/concepte cheie (search_queries) pentru a căuta în jurnal. Fii creativ! 
+            Exemplu: Dacă userul întreabă de "productivitate", generează ["productivitate", "am lucrat mult", "taskuri", "progres", "lene", "oboseală", "succes"].
+            Folosește cuvinte naturale pe care userul le-ar scrie în jurnalul său zilnic.
+            """
+            
+            schema = {
+                "type": "OBJECT",
+                "properties": {
+                    "has_time_filter": {"type": "BOOLEAN"},
+                    "start_date": {"type": "STRING"},
+                    "end_date": {"type": "STRING"},
+                    "search_queries": {
+                        "type": "ARRAY",
+                        "items": {"type": "STRING"}
+                    }
+                },
+                "required": ["has_time_filter", "search_queries"]
+            }
+            
+            return ask_gemini_json(prompt, schema=schema, temperature=0.3)
+
     def handle_general_chat(self, user_text, short_term_history, long_term_context):
+        from datetime import datetime # <-- Am adăugat importul necesar
         logging.info("🧠 Generez răspuns bazat pe memorie...")
+        
+        # Aflăm data și ora curentă pentru a i le da lui Gemini
+        azi = datetime.now().strftime("%A, %d %B %Y, ora %H:%M")
 
         prompt = f"""
         ROL: Ești Chronos, asistent AI. Răspunzi STRICT în română.
+        DATA ȘI ORA CURENTĂ: {azi} 
+        
+        REGULĂ CRITICĂ PENTRU TIMP: Dacă utilizatorul întreabă de "azi", "ieri", "săptămâna asta", compară neapărat datele din memoria pe termen lung cu DATA CURENTĂ. Dacă amintirile furnizate sunt prea vechi, spune clar că nu ai informații salvate despre perioada recentă cerută, dar poți discuta despre datele mai vechi pe care le ai.
+
         ISTORIC SCURT: {short_term_history}
         MEMORIE PE TERMEN LUNG: {long_term_context}
         COMANDĂ/ÎNTREBARE: "{user_text}"
@@ -156,6 +195,32 @@ class CommandDispatcher:
         )
         self.study_timer_thread.start()
 
+    def extract_time_filter(self, text):
+        """Extrage un filtru de timp (ChromaDB) din comanda utilizatorului."""
+        from datetime import datetime, timedelta
+        azi = datetime.now()
+        
+        prompt = f"""
+        Suntem în data de: {azi.strftime('%Y-%m-%d')}
+        Comanda utilizatorului este: "{text}"
+        
+        Identifică dacă utilizatorul a cerut un interval de timp (ex: "azi", "ieri", "săptămâna asta", "luna trecută").
+        Dacă da, calculează 'start_date' și 'end_date' în format 'YYYY-MM-DD'.
+        Dacă nu se specifică timpul (ex: "ce am făcut în general?"), returnează null.
+        """
+        
+        schema = {
+            "type": "OBJECT",
+            "properties": {
+                "has_time_filter": {"type": "BOOLEAN"},
+                "start_date": {"type": "STRING"}, # Format YYYY-MM-DD
+                "end_date": {"type": "STRING"}    # Format YYYY-MM-DD
+            },
+            "required": ["has_time_filter"]
+        }
+        
+        return ask_gemini_json(prompt, schema=schema, temperature=0.1)
+
     def start_hype_mode(self):
         logging.info("🔥 HYPE MODE ACTIVAT!")
         self.wled_mechanic.trigger_hype_mode()
@@ -237,8 +302,41 @@ class CommandDispatcher:
                 actions_list.append({"text": "🎵 Comandă Spotify trimisă.", "status": "ok"})
             
             elif actiune == "general":
-                past_context = self.memory_manager.query_memory(text, n_results=5)
-                response = self.handle_general_chat(text, history_str, past_context)
+                # 1. Analizăm comanda pentru Timp + Cuvinte multiple (Query Expansion)
+                mem_params = self.extract_memory_parameters(text)
+                
+                chroma_filter = None
+                search_queries = [text] # Fallback la textul original în caz de eroare
+                
+                if mem_params:
+                    # Setăm filtrele de timp (dacă există)
+                    if mem_params.get("has_time_filter"):
+                        start = mem_params.get("start_date")
+                        end = mem_params.get("end_date")
+                        if start and end:
+                            # Notă: Presupunem că în logger salvezi data ca 'logical_date'
+                            chroma_filter = {
+                                "$and": [
+                                    {"logical_date": {"$gte": start}},
+                                    {"logical_date": {"$lte": end}}
+                                ]
+                            }
+                            
+                    # Extragem cuvintele cheie expandate
+                    if mem_params.get("search_queries"):
+                        search_queries = mem_params.get("search_queries")
+
+                logging.info(f"🔎 Caut în memorie folosind: {search_queries} | Filtru: {chroma_filter}")
+
+                # 2. Interogăm ChromaDB cu LISTA de cuvinte și filtrul
+                past_context = self.memory_manager.query_memory(search_queries, n_results=3, where_filter=chroma_filter)
+                
+                # 3. Generăm răspunsul final, dându-i și data de azi ca să fie orientat în timp
+                from datetime import datetime
+                azi_str = datetime.now().strftime("%A, %d %B %Y")
+                history_plus_time = f"[Azi e {azi_str}]\n" + history_str
+                
+                response = self.handle_general_chat(text, history_plus_time, past_context)
                 if response:
                     reply_text = response.get("response_text", "")
                     print(f"\n🤖 Chronos: {reply_text}\n")

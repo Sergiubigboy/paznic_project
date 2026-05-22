@@ -1,6 +1,7 @@
 # Mediu virtual
 venv/
 env/
+.env
 
 # Cache Python
 __pycache__/
@@ -9,7 +10,13 @@ __pycache__/
 # FIȘIERE CU PAROLE ȘI CHEI API (CRITIC!)
 config.py
 
-# DATE PERSONALE ȘI JURNALE (CRITIC!)
+# DATE PERSONALE, JURNALE, VECTOR DB (CRITIC!)
 chronos_data/
 *.wav
 *.ppn
+.cache
+
+# Diverse
+.DS_Store
+*.log
+dj_history.json

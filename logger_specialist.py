@@ -94,17 +94,44 @@ class MemoryManager:
             self.collection.add(documents=[text], metadatas=[metadata], ids=[memory_id])
         except Exception as e: logging.error(f"Eroare ChromaDB: {e}")
 
-    def query_memory(self, query_text, n_results=3):
+    def query_memory(self, queries, n_results=3, where_filter=None):
+        # Asigură-te că queries este o listă (dacă primește un singur string, îl transformă în listă)
+        if isinstance(queries, str):
+            queries = [queries]
+            
         try:
-            results = self.collection.query(query_texts=[query_text], n_results=n_results)
-            if not results['documents'] or not results['documents'][0]: return "Nu am găsit amintiri relevante."
-            memories = []
-            for doc, meta in zip(results['documents'][0], results['metadatas'][0]):
-                date = meta.get('date', 'Unknown')
-                summary = meta.get('summary', '')
-                memories.append(f"[{date}] {summary}")
-            return "\n".join(memories)
-        except: return "Baza de date de amintiri e offline."
+            if where_filter:
+                results = self.collection.query(
+                    query_texts=queries,
+                    n_results=n_results,
+                    where=where_filter
+                )
+            else:
+                results = self.collection.query(
+                    query_texts=queries,
+                    n_results=n_results
+                )
+            
+            # ChromaDB returnează liste de liste (câte o listă de rezultate pentru fiecare cuvânt cheie)
+            # Trebuie să le unificăm și să eliminăm duplicatele ca să nu zăpăcim AI-ul.
+            all_docs = []
+            seen = set()
+            
+            if results and results.get('documents'):
+                for doc_list in results['documents']:
+                    for doc in doc_list:
+                        if doc and doc not in seen:
+                            seen.add(doc)
+                            all_docs.append(doc)
+            
+            if not all_docs:
+                return "Nu am găsit amintiri relevante pentru această perioadă sau subiect."
+            
+            # Returnăm textul combinat (limităm la max 10 intrări unice ca să nu depășim limita de tokeni)
+            return "\n\n".join(all_docs[:10]) 
+            
+        except Exception as e:
+            return f"Eroare la accesarea memoriei: {e}"
 
 
 class JournalCore:
