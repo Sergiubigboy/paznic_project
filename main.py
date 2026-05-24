@@ -105,13 +105,23 @@ def main():
 
     # === THREAD TERMINAL LOCAL ===
     def terminal_listener():
+        import sys
+        import time
+        
+        # Verificăm dacă scriptul rulează într-un terminal interactiv
+        if not sys.stdin.isatty():
+            logging.info("Rulează în fundal. Opresc ascultarea de la tastatură.")
+            return # Iese din funcție automat
+            
         while True:
             try:
                 cmd = input("\n[Terminal] Scrie o comanda: ")
                 if cmd.strip():
                     dispatcher.process_text_command(cmd, None)
             except Exception:
-                pass
+                time.sleep(1) # Pauză vitală în caz de eroare pentru a nu bloca CPU-ul!
+
+    threading.Thread(target=terminal_listener, daemon=True).start()
 
     threading.Thread(target=terminal_listener, daemon=True).start()
 
