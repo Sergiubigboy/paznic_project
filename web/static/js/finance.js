@@ -423,32 +423,47 @@ async function saveRecover() {
 // ---- INVENTORY TAB ----
 function renderInventoryTab() {
     const s = _investSummary;
-    document.getElementById('invCapital').textContent  = fmtMoney(s.capital_invested);
-    document.getElementById('invEstValue').textContent = fmtMoney(s.estimated_value);
-    document.getElementById('invProfit').textContent   = fmtMoney(s.potential_profit);
-    document.getElementById('invRoiPct').textContent   = `ROI: ${s.potential_roi_pct || 0}%`;
+    
+    // 1. Stoc Curent
+    document.getElementById('invActiveCost').textContent  = fmtMoney(s.active_cost);
+    document.getElementById('invActiveEst').textContent   = fmtMoney(s.active_estimated_value);
+    document.getElementById('invActiveProfit').textContent = `Profit pot.: +${fmtMoney(s.active_potential_profit)}`;
+    document.getElementById('invActiveRoi').textContent   = `${s.active_roi_pct || 0}%`;
     document.getElementById('invActiveCount').textContent = `${s.active_count || 0} produse active`;
-    document.getElementById('invSoldCount').textContent   = `${s.sold_count || 0} vândute`;
-    renderBreakevenTracker();
+
+    // 2. Performanță All-Time
+    document.getElementById('invTotalInvested').textContent  = fmtMoney(s.total_invested);
+    document.getElementById('invTotalRecovered').textContent = fmtMoney(s.total_recovered);
+    
+    const realProfEl = document.getElementById('invRealizedProfit');
+    realProfEl.textContent = fmtMoney(s.realized_profit);
+    realProfEl.style.color = s.realized_profit >= 0 ? 'var(--teal)' : 'var(--red)';
+    
+    document.getElementById('invTotalRoi').textContent = `${s.total_roi_pct || 0}%`;
+    
+    // 3. Risc Curent
+    const riskEl = document.getElementById('invCurrentRisk');
+    const riskLabel = document.getElementById('riskLabel');
+    if(s.current_risk <= 0) {
+        riskEl.textContent = "0.00 RON";
+        riskLabel.textContent = "Joci din profit 🎉";
+        riskEl.style.color = "var(--green)";
+        riskLabel.style.color = "var(--green)";
+        riskEl.parentElement.style.borderColor = "var(--green)";
+        riskEl.parentElement.style.background = "rgba(46,213,115,0.05)";
+    } else {
+        riskEl.textContent = fmtMoney(s.current_risk);
+        riskLabel.textContent = "Risc Curent (Expunere)";
+        riskEl.style.color = "var(--red)";
+        riskLabel.style.color = "var(--red)";
+        riskEl.parentElement.style.borderColor = "rgba(255,77,109,0.3)";
+        riskEl.parentElement.style.background = "rgba(255,77,109,0.1)";
+    }
+
     renderInventoryGrid();
     renderInvLog();
 }
 
-function renderBreakevenTracker() {
-    const s   = _investSummary;
-    const pct = Math.min(s.breakeven_pct || 0, 100);
-    document.getElementById('breakevenRecovered').textContent = fmtMoney(s.total_recovered);
-    document.getElementById('breakevenTotal').textContent     = fmtMoney(s.capital_invested);
-    document.getElementById('breakevenPct').textContent       = pct.toFixed(1) + '%';
-    const bar = document.getElementById('breakevenBar');
-    bar.style.width = pct + '%';
-    bar.className = `fin-breakeven-bar ${pct >= 100 ? 'full' : pct >= 50 ? 'mid' : 'low'}`;
-    const realized = s.realized_profit || 0;
-    document.getElementById('breakevenRealized').innerHTML =
-        realized !== 0 ? `<span class="fin-realized ${realized >= 0 ? 'profit':'loss'}">
-            Profit realizat: ${realized >= 0 ? '+':''}${fmtMoney(realized)}
-        </span>` : '';
-}
 
 function renderInventoryGrid() {
     const grid     = document.getElementById('inventoryGrid');

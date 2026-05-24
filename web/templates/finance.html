@@ -125,50 +125,53 @@
   <!-- ===== TAB: INVESTIȚII & MARFĂ ===== -->
   <div class="fin-tab-panel" id="panelInvestitii">
 
-    <!-- Investment stat header -->
     <div class="fin-inv-stats-row">
       <div class="fin-inv-stat-card inv-cost">
-        <div class="fin-inv-stat-icon">💸</div>
-        <div class="fin-inv-stat-label">Capital Investit</div>
-        <div class="fin-inv-stat-value" id="invCapital">—</div>
+        <div class="fin-inv-stat-icon">📦</div>
+        <div class="fin-inv-stat-label">Stoc Curent (Cost)</div>
+        <div class="fin-inv-stat-value" id="invActiveCost">—</div>
         <div class="fin-inv-stat-sub" id="invActiveCount">— produse active</div>
       </div>
       <div class="fin-inv-stat-card inv-value">
-        <div class="fin-inv-stat-icon">📦</div>
-        <div class="fin-inv-stat-label">Valoare Estimată Vânzare</div>
-        <div class="fin-inv-stat-value" id="invEstValue">—</div>
-        <div class="fin-inv-stat-sub" id="invSoldCount">— vândute</div>
+        <div class="fin-inv-stat-icon">💎</div>
+        <div class="fin-inv-stat-label">Valoare Estimată Stoc</div>
+        <div class="fin-inv-stat-value" id="invActiveEst">—</div>
+        <div class="fin-inv-stat-sub" id="invActiveProfit">— profit potențial</div>
       </div>
       <div class="fin-inv-stat-card inv-profit">
         <div class="fin-inv-stat-icon">🚀</div>
-        <div class="fin-inv-stat-label">Profit Potențial (ROI)</div>
-        <div class="fin-inv-stat-value" id="invProfit">—</div>
-        <div class="fin-inv-stat-sub" id="invRoiPct">0.0%</div>
+        <div class="fin-inv-stat-label">ROI Stoc Curent</div>
+        <div class="fin-inv-stat-value" id="invActiveRoi">—</div>
+        <div class="fin-inv-stat-sub">marja de profit curentă</div>
       </div>
     </div>
 
-    <!-- Breakeven Tracker -->
     <div class="fin-breakeven-section">
-      <div class="fin-breakeven-header">
-        <div class="fin-breakeven-title">⚖️ Breakeven Tracker</div>
-        <div class="fin-breakeven-values">
-          <span id="breakevenRecovered">0 RON</span>
-          <span class="fin-breakeven-sep"> din </span>
-          <span id="breakevenTotal">0 RON</span>
-          <span class="fin-breakeven-sep"> recuperat</span>
-        </div>
+      <div class="fin-breakeven-header" style="margin-bottom: 5px;">
+        <div class="fin-breakeven-title">⚖️ Performanță All-Time & Risc</div>
       </div>
-      <div class="fin-breakeven-bar-track">
-        <div class="fin-breakeven-bar" id="breakevenBar" style="width:0%">
-          <span class="fin-breakeven-pct" id="breakevenPct">0%</span>
-        </div>
+      <div style="display:flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-top: 15px;">
+          <div>
+              <div style="font-size: 11px; color: var(--text-faint); text-transform: uppercase;">Capital Total Rulat</div>
+              <div style="font-size: 18px; font-weight: bold; color: #fff;" id="invTotalInvested">—</div>
+          </div>
+          <div>
+              <div style="font-size: 11px; color: var(--text-faint); text-transform: uppercase;">Total Recuperat</div>
+              <div style="font-size: 18px; font-weight: bold; color: var(--teal);" id="invTotalRecovered">—</div>
+          </div>
+          <div>
+              <div style="font-size: 11px; color: var(--text-faint); text-transform: uppercase;">Profit Net Realizat</div>
+              <div style="font-size: 18px; font-weight: bold;" id="invRealizedProfit">—</div>
+          </div>
+          <div>
+              <div style="font-size: 11px; color: var(--text-faint); text-transform: uppercase;">ROI Est. Final</div>
+              <div style="font-size: 18px; font-weight: bold; color: var(--yellow);" id="invTotalRoi">—</div>
+          </div>
+          <div style="padding: 10px 15px; background: rgba(255,77,109,0.1); border: 1px solid rgba(255,77,109,0.3); border-radius: 8px;">
+              <div style="font-size: 11px; text-transform: uppercase; font-weight: bold;" id="riskLabel">Risc Curent (Expunere)</div>
+              <div style="font-size: 20px; font-weight: 900;" id="invCurrentRisk">—</div>
+          </div>
       </div>
-      <div class="fin-breakeven-legend">
-        <span class="fin-breakeven-legend-item red">● Pierdere</span>
-        <span class="fin-breakeven-legend-item orange">● Recuperare</span>
-        <span class="fin-breakeven-legend-item green">● Profit</span>
-      </div>
-      <div class="fin-breakeven-realized" id="breakevenRealized"></div>
     </div>
 
     <!-- Inventory section header -->

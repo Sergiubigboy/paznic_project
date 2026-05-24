@@ -1753,16 +1753,52 @@ def daily_tasks_history():
 
 # ============ FINANCE / BANI ============
 
-def _load_finance():
-    if os.path.exists(FINANCE_FILE):
-        with open(FINANCE_FILE, 'r', encoding='utf-8') as f:
+# --- FINANCE ---
+FINANCE_DIR = os.path.join(DATA_DIR, "finance")
+LEGACY_FINANCE_FILE = os.path.join(DATA_DIR, "finance.json")
+
+def _load_json_list(filepath):
+    if os.path.exists(filepath):
+        with open(filepath, 'r', encoding='utf-8') as f:
             return json.load(f)
-    return {"accounts": [], "transactions": [], "debts": [], "inventory": [], "investment_log": []}
+    return []
+
+def _save_json_list(filepath, data):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+def _load_finance():
+    # Migrare automată din fișierul vechi dacă există și nu a fost migrat
+    if os.path.exists(LEGACY_FINANCE_FILE) and not os.path.exists(FINANCE_DIR):
+        with open(LEGACY_FINANCE_FILE, 'r', encoding='utf-8') as f:
+            old_data = json.load(f)
+        _save_finance(old_data)
+        os.rename(LEGACY_FINANCE_FILE, LEGACY_FINANCE_FILE + ".bak")
+
+    return {
+        "accounts": _load_json_list(os.path.join(FINANCE_DIR, "accounts.json")),
+        "transactions": _load_json_list(os.path.join(FINANCE_DIR, "transactions.json")),
+        "debts": _load_json_list(os.path.join(FINANCE_DIR, "debts.json")),
+        "inventory": _load_json_list(os.path.join(FINANCE_DIR, "inventory_active.json")) + \
+                     _load_json_list(os.path.join(FINANCE_DIR, "inventory_sold.json")),
+        "investment_log": _load_json_list(os.path.join(FINANCE_DIR, "investment_log.json"))
+    }
 
 def _save_finance(data):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(FINANCE_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.makedirs(FINANCE_DIR, exist_ok=True)
+    _save_json_list(os.path.join(FINANCE_DIR, "accounts.json"), data.get("accounts", []))
+    _save_json_list(os.path.join(FINANCE_DIR, "transactions.json"), data.get("transactions", []))
+    _save_json_list(os.path.join(FINANCE_DIR, "debts.json"), data.get("debts", []))
+    
+    # Separăm inventarul pentru claritate vizuală în fișiere
+    inventory = data.get("inventory", [])
+    active_inv = [i for i in inventory if i.get("status") == "active"]
+    sold_inv = [i for i in inventory if i.get("status") == "sold"]
+    
+    _save_json_list(os.path.join(FINANCE_DIR, "inventory_active.json"), active_inv)
+    _save_json_list(os.path.join(FINANCE_DIR, "inventory_sold.json"), sold_inv)
+    _save_json_list(os.path.join(FINANCE_DIR, "investment_log.json"), data.get("investment_log", []))
 
 def _calc_balance(account_id, transactions):
     """Calculate current balance for one account (all tx types included)."""
@@ -1776,32 +1812,42 @@ def _calc_balance(account_id, transactions):
     return round(total, 2)
 
 def _calc_inv_summary(inventory, investment_log):
-    """Calculate investment statistics for the Investment Hub."""
+    """Calculate separated investment statistics for the Investment Hub."""
     active = [i for i in inventory if i.get('status') == 'active']
     sold   = [i for i in inventory if i.get('status') == 'sold']
 
-    capital_invested   = sum(float(i.get('cost_basis', 0)) for i in inventory)
-    estimated_value    = sum(float(i.get('estimated_value', 0)) for i in active)
-    potential_profit   = estimated_value - sum(float(i.get('cost_basis', 0)) for i in active)
+    # 1. STOC CURENT (Active)
+    active_cost = sum(float(i.get('cost_basis', 0)) for i in active)
+    active_estimated_value = sum(float(i.get('estimated_value', 0)) for i in active)
+    active_potential_profit = active_estimated_value - active_cost
+    active_roi_pct = round((active_potential_profit / active_cost * 100) if active_cost > 0 else 0, 1)
 
-    total_recovered    = sum(float(i.get('sold_amount', 0)) for i in sold)
-    total_cost_sold    = sum(float(i.get('cost_basis', 0)) for i in sold)
-    realized_profit    = total_recovered - total_cost_sold
+    # 2. PERFORMANȚĂ TOTALĂ (All-Time)
+    total_invested = sum(float(i.get('cost_basis', 0)) for i in inventory)
+    total_recovered = sum(float(i.get('sold_amount', 0)) for i in sold)
+    
+    total_cost_sold = sum(float(i.get('cost_basis', 0)) for i in sold)
+    realized_profit = total_recovered - total_cost_sold
+    
+    total_roi_pct = round(((realized_profit + active_potential_profit) / total_invested * 100) if total_invested > 0 else 0, 1)
 
-    # Breakeven: percentage of total invested that has been recovered via sales
-    breakeven_pct = round((total_recovered / capital_invested * 100) if capital_invested > 0 else 0, 1)
-    breakeven_pct = min(breakeven_pct, 100.0)
+    # 3. EXPUNERE / RISC (Bani blocați)
+    current_risk = total_invested - total_recovered
 
     return {
-        'capital_invested':  round(capital_invested, 2),
-        'estimated_value':   round(estimated_value, 2),
-        'potential_profit':  round(potential_profit, 2),
-        'potential_roi_pct': round((potential_profit / capital_invested * 100) if capital_invested > 0 else 0, 1),
-        'total_recovered':   round(total_recovered, 2),
-        'realized_profit':   round(realized_profit, 2),
-        'breakeven_pct':     breakeven_pct,
-        'active_count':      len(active),
-        'sold_count':        len(sold),
+        'active_cost': round(active_cost, 2),
+        'active_estimated_value': round(active_estimated_value, 2),
+        'active_potential_profit': round(active_potential_profit, 2),
+        'active_roi_pct': active_roi_pct,
+        
+        'total_invested': round(total_invested, 2),
+        'total_recovered': round(total_recovered, 2),
+        'realized_profit': round(realized_profit, 2),
+        'total_roi_pct': total_roi_pct,
+        'current_risk': round(current_risk, 2),
+        
+        'active_count': len(active),
+        'sold_count': len(sold),
     }
 
 @app.route('/bani')
