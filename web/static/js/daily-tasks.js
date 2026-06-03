@@ -6,26 +6,9 @@ let dtHistory = [];     // history enriched per task (cu streak data)
 let dtCurrentDate = offsetDate(0);
 let dtSelectedEmoji = '✅';
 
-// ===== TAB SWITCHING =====
-function switchTab(tab) {
-    const tSec = document.getElementById('targetsSection');
-    const dSec = document.getElementById('dailyTasksSection');
-    const tBtn = document.getElementById('tabTargets');
-    const dBtn = document.getElementById('tabDailyTasks');
+// Tab switching is handled by target.js switchTab()
+// initDailyTasks() is called lazily from there when the daily tab is selected
 
-    if (tab === 'targets') {
-        tSec.style.display = 'block';
-        dSec.style.display = 'none';
-        tBtn.classList.add('active');
-        dBtn.classList.remove('active');
-    } else {
-        tSec.style.display = 'none';
-        dSec.style.display = 'block';
-        tBtn.classList.remove('active');
-        dBtn.classList.add('active');
-        if (!dtTasks.length && !dtHistory.length) initDailyTasks();
-    }
-}
 
 // ===== INIT =====
 async function initDailyTasks() {

@@ -26,9 +26,7 @@
 }
 .page-tab:hover:not(.active) { color: var(--text-muted); }
 
-/* ===== SECTION VISIBILITY ===== */
-#dailyTasksSection, #remindersSection, #maintenanceSection { display: none; }
-#targetsSection { display: block; }
+/* Sections hidden by default via inline style, controlled by switchTab() */
 
 /* ===== DAILY TASKS ===== */
 .dt-top-row { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
@@ -200,7 +198,7 @@
     </div>
 
     <!-- ===== TARGETURI SECTION ===== -->
-    <div id="targetsSection">
+    <div id="targetsSection" style="display:block">
         <div class="section-header">
             <div>
                 <div class="section-title">🎯 Targeturile Mele</div>
@@ -214,7 +212,7 @@
     </div>
 
     <!-- ===== DAILY TASKS SECTION ===== -->
-    <div id="dailyTasksSection">
+    <div id="dailyTasksSection" style="display:none">
         <div class="section-header" style="margin-bottom: 16px">
             <div>
                 <div class="section-title">✅ Task-uri Zilnice</div>
@@ -263,7 +261,7 @@
     </div>
 
     <!-- ===== REMINDERE SECTION ===== -->
-    <div id="remindersSection">
+    <div id="remindersSection" style="display:none">
         <div class="section-header">
             <div>
                 <div class="section-title">📌 Remindere</div>
@@ -277,7 +275,7 @@
     </div>
 
     <!-- ===== MENTENANȚĂ SECTION ===== -->
-    <div id="maintenanceSection">
+    <div id="maintenanceSection" style="display:none">
         <div class="section-header">
             <div>
                 <div class="section-title">🔧 Mentenanță</div>

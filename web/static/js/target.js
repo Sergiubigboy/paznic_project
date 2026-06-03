@@ -13,10 +13,10 @@ const CAT_ICONS = {
 };
 
 // ============ TAB SWITCHING ============
-let _tabLoaded = { reminders: false, maintenance: false };
+let _tabLoaded = { daily: false, reminders: false, maintenance: false };
 
 function switchTab(name) {
-    // Hide all sections
+    // Hide all sections explicitly
     ['targetsSection','dailyTasksSection','remindersSection','maintenanceSection'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
@@ -35,10 +35,14 @@ function switchTab(name) {
     if (!entry) return;
     const section = document.getElementById(entry.section);
     const tab     = document.getElementById(entry.tab);
-    if (section) section.style.display = '';
+    if (section) section.style.display = 'block';
     if (tab)     tab.classList.add('active');
 
-    // Lazy-load on first switch
+    // Lazy-load data on first switch
+    if (name === 'daily' && !_tabLoaded.daily) {
+        _tabLoaded.daily = true;
+        if (typeof initDailyTasks === 'function') initDailyTasks();
+    }
     if (name === 'reminders' && !_tabLoaded.reminders) {
         _tabLoaded.reminders = true;
         if (typeof loadReminders === 'function') loadReminders();
