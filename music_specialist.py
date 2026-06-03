@@ -7,7 +7,7 @@ import random
 import traceback
 import time
 from datetime import datetime
-from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, SPOTIFY_DEVICE_NAME
+from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, SPOTIFY_DEVICE_NAME, GEMINI_MODEL_DJ
 from ai_core import ask_gemini_json
 
 # --- CONFIGURARE ---
@@ -185,7 +185,7 @@ class MusicHandler:
             "required": ["mode", "reason"]
         }
 
-        return ask_gemini_json(system_prompt, schema=dj_schema, temperature=0.9, model="gemini-2.5-flash")
+        return ask_gemini_json(system_prompt, schema=dj_schema, temperature=0.9, model=GEMINI_MODEL_DJ)
 
     def process_command(self, user_text, conversation_history=""):
         decision = self._ask_gemini_dj(user_text, conversation_history)

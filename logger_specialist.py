@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import glob
 import chromadb
 from ai_core import ask_gemini_json
+from config import GEMINI_MODEL_LOGGER
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "chronos_data")
@@ -56,7 +57,7 @@ JUDGMENT_SCHEMA = {
         "tags": {
             "type": "ARRAY",
             "items": {"type": "STRING"},
-            "description": "3-6 cuvinte cheie reprezentative in romana (ex: epuizare, robotica, conexiune, gol_interior)"
+            "description": "3-6 cuvinie cheie reprezentative in romana (ex: epuizare, robotica, conexiune, gol_interior)"
         },
         "short_summary": {
             "type": "STRING",
@@ -358,7 +359,8 @@ class JournalCore:
         - corp: cum s-a simțit și tratat corpul (sport, mâncare, odihnă)
         """
 
-        analysis = ask_gemini_json(prompt, schema=JUDGMENT_SCHEMA, temperature=0.6, model="gemini-2.5-flash")
+        # MODIFICAT: Schimbat modelul în gemini-2.5-pro pentru o analiză psihologică profundă
+        analysis = ask_gemini_json(prompt, schema=JUDGMENT_SCHEMA, temperature=0.6, model=GEMINI_MODEL_LOGGER)
         if not analysis:
             logging.error(f"❌ AI-ul a eșuat la rezumatul pentru {logical_date}")
             return None

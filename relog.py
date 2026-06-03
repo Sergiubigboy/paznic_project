@@ -5,6 +5,7 @@ import glob
 from datetime import datetime
 from ai_core import ask_gemini_json
 from logger_specialist import JUDGMENT_SCHEMA
+from config import GEMINI_MODEL_LOGGER
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "chronos_data", "logs")
@@ -93,7 +94,7 @@ def reprocess_all_logs():
                 6. RĂSPUNDE EXCLUSIV ÎN ROMÂNĂ!
                 """
 
-                new_analysis = ask_gemini_json(prompt, schema=JUDGMENT_SCHEMA, temperature=0.6, model="gemini-2.5-flash")
+                new_analysis = ask_gemini_json(prompt, schema=JUDGMENT_SCHEMA, temperature=0.6, model=GEMINI_MODEL_LOGGER)
 
                 if new_analysis:
                     data["analysis"] = new_analysis

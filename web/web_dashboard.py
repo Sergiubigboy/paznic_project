@@ -770,7 +770,7 @@ def day_status():
     food_data = {"logged": False, "level": None}
     if os.path.exists(DAILY_CHECKS_FILE):
         with open(DAILY_CHECKS_FILE, 'r', encoding='utf-8') as f:
-            checks = json.load(f)
+            checks = json.load(f).get("checks", [])
         today_check = next((c for c in reversed(checks) if c.get('date') == today), None)
         if today_check:
             food_data["logged"] = True
@@ -1569,7 +1569,7 @@ def generate_briefing():
     food_checks = []
     if os.path.exists(DAILY_CHECKS_FILE):
         with open(DAILY_CHECKS_FILE, 'r', encoding='utf-8') as f:
-            checks = json.load(f)
+            checks = json.load(f).get("checks", [])
         cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
         food_checks = [c.get('level') for c in checks if c.get('date', '') >= cutoff]
 
