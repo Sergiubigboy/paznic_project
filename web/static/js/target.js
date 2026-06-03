@@ -12,6 +12,43 @@ const CAT_ICONS = {
     Personal: '🧠', Social: '👥', General: '📌'
 };
 
+// ============ TAB SWITCHING ============
+let _tabLoaded = { reminders: false, maintenance: false };
+
+function switchTab(name) {
+    // Hide all sections
+    ['targetsSection','dailyTasksSection','remindersSection','maintenanceSection'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+    // Deactivate all tabs
+    document.querySelectorAll('.page-tab').forEach(t => t.classList.remove('active'));
+
+    // Show & activate selected
+    const tabMap = {
+        targets:     { section: 'targetsSection',     tab: 'tabTargets' },
+        daily:       { section: 'dailyTasksSection',  tab: 'tabDailyTasks' },
+        reminders:   { section: 'remindersSection',   tab: 'tabReminders' },
+        maintenance: { section: 'maintenanceSection', tab: 'tabMaintenance' },
+    };
+    const entry = tabMap[name];
+    if (!entry) return;
+    const section = document.getElementById(entry.section);
+    const tab     = document.getElementById(entry.tab);
+    if (section) section.style.display = '';
+    if (tab)     tab.classList.add('active');
+
+    // Lazy-load on first switch
+    if (name === 'reminders' && !_tabLoaded.reminders) {
+        _tabLoaded.reminders = true;
+        if (typeof loadReminders === 'function') loadReminders();
+    }
+    if (name === 'maintenance' && !_tabLoaded.maintenance) {
+        _tabLoaded.maintenance = true;
+        if (typeof loadMaintenance === 'function') loadMaintenance();
+    }
+}
+
 // ============ LOAD ============
 let allGoals = [];
 
@@ -25,6 +62,7 @@ function loadTargets() {
         });
 }
 
+
 function renderSummary(goals) {
     const el = document.getElementById('targetSummary');
     if (!el) return;
@@ -35,8 +73,6 @@ function renderSummary(goals) {
     if (expiring) txt += ` · ${expiring} expiră curând ⚠️`;
     el.textContent = txt;
 }
-
-
 
 loadTargets();
 

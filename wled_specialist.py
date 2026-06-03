@@ -258,27 +258,7 @@ class WLEDStateManager:
         time.sleep(duration)
         self.restore_state(slot="temp_pulse")
         
-    def set_focus_mode(self):
-        payload_main = {"on": True, "bri": 200, "seg": [{"fx": 0, "col": [[220, 240, 255], [0,0,0], [0,0,0]]}]}
-        payload_floor = {"on": True, "bri": 150, "seg": [{"fx": 0, "col": [[0, 50, 255], [0,0,0], [0,0,0]]}]}
-        try:
-            requests.post(f"http://{WLED_IP_MAIN}/json/state", json=payload_main, timeout=0.5)
-            requests.post(f"http://{WLED_IP_FLOOR}/json/state", json=payload_floor, timeout=0.5)
-        except: pass
 
-    def set_break_mode(self):
-        payload = {"on": True, "bri": 150, "seg": [{"fx": 2, "sx": 120, "col": [[0, 255, 100], [0,0,0], [0,0,0]]}]}
-        try:
-            requests.post(f"http://{WLED_IP_MAIN}/json/state", json=payload, timeout=0.5)
-            requests.post(f"http://{WLED_IP_FLOOR}/json/state", json=payload, timeout=0.5)
-        except: pass
-
-    def trigger_hype_mode(self):
-        payload = {"on": True, "bri": 255, "seg": [{"fx": 68, "sx": 200, "pal": 11}]}
-        try:
-            requests.post(f"http://{WLED_IP_MAIN}/json/state", json=payload, timeout=0.5)
-            requests.post(f"http://{WLED_IP_FLOOR}/json/state", json=payload, timeout=0.5)
-        except: pass
 
 
 if __name__ == "__main__":

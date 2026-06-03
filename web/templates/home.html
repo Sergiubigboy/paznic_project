@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% set active_page = "home" %}
+{% block title %}Chronos OS | Home{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/home.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="home-page">
+
+    <!-- ===== ALERTS PANEL ===== -->
+    <div id="alertsPanel" class="home-alerts-panel" style="display:none">
+        <div class="home-alerts-header">
+            <span class="home-alerts-icon">🚨</span>
+            <span>Alerte Active</span>
+            <span id="alertsCount" class="alerts-badge">0</span>
+        </div>
+        <div id="alertsList" class="home-alerts-list"></div>
+    </div>
+
+    <!-- ===== HERO GREETING ===== -->
+    <div class="home-hero">
+        <div class="home-hero-text">
+            <div class="home-greeting" id="homeGreeting">Bună ziua</div>
+            <div class="home-date" id="homeDate"></div>
+        </div>
+        <div class="home-hero-stats" id="heroStats">
+            <div class="hero-stat-pill" id="hStatTime">
+                <span class="hero-stat-icon">⌚</span>
+                <span class="hero-stat-val" id="heroTime">--:--</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== QUICK STATUS ROW ===== -->
+    <div class="home-quick-row" id="quickStatusRow">
+        <div class="home-quick-card loading" id="qWeight">
+            <div class="quick-icon">⚖️</div>
+            <div class="quick-val" id="qWeightVal">—</div>
+            <div class="quick-lbl">Greutate</div>
+        </div>
+        <div class="home-quick-card loading" id="qTasks">
+            <div class="quick-icon">✅</div>
+            <div class="quick-val" id="qTasksVal">—</div>
+            <div class="quick-lbl">Task-uri</div>
+        </div>
+        <div class="home-quick-card loading" id="qTargets">
+            <div class="quick-icon">🎯</div>
+            <div class="quick-val" id="qTargetsVal">—</div>
+            <div class="quick-lbl">Targeturi</div>
+        </div>
+        <div class="home-quick-card loading" id="qMaint">
+            <div class="quick-icon">🔧</div>
+            <div class="quick-val" id="qMaintVal">—</div>
+            <div class="quick-lbl">Mentenanță</div>
+        </div>
+    </div>
+
+    <!-- ===== MAIN NAV MENU ===== -->
+    <div class="home-section-label">Navigare Rapidă</div>
+    <div class="home-menu-grid" id="homeMenuGrid">
+
+        <a href="/journal" class="home-menu-card journal">
+            <div class="hmc-glow"></div>
+            <div class="hmc-icon">📘</div>
+            <div class="hmc-content">
+                <div class="hmc-title">Jurnal</div>
+                <div class="hmc-desc">Intrări zilnice, jurnalul personal</div>
+                <div class="hmc-stat" id="statJournal">Se încarcă...</div>
+            </div>
+            <div class="hmc-arrow">→</div>
+        </a>
+
+        <a href="/targets" class="home-menu-card targets">
+            <div class="hmc-glow"></div>
+            <div class="hmc-icon">🎯</div>
+            <div class="hmc-content">
+                <div class="hmc-title">Taskuri & Targeturi</div>
+                <div class="hmc-desc">Targeturi, remindere, task-uri zilnice</div>
+                <div class="hmc-stat" id="statTargets">Se încarcă...</div>
+            </div>
+            <div class="hmc-arrow">→</div>
+        </a>
+
+        <a href="/gym" class="home-menu-card gym">
+            <div class="hmc-glow"></div>
+            <div class="hmc-icon">💪</div>
+            <div class="hmc-content">
+                <div class="hmc-title">Fitness</div>
+                <div class="hmc-desc">Greutate, măsurători, faze</div>
+                <div class="hmc-stat" id="statGym">Se încarcă...</div>
+            </div>
+            <div class="hmc-arrow">→</div>
+        </a>
+
+        <a href="/bani" class="home-menu-card finance">
+            <div class="hmc-glow"></div>
+            <div class="hmc-icon">💰</div>
+            <div class="hmc-content">
+                <div class="hmc-title">Finanțe</div>
+                <div class="hmc-desc">Venituri, cheltuieli, economii</div>
+                <div class="hmc-stat" id="statFinance">—</div>
+            </div>
+            <div class="hmc-arrow">→</div>
+        </a>
+
+        <a href="/electronics" class="home-menu-card electronics">
+            <div class="hmc-glow"></div>
+            <div class="hmc-icon">⚡</div>
+            <div class="hmc-content">
+                <div class="hmc-title">Electronics Lab</div>
+                <div class="hmc-desc">Componente, proiecte, wishlist</div>
+                <div class="hmc-stat" id="statElec">Se încarcă...</div>
+            </div>
+            <div class="hmc-arrow">→</div>
+        </a>
+
+        <a href="/terminal" class="home-menu-card terminal">
+            <div class="hmc-glow"></div>
+            <div class="hmc-icon">⌨️</div>
+            <div class="hmc-content">
+                <div class="hmc-title">Terminal AI</div>
+                <div class="hmc-desc">Comandă Chronos prin text</div>
+                <div class="hmc-stat">Powered by AI</div>
+            </div>
+            <div class="hmc-arrow">→</div>
+        </a>
+
+    </div>
+
+    <!-- ===== UPCOMING MAINTENANCE ===== -->
+    <div id="upcomingMaintSection" style="display:none">
+        <div class="home-section-label">⏰ Mentenanță Iminentă</div>
+        <div id="upcomingMaintList" class="home-maint-list"></div>
+    </div>
+
+    <!-- ===== ACTIVE TARGETS ===== -->
+    <div id="activeTargetsSection" style="display:none">
+        <div class="home-section-label">🎯 Targeturi Active</div>
+        <div id="activeTargetsList" class="home-targets-list"></div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/home.js') }}"></script>
+{% endblock %}

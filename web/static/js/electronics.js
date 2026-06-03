@@ -433,18 +433,31 @@ function projCardHtml(proj) {
     const reservCount = (proj.reservations || []).length;
     const logCount    = (proj.devlog       || []).length;
     const statusCls   = `elab-status-${proj.status || 'idee'}`;
+    const planProg    = calcPlanProgress(proj.plan || []);
+    const stepCount   = countAllSteps(proj.plan || []);
+    const doneSteps   = countDoneSteps(proj.plan || []);
+
+    const progressBar = stepCount > 0 ? `
+        <div class="elab-plan-progress-wrap" title="${Math.round(planProg)}% (${doneSteps}/${stepCount} pași)">
+            <div class="elab-plan-prog-bar">
+                <div class="elab-plan-prog-fill" style="width:${planProg}%"></div>
+            </div>
+            <span class="elab-plan-prog-pct">${Math.round(planProg)}%</span>
+        </div>` : '';
 
     return `<div class="elab-proj-card" id="proj-${proj.id}">
         <div class="elab-proj-header" onclick="toggleProject('${proj.id}')">
             <span class="elab-proj-expand-icon">▶</span>
             <span class="elab-proj-status-badge ${statusCls}">${statusLabel(proj.status)}</span>
-            <div style="flex:1">
+            <div style="flex:1;min-width:0">
                 <div class="elab-proj-title">${escHtml(proj.name)}</div>
                 ${techTags ? `<div class="elab-proj-tech-row">${techTags}</div>` : ''}
+                ${progressBar}
             </div>
             <div class="elab-proj-meta-chips">
                 ${reservCount ? `<span style="font-size:11px;color:var(--text-faint);margin-right:6px">⚙️ ${reservCount}</span>` : ''}
                 ${logCount    ? `<span style="font-size:11px;color:var(--text-faint);margin-right:6px">📝 ${logCount}</span>`    : ''}
+                ${stepCount   ? `<span style="font-size:11px;color:var(--primary);margin-right:6px">🗂️ ${doneSteps}/${stepCount}</span>` : ''}
             </div>
             <div class="elab-proj-header-actions" onclick="event.stopPropagation()">
                 <button class="elab-btn-edit" onclick="openProjModal('${proj.id}')">✏️ Edit</button>
@@ -456,10 +469,57 @@ function projCardHtml(proj) {
     </div>`;
 }
 
+// ============================================================
+//  PLAN PROGRESS CALCULATION
+// ============================================================
+function stepProgress(step) {
+    // Leaf node (no children): done=100, in-progress=50, todo=0
+    if (!step.children || step.children.length === 0) {
+        if (step.status === 'done')        return 100;
+        if (step.status === 'in-progress') return 50;
+        return 0;
+    }
+    // Branch: average of children
+    const childProgs = step.children.map(c => stepProgress(c));
+    return childProgs.reduce((a,b) => a+b, 0) / childProgs.length;
+}
+
+function calcPlanProgress(plan) {
+    if (!plan || !plan.length) return 0;
+    // Each top-level step contributes equally
+    const progs = plan.map(s => stepProgress(s));
+    return progs.reduce((a,b) => a+b, 0) / progs.length;
+}
+
+function countAllSteps(plan) {
+    let c = 0;
+    function walk(steps) { steps.forEach(s => { c++; walk(s.children || []); }); }
+    walk(plan);
+    return c;
+}
+
+function countDoneSteps(plan) {
+    let c = 0;
+    function walk(steps) { steps.forEach(s => { if (s.status === 'done') c++; walk(s.children || []); }); }
+    walk(plan);
+    return c;
+}
+
+function getDoneStepIds(plan) {
+    const ids = [];
+    function walk(steps) { steps.forEach(s => { if (s.status === 'done') ids.push(s.id); walk(s.children || []); }); }
+    walk(plan);
+    return ids;
+}
+
+// ============================================================
+//  PROJECT BODY (with Plan section)
+// ============================================================
 function projBodyHtml(proj) {
     const linksHtml  = buildProjLinks(proj);
     const allocHtml  = buildAllocList(proj);
     const devlogHtml = buildDevlog(proj);
+    const planHtml   = buildPlanSection(proj);
 
     return `
     <div class="elab-proj-body-grid">
@@ -476,6 +536,9 @@ function projBodyHtml(proj) {
             ${allocHtml}
         </div>
     </div>
+    <!-- PLAN SECTION -->
+    ${planHtml}
+    <!-- DEVLOG SECTION -->
     <div class="elab-devlog-section elab-devlog-full">
         <div class="elab-proj-section-title" style="margin-bottom:12px">
             📝 Devlog — jurnal tehnic
@@ -485,7 +548,222 @@ function projBodyHtml(proj) {
     </div>`;
 }
 
-// Build links from project.links array (backend stores [{type, url}] or from separate github/youtube fields)
+// ============================================================
+//  PLAN SECTION BUILDER
+// ============================================================
+function buildPlanSection(proj) {
+    const plan = proj.plan || [];
+    const prog = calcPlanProgress(plan);
+    const total = countAllSteps(plan);
+    const done  = countDoneSteps(plan);
+
+    return `
+    <div class="elab-plan-section">
+        <div class="elab-proj-section-title" style="margin-bottom:16px">
+            🗂️ Plan Proiect
+            ${total > 0 ? `<span style="font-size:11px;font-weight:800;color:var(--primary)">${done}/${total} pași · ${Math.round(prog)}%</span>` : ''}
+            <button class="btn btn-xs btn-secondary" onclick="openAddStepModal('${proj.id}', [], null)">＋ Pas Principal</button>
+        </div>
+        ${total > 0 ? `
+        <div class="elab-plan-main-progress">
+            <div class="elab-plan-main-bar">
+                <div class="elab-plan-main-fill" style="width:${prog}%"></div>
+            </div>
+            <div class="elab-plan-main-pct">${Math.round(prog)}%</div>
+        </div>` : ''}
+        <div class="elab-plan-tree">
+            ${plan.length === 0
+                ? `<div style="color:var(--text-faint);font-size:12px;font-style:italic">
+                    Niciun pas planificat. Apasă <strong>＋ Pas Principal</strong> să adaugi.
+                   </div>`
+                : plan.map((step, idx) => buildStepHtml(step, proj.id, [], idx, plan.length)).join('')
+            }
+        </div>
+    </div>`;
+}
+
+function buildStepHtml(step, projId, parentPath, idx, totalSiblings, depth = 0) {
+    const stepProg = stepProgress(step);
+    const hasChildren = step.children && step.children.length > 0;
+    const myPath = [...parentPath, step.id];
+
+    const statusIcon = step.status === 'done' ? '✅' : step.status === 'in-progress' ? '⚡' : '⭕';
+    const statusCls  = step.status === 'done' ? 'step-done' : step.status === 'in-progress' ? 'step-active' : 'step-todo';
+    const prioClr    = step.priority === 'High' ? 'var(--red)' : step.priority === 'Low' ? 'var(--teal)' : 'var(--yellow)';
+    const indent     = depth * 20;
+
+    // Progress fraction this step contributes (each sibling is equal share)
+    const frac = (1 / totalSiblings) * 100;
+    const stepContrib = (frac * stepProg / 100).toFixed(1);
+
+    return `
+    <div class="elab-plan-step ${statusCls}" id="step-${step.id}" style="margin-left:${indent}px">
+        <div class="elab-plan-step-row">
+            <div class="elab-plan-step-prog-bar" style="width:${stepProg}%"></div>
+            <button class="elab-plan-status-btn" title="Schimbă status"
+                    onclick="cycleStepStatus('${projId}','${step.id}')">
+                ${statusIcon}
+            </button>
+            <span class="elab-plan-step-title ${step.status === 'done' ? 'step-title-done' : ''}">${escHtml(step.title)}</span>
+            <span class="elab-plan-step-prio" style="color:${prioClr}">${step.priority || 'Med'}</span>
+            ${hasChildren ? `<span style="font-size:10px;color:var(--text-faint)">${Math.round(stepProg)}%</span>` : ''}
+            <div class="elab-plan-step-actions">
+                <button class="elab-devlog-btn" title="Adaugă sub-pas"
+                        onclick="openAddStepModal('${projId}', ${JSON.stringify(myPath)}, '${step.id}')">＋</button>
+                <button class="elab-devlog-btn" title="Schimbă prioritate"
+                        onclick="cycleStepPriority('${projId}','${step.id}')">🏷️</button>
+                <button class="elab-devlog-btn del" title="Șterge pas"
+                        onclick="deleteStep('${projId}','${step.id}')">🗑️</button>
+            </div>
+        </div>
+        ${hasChildren ? step.children.map((child, ci) =>
+            buildStepHtml(child, projId, myPath, ci, step.children.length, depth + 1)
+        ).join('') : ''}
+    </div>`;
+}
+
+// ============================================================
+//  STEP MODALS & ACTIONS
+// ============================================================
+let _addStepProjId   = null;
+let _addStepParentPath = [];
+
+function openAddStepModal(projId, parentPath, parentId) {
+    _addStepProjId    = projId;
+    _addStepParentPath = parentPath;
+    const depth = parentPath.length;
+    document.getElementById('addStepModal').querySelector('h2').textContent =
+        depth === 0 ? '🗂️ Pas Principal' : `🔀 Sub-pas (nivel ${depth + 1})`;
+    document.getElementById('newStepTitle').value    = '';
+    document.getElementById('newStepStatus').value   = 'todo';
+    document.getElementById('newStepPriority').value = 'Med';
+    document.getElementById('addStepModal').classList.add('open');
+    setTimeout(() => document.getElementById('newStepTitle').focus(), 50);
+}
+
+function closeAddStepModal() {
+    document.getElementById('addStepModal').classList.remove('open');
+}
+
+async function saveStep() {
+    const title    = document.getElementById('newStepTitle').value.trim();
+    const status   = document.getElementById('newStepStatus').value;
+    const priority = document.getElementById('newStepPriority').value;
+    if (!title) { flash('Introdu titlul pasului!', 'error'); return; }
+
+    const data = await postJSON('/api/electronics/project/plan/add', {
+        project_id:  _addStepProjId,
+        title, status, priority,
+        parent_path: _addStepParentPath
+    });
+    if (data.status === 'success') {
+        closeAddStepModal();
+        flash('✅ Pas adăugat!');
+        const expandId = _addStepProjId;
+        await loadAll();
+        setTimeout(() => {
+            const card = document.getElementById(`proj-${expandId}`);
+            if (card) card.classList.add('expanded');
+        }, 50);
+    } else {
+        flash(data.message || 'Eroare', 'error');
+    }
+}
+
+async function cycleStepStatus(projId, stepId) {
+    // Find the step and cycle status: todo → in-progress → done → todo
+    const proj = _projects.find(p => p.id === projId);
+    if (!proj) return;
+    let currentStatus = 'todo';
+    function findStep(steps) {
+        for (const s of steps) {
+            if (s.id === stepId) { currentStatus = s.status || 'todo'; return true; }
+            if (findStep(s.children || [])) return true;
+        }
+        return false;
+    }
+    findStep(proj.plan || []);
+    const cycle = { 'todo': 'in-progress', 'in-progress': 'done', 'done': 'todo' };
+    const newStatus = cycle[currentStatus] || 'todo';
+
+    const data = await postJSON('/api/electronics/project/plan/update', {
+        project_id: projId, step_id: stepId, status: newStatus
+    });
+    if (data.status === 'success') {
+        // Update local
+        function updateLocal(steps) {
+            for (const s of steps) {
+                if (s.id === stepId) { s.status = newStatus; return; }
+                updateLocal(s.children || []);
+            }
+        }
+        updateLocal(proj.plan || []);
+        // Re-render only this project card
+        const card = document.getElementById(`proj-${projId}`);
+        if (card) {
+            const isExpanded = card.classList.contains('expanded');
+            card.outerHTML = projCardHtml(proj);
+            const newCard = document.getElementById(`proj-${projId}`);
+            if (newCard && isExpanded) newCard.classList.add('expanded');
+        }
+    }
+}
+
+async function cycleStepPriority(projId, stepId) {
+    const proj = _projects.find(p => p.id === projId);
+    if (!proj) return;
+    let currentPrio = 'Med';
+    function findPrio(steps) {
+        for (const s of steps) {
+            if (s.id === stepId) { currentPrio = s.priority || 'Med'; return true; }
+            if (findPrio(s.children || [])) return true;
+        }
+        return false;
+    }
+    findPrio(proj.plan || []);
+    const cycle = { 'High': 'Med', 'Med': 'Low', 'Low': 'High' };
+    const newPrio = cycle[currentPrio] || 'Med';
+
+    const data = await postJSON('/api/electronics/project/plan/update', {
+        project_id: projId, step_id: stepId, priority: newPrio
+    });
+    if (data.status === 'success') {
+        function updatePrio(steps) {
+            for (const s of steps) {
+                if (s.id === stepId) { s.priority = newPrio; return; }
+                updatePrio(s.children || []);
+            }
+        }
+        updatePrio(proj.plan || []);
+        const card = document.getElementById(`proj-${projId}`);
+        if (card) {
+            const isExpanded = card.classList.contains('expanded');
+            card.outerHTML = projCardHtml(proj);
+            const newCard = document.getElementById(`proj-${projId}`);
+            if (newCard && isExpanded) newCard.classList.add('expanded');
+        }
+    }
+}
+
+async function deleteStep(projId, stepId) {
+    if (!confirm('Ștergi acest pas și toți sub-pașii săi?')) return;
+    const data = await postJSON('/api/electronics/project/plan/delete', {
+        project_id: projId, step_id: stepId
+    });
+    if (data.status === 'success') {
+        flash('🗑️ Pas șters');
+        const expandId = projId;
+        await loadAll();
+        setTimeout(() => {
+            const card = document.getElementById(`proj-${expandId}`);
+            if (card) card.classList.add('expanded');
+        }, 50);
+    }
+}
+
+// ============================================================
+//  BUILD LINKS, ALLOC, DEVLOG (enhanced)
+// ============================================================
 function buildProjLinks(proj) {
     const links = [];
     // Support both old-style object and links array

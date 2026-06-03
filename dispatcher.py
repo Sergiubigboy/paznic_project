@@ -22,9 +22,6 @@ class CommandDispatcher:
         self.memory_manager = MemoryManager()
         self.conversation_history = []
         self.last_result = {}
-        import threading
-        self.study_timer_thread: Optional[threading.Thread] = None
-        self.study_timer_stop_event = threading.Event()
 
     def classify_intent_with_gemini(self, transcription, conversation_history):
         logging.info(f"🧠 Dispatcher: Analizez intenția...")
@@ -44,8 +41,6 @@ class CommandDispatcher:
         - "music": melodii, play, stop, volum, "pune muzică", schimbă piesa.
         - "journal": VREA SĂ SCRIE/ÎNREGISTREZE ceva nou în jurnal.
         - "target": Vrea să adauge un task/obiectiv.
-        - "study_timer": Vrea să pornească, să seteze sau să oprească timer-ul pomodoro / de studiu.
-        - "hype_mode": Vrea să fie trezit / motivat extrem / petrecere / hype.
         - "general": Vreme, discuții, întrebări despre memorie/trecut.
 
         Returnează TOATE intențiile detectate în comandă ca o listă (de obicei una, dar pot fi mai multe).
@@ -58,7 +53,7 @@ class CommandDispatcher:
                     "type": "ARRAY",
                     "items": {
                         "type": "STRING",
-                        "enum": ["led", "music", "general", "journal", "target", "study_timer", "hype_mode", "unknown"]
+                        "enum": ["led", "music", "general", "journal", "target", "unknown"]
                     }
                 },
                 "reasoning": {"type": "STRING"}
@@ -128,73 +123,6 @@ class CommandDispatcher:
 
         return ask_gemini_json(prompt, schema=schema, temperature=0.7)
 
-    def parse_study_timer_command(self, text):
-        prompt = f"""
-        Analizează comanda utilizatorului legată de timerul de studiu (Pomodoro).
-        Extrage intenția (start sau stop). Dacă e start, extrage minutele de focus și minutele de pauză.
-        Dacă nu sunt specificate explicit, folosește valorile implicite: 25 pentru focus, 5 pentru pauză.
-
-        COMANDĂ: "{text}"
-        """
-        schema = {
-            "type": "OBJECT",
-            "properties": {
-                "action": {"type": "STRING", "enum": ["start", "stop"]},
-                "focus_minutes": {"type": "INTEGER"},
-                "break_minutes": {"type": "INTEGER"}
-            },
-            "required": ["action", "focus_minutes", "break_minutes"]
-        }
-        return ask_gemini_json(prompt, schema=schema, temperature=0.1)
-
-    def handle_study_timer(self, text):
-        import threading
-        timer_info = self.parse_study_timer_command(text)
-        action = timer_info.get("action", "start")
-
-        if action == "stop":
-            if self.study_timer_thread and self.study_timer_thread.is_alive():
-                self.study_timer_stop_event.set()
-                print("\n🤖 Chronos: Timer de studiu oprit. Spor în continuare!\n")
-            else:
-                print("\n🤖 Chronos: Nu există niciun timer de studiu activ momentan.\n")
-            return
-
-        focus_min = timer_info.get("focus_minutes", 25)
-        break_min = timer_info.get("break_minutes", 5)
-
-        if self.study_timer_thread and self.study_timer_thread.is_alive():
-            self.study_timer_stop_event.set()
-            self.study_timer_thread.join(timeout=1.0)
-
-        self.study_timer_stop_event.clear()
-
-        def timer_thread(stop_event, focus_m, break_m):
-            logging.info(f"⏳ Pomodoro: Start {focus_m} minute FOCUS!")
-            print(f"\n🤖 Chronos: Timer pornit! {focus_m} de minute de focus maxim.\n")
-            self.wled_mechanic.pulse_color([0, 255, 0], duration=4)
-
-            if stop_event.wait(focus_m * 60):
-                return
-
-            logging.info(f"⏳ Pomodoro: Pauză {break_m} minute!")
-            print(f"\n🤖 Chronos: Pauză! Relaxează-te {break_m} minute.\n")
-            self.wled_mechanic.pulse_color([0, 150, 255], duration=4)
-
-            if stop_event.wait(break_m * 60):
-                return
-
-            logging.info("⏳ Pomodoro: Final.")
-            print("\n🤖 Chronos: Sesiunea de studiu s-a terminat.\n")
-            self.wled_mechanic.pulse_color([255, 100, 0], duration=4)
-
-        self.study_timer_thread = threading.Thread(
-            target=timer_thread,
-            args=(self.study_timer_stop_event, focus_min, break_min),
-            daemon=True
-        )
-        self.study_timer_thread.start()
-
     def extract_time_filter(self, text):
         """Extrage un filtru de timp (ChromaDB) din comanda utilizatorului."""
         from datetime import datetime, timedelta
@@ -220,12 +148,6 @@ class CommandDispatcher:
         }
         
         return ask_gemini_json(prompt, schema=schema, temperature=0.1)
-
-    def start_hype_mode(self):
-        logging.info("🔥 HYPE MODE ACTIVAT!")
-        self.wled_mechanic.trigger_hype_mode()
-        print("\n🤖 Chronos: AM BĂGAT HYPE MODE! Haidee!\n")
-        self.music_expert.process_command("baga muzica super hype rapida motivanta bass boosted pt petrecere", "")
 
     def process_text_command(self, text, sock):
         if not text:
@@ -282,24 +204,22 @@ class CommandDispatcher:
                     except Exception as e:
                         actions_list.append({"text": f"❌ Eroare target: {e}", "status": "error"})
             
-            elif actiune == "study_timer":
-                self.handle_study_timer(text)
-                should_restore_lights = False
-                actions_list.append({"text": "⏱️ Timer procesat.", "status": "ok"})
-            
-            elif actiune == "hype_mode":
-                self.start_hype_mode()
-                should_restore_lights = False
-                actions_list.append({"text": "🔥 Hype mode activat.", "status": "ok"})
-            
             elif actiune == "led":
                 self.wled_expert.execute(text, history_str)
                 should_restore_lights = False
                 actions_list.append({"text": "💡 Comandă WLED trimisă.", "status": "ok"})
             
             elif actiune == "music":
-                self.music_expert.process_command(text, history_str)
-                actions_list.append({"text": "🎵 Comandă Spotify trimisă.", "status": "ok"})
+                music_res = self.music_expert.process_command(text, history_str)
+                if music_res and isinstance(music_res, dict):
+                    msg = music_res.get("msg", "Comandă procesată.")
+                    status = music_res.get("status", "ok")
+                    reason = music_res.get("reason", "")
+                    actions_list.append({"text": f"🎵 {msg}", "status": status})
+                    if reason:
+                        reply_text = f"DJ Choice: {reason}"
+                else:
+                    actions_list.append({"text": "🎵 Comandă Spotify trimisă.", "status": "ok"})
             
             elif actiune == "general":
                 # 1. Analizăm comanda pentru Timp + Cuvinte multiple (Query Expansion)

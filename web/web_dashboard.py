@@ -22,6 +22,8 @@ LOGS_DIR = os.path.join(BASE_DIR, "chronos_data", "logs")
 DATA_DIR = os.path.join(BASE_DIR, "chronos_data")
 TARGETS_FILE = os.path.join(DATA_DIR, "targets.json")
 COMPLETED_FILE = os.path.join(DATA_DIR, "archive", "completed_goals.json")
+REMINDERS_FILE = os.path.join(DATA_DIR, "reminders.json")
+MAINTENANCE_FILE = os.path.join(DATA_DIR, "maintenance.json")
 
 # --- GYM DATA ---
 GYM_DIR = os.path.join(DATA_DIR, "gym")
@@ -205,13 +207,13 @@ from flask import redirect, url_for as flask_url_for
 # ============ HTML ROUTES ============
 @app.route('/')
 @requires_auth
-def index():
-    return render_template('index.html', active_page='journal')
+def home_page():
+    return render_template('home.html', active_page='home')
 
 @app.route('/journal')
 @requires_auth
-def journal_alt():
-    return redirect('/')
+def index():
+    return render_template('index.html', active_page='journal')
 
 @app.route('/targets')
 @requires_auth
@@ -1217,6 +1219,330 @@ def delete_target():
         return jsonify({"status": "success"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+# ============ API REMINDERS ============
+def _load_reminders():
+    if os.path.exists(REMINDERS_FILE):
+        with open(REMINDERS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"reminders": []}
+
+def _save_reminders(data):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(REMINDERS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+@app.route('/api/reminders', methods=['GET'])
+@requires_auth
+def get_reminders():
+    return jsonify(_load_reminders())
+
+@app.route('/api/reminders/add', methods=['POST'])
+@requires_auth
+def add_reminder():
+    import time
+    body = request.json or {}
+    title = body.get('title', '').strip()
+    if not title:
+        return jsonify({'status': 'error', 'message': 'Titlu lipsă'}), 400
+    rem = {
+        'id': f"rem_{int(time.time()*1000)}",
+        'title': title,
+        'description': body.get('description', ''),
+        'emoji': body.get('emoji', '📌'),
+        'priority': body.get('priority', 'Med'),
+        'checked': False,
+        'last_checked': None,
+        'created_at': datetime.now().isoformat()
+    }
+    data = _load_reminders()
+    data.setdefault('reminders', []).append(rem)
+    _save_reminders(data)
+    return jsonify({'status': 'success', 'reminder': rem})
+
+@app.route('/api/reminders/check', methods=['POST'])
+@requires_auth
+def check_reminder():
+    body = request.json or {}
+    rid = body.get('id')
+    checked = body.get('checked', True)
+    data = _load_reminders()
+    for rem in data.get('reminders', []):
+        if rem['id'] == rid:
+            rem['checked'] = checked
+            rem['last_checked'] = datetime.now().isoformat() if checked else rem.get('last_checked')
+            break
+    _save_reminders(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/reminders/delete', methods=['POST'])
+@requires_auth
+def delete_reminder():
+    body = request.json or {}
+    rid = body.get('id')
+    data = _load_reminders()
+    data['reminders'] = [r for r in data.get('reminders', []) if r['id'] != rid]
+    _save_reminders(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/reminders/edit', methods=['POST'])
+@requires_auth
+def edit_reminder():
+    body = request.json or {}
+    rid = body.get('id')
+    data = _load_reminders()
+    for rem in data.get('reminders', []):
+        if rem['id'] == rid:
+            for field in ['title', 'description', 'emoji', 'priority']:
+                if field in body: rem[field] = body[field]
+            break
+    _save_reminders(data)
+    return jsonify({'status': 'success'})
+
+# ============ API MAINTENANCE ============
+def _load_maintenance():
+    if os.path.exists(MAINTENANCE_FILE):
+        with open(MAINTENANCE_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"items": []}
+
+def _save_maintenance(data):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(MAINTENANCE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+@app.route('/api/maintenance', methods=['GET'])
+@requires_auth
+def get_maintenance():
+    return jsonify(_load_maintenance())
+
+@app.route('/api/maintenance/item/add', methods=['POST'])
+@requires_auth
+def add_maintenance_item():
+    import time
+    body = request.json or {}
+    name = body.get('name', '').strip()
+    if not name:
+        return jsonify({'status': 'error', 'message': 'Nume lipsă'}), 400
+    item = {
+        'id': f"mnt_{int(time.time()*1000)}",
+        'name': name,
+        'emoji': body.get('emoji', '🔧'),
+        'tasks': [],
+        'created_at': datetime.now().isoformat()
+    }
+    data = _load_maintenance()
+    data.setdefault('items', []).append(item)
+    _save_maintenance(data)
+    return jsonify({'status': 'success', 'item': item})
+
+@app.route('/api/maintenance/item/delete', methods=['POST'])
+@requires_auth
+def delete_maintenance_item():
+    body = request.json or {}
+    iid = body.get('id')
+    data = _load_maintenance()
+    data['items'] = [i for i in data.get('items', []) if i['id'] != iid]
+    _save_maintenance(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/maintenance/task/add', methods=['POST'])
+@requires_auth
+def add_maintenance_task():
+    import time
+    body = request.json or {}
+    item_id = body.get('item_id')
+    task_name = body.get('name', '').strip()
+    interval_days = int(body.get('interval_days', 30))
+    if not item_id or not task_name:
+        return jsonify({'status': 'error', 'message': 'Date lipsă'}), 400
+    task = {
+        'id': f"mtask_{int(time.time()*1000)}",
+        'name': task_name,
+        'interval_days': interval_days,
+        'last_done': None,
+        'notes': body.get('notes', ''),
+        'created_at': datetime.now().isoformat()
+    }
+    data = _load_maintenance()
+    for item in data.get('items', []):
+        if item['id'] == item_id:
+            item.setdefault('tasks', []).append(task)
+            break
+    _save_maintenance(data)
+    return jsonify({'status': 'success', 'task': task})
+
+@app.route('/api/maintenance/task/done', methods=['POST'])
+@requires_auth
+def done_maintenance_task():
+    body = request.json or {}
+    item_id = body.get('item_id')
+    task_id = body.get('task_id')
+    data = _load_maintenance()
+    for item in data.get('items', []):
+        if item['id'] == item_id:
+            for task in item.get('tasks', []):
+                if task['id'] == task_id:
+                    task['last_done'] = datetime.now().strftime('%Y-%m-%d')
+                    break
+            break
+    _save_maintenance(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/maintenance/task/delete', methods=['POST'])
+@requires_auth
+def delete_maintenance_task():
+    body = request.json or {}
+    item_id = body.get('item_id')
+    task_id = body.get('task_id')
+    data = _load_maintenance()
+    for item in data.get('items', []):
+        if item['id'] == item_id:
+            item['tasks'] = [t for t in item.get('tasks', []) if t['id'] != task_id]
+            break
+    _save_maintenance(data)
+    return jsonify({'status': 'success'})
+
+# ============ API HOME ALERTS ============
+@app.route('/api/home/alerts', methods=['GET'])
+@requires_auth
+def home_alerts():
+    alerts = []
+    today = datetime.now().date()
+
+    # --- Overdue targets ---
+    if os.path.exists(TARGETS_FILE):
+        with open(TARGETS_FILE, 'r', encoding='utf-8') as f:
+            td = json.load(f)
+        for g in td.get('goals', []):
+            if g.get('deadline'):
+                try:
+                    dl = datetime.strptime(g['deadline'], '%Y-%m-%d').date()
+                    days_left = (dl - today).days
+                    if days_left < 0:
+                        alerts.append({'type': 'target_overdue', 'severity': 'error',
+                            'title': f"Target expirat: {g['title']}",
+                            'detail': f"A expirat acum {abs(days_left)} zile",
+                            'link': '/targets', 'icon': '🎯'})
+                    elif days_left <= 3:
+                        alerts.append({'type': 'target_soon', 'severity': 'warning',
+                            'title': f"Target expiră în {days_left}z: {g['title']}",
+                            'detail': f"Deadline: {g['deadline']}",
+                            'link': '/targets', 'icon': '⚠️'})
+                except: pass
+
+    # --- Maintenance overdue ---
+    if os.path.exists(MAINTENANCE_FILE):
+        with open(MAINTENANCE_FILE, 'r', encoding='utf-8') as f:
+            mnt = json.load(f)
+        for item in mnt.get('items', []):
+            for task in item.get('tasks', []):
+                interval = task.get('interval_days', 30)
+                last_done = task.get('last_done')
+                if last_done:
+                    try:
+                        ld = datetime.strptime(last_done, '%Y-%m-%d').date()
+                        days_since = (today - ld).days
+                        days_left = interval - days_since
+                        if days_left < 0:
+                            alerts.append({'type': 'maintenance_overdue', 'severity': 'error',
+                                'title': f"{item['emoji']} {item['name']}: {task['name']}",
+                                'detail': f"Scadentă de {abs(days_left)} zile",
+                                'link': '/targets', 'icon': '🔧'})
+                        elif days_left <= 7:
+                            alerts.append({'type': 'maintenance_soon', 'severity': 'warning',
+                                'title': f"{item['emoji']} {item['name']}: {task['name']}",
+                                'detail': f"Scadentă în {days_left} zile",
+                                'link': '/targets', 'icon': '⏰'})
+                    except: pass
+                else:
+                    # Never done
+                    alerts.append({'type': 'maintenance_never', 'severity': 'info',
+                        'title': f"{item['emoji']} {item['name']}: {task['name']}",
+                        'detail': 'Niciodată efectuată',
+                        'link': '/targets', 'icon': '📋'})
+
+    return jsonify({'alerts': alerts})
+
+# ============ API PROJECT PLAN (STEPS) ============
+@app.route('/api/electronics/project/plan/add', methods=['POST'])
+@requires_auth
+def proj_plan_add():
+    import time
+    body = request.json or {}
+    pid = body.get('project_id')
+    title = body.get('title', '').strip()
+    parent_path = body.get('parent_path', [])  # list of step IDs leading to parent
+    if not pid or not title:
+        return jsonify({'status': 'error', 'message': 'Date lipsă'}), 400
+    step = {
+        'id': f"step_{int(time.time()*1000)}",
+        'title': title,
+        'status': body.get('status', 'todo'),
+        'priority': body.get('priority', 'Med'),
+        'children': [],
+        'created_at': datetime.now().isoformat()
+    }
+    data = _load_electronics()
+    for proj in data.get('projects', []):
+        if proj['id'] == pid:
+            proj.setdefault('plan', [])
+            if not parent_path:
+                proj['plan'].append(step)
+            else:
+                # Navigate to parent
+                node_list = proj['plan']
+                for step_id in parent_path:
+                    parent = next((s for s in node_list if s['id'] == step_id), None)
+                    if parent is None: break
+                    node_list = parent.setdefault('children', [])
+                node_list.append(step)
+            break
+    _save_electronics(data)
+    return jsonify({'status': 'success', 'step': step})
+
+@app.route('/api/electronics/project/plan/update', methods=['POST'])
+@requires_auth
+def proj_plan_update():
+    body = request.json or {}
+    pid = body.get('project_id')
+    step_id = body.get('step_id')
+    def update_step(node_list):
+        for s in node_list:
+            if s['id'] == step_id:
+                for field in ['title', 'status', 'priority']:
+                    if field in body: s[field] = body[field]
+                return True
+            if update_step(s.get('children', [])): return True
+        return False
+    data = _load_electronics()
+    for proj in data.get('projects', []):
+        if proj['id'] == pid:
+            update_step(proj.get('plan', []))
+            break
+    _save_electronics(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/electronics/project/plan/delete', methods=['POST'])
+@requires_auth
+def proj_plan_delete():
+    body = request.json or {}
+    pid = body.get('project_id')
+    step_id = body.get('step_id')
+    def remove_step(node_list):
+        for i, s in enumerate(node_list):
+            if s['id'] == step_id:
+                node_list.pop(i)
+                return True
+            if remove_step(s.get('children', [])): return True
+        return False
+    data = _load_electronics()
+    for proj in data.get('projects', []):
+        if proj['id'] == pid:
+            remove_step(proj.get('plan', []))
+            break
+    _save_electronics(data)
+    return jsonify({'status': 'success'})
 
 # ============ GYM API ============
 

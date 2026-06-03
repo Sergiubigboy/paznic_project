@@ -386,8 +386,197 @@
   </div>
 </div>
 
+<!-- Add Step Modal -->
+<div class="modal-overlay" id="addStepModal">
+  <div class="modal">
+    <h2>🗂️ Pas Principal</h2>
+    <div class="form-group">
+      <label class="form-label">Titlu pas *</label>
+      <input type="text" id="newStepTitle" class="form-input" placeholder="Ex: CAD, COD, HARDWARE, Testing...">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Status inițial</label>
+        <select class="form-select" id="newStepStatus">
+          <option value="todo">⭕ Todo</option>
+          <option value="in-progress">⚡ In progress</option>
+          <option value="done">✅ Done</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Prioritate</label>
+        <select class="form-select" id="newStepPriority">
+          <option value="High">🔴 High</option>
+          <option value="Med" selected>🟡 Med</option>
+          <option value="Low">🟢 Low</option>
+        </select>
+      </div>
+    </div>
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-primary" onclick="saveStep()">Adaugă</button>
+      <button class="btn btn-ghost" onclick="closeAddStepModal()">Anulează</button>
+    </div>
+  </div>
+</div>
+
+<style>
+/* ===== PROJECT PLAN STYLES ===== */
+.elab-plan-section {
+    margin: 20px 0;
+    padding: 18px;
+    background: rgba(124,106,255,0.03);
+    border: 1px solid rgba(124,106,255,0.15);
+    border-radius: var(--radius);
+}
+
+.elab-plan-main-progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+.elab-plan-main-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+.elab-plan-main-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--teal));
+    border-radius: 4px;
+    transition: width 0.5s cubic-bezier(.4,0,.2,1);
+}
+.elab-plan-main-pct {
+    font-size: 14px;
+    font-weight: 900;
+    color: var(--primary);
+    min-width: 36px;
+    text-align: right;
+}
+
+.elab-plan-tree {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.elab-plan-step {
+    position: relative;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+.elab-plan-step-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    position: relative;
+    overflow: hidden;
+}
+.elab-plan-step.step-done .elab-plan-step-row {
+    border-color: rgba(46,213,115,0.3);
+    background: rgba(46,213,115,0.04);
+}
+.elab-plan-step.step-active .elab-plan-step-row {
+    border-color: rgba(124,106,255,0.3);
+    background: rgba(124,106,255,0.05);
+}
+
+/* Progress bar background inside step row */
+.elab-plan-step-prog-bar {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    background: rgba(124,106,255,0.06);
+    transition: width 0.4s;
+    pointer-events: none;
+}
+.elab-plan-step.step-done .elab-plan-step-prog-bar {
+    background: rgba(46,213,115,0.08);
+}
+
+.elab-plan-status-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0;
+    flex-shrink: 0;
+    transition: transform 0.15s;
+    position: relative;
+    z-index: 1;
+}
+.elab-plan-status-btn:hover { transform: scale(1.2); }
+
+.elab-plan-step-title {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    position: relative;
+    z-index: 1;
+}
+.step-title-done {
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+.elab-plan-step-prio {
+    font-size: 10px;
+    font-weight: 800;
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
+}
+.elab-plan-step-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+}
+
+/* Progress bar in card header */
+.elab-plan-progress-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+}
+.elab-plan-prog-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.elab-plan-prog-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--teal));
+    border-radius: 2px;
+    transition: width 0.4s;
+}
+.elab-plan-prog-pct {
+    font-size: 10px;
+    font-weight: 800;
+    color: var(--primary);
+    min-width: 28px;
+    text-align: right;
+}
+</style>
+
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/electronics.js') }}"></script>
+<script>
+// Close addStepModal on backdrop
+document.getElementById('addStepModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('addStepModal')) closeAddStepModal();
+});
+</script>
 {% endblock %}
+

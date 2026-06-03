@@ -1037,7 +1037,6 @@ input[type="number"]:focus, input[type="date"]:focus {
 .intent-badge.music { color: var(--teal); border-color: rgba(0,212,170,0.3); background: var(--teal-dim); }
 .intent-badge.journal { color: var(--yellow); border-color: rgba(255,209,102,0.3); background: var(--yellow-dim); }
 .intent-badge.general { color: var(--text-muted); }
-.intent-badge.hype_mode { color: var(--orange); border-color: rgba(255,140,66,0.3); background: var(--orange-dim); }
 
 /* ===================== RESPONSIVE ===================== */
 @media (max-width: 600px) {

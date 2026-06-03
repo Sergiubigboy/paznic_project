@@ -189,7 +189,7 @@ class MusicHandler:
 
     def process_command(self, user_text, conversation_history=""):
         decision = self._ask_gemini_dj(user_text, conversation_history)
-        if not decision: return
+        if not decision: return None
 
         mode = decision.get('mode')
         query = decision.get('query', '')
@@ -200,28 +200,32 @@ class MusicHandler:
 
         dev_id = self._get_device_id()
         if not dev_id:
-            print("❌ Nu găsesc boxa Spotify activă.")
-            return
+            msg = "Nu găsesc boxa Spotify activă."
+            print(f"❌ {msg}")
+            return {"mode": mode, "query": query, "reason": reason, "status": "error", "msg": msg}
 
         try:
             # --- COMENZI DE CONTROL PLAYBACK ---
             if mode == 'pause':
                 self.sp.pause_playback(device_id=dev_id)
-                print("⏸️ Playback oprit din voce.")
+                msg = "Playback oprit."
+                print(f"⏸️ {msg}")
                 self.was_playing_before_pause = False
-                return
+                return {"mode": mode, "query": query, "reason": reason, "status": "success", "msg": msg}
 
             elif mode == 'next':
                 self.sp.next_track(device_id=dev_id)
-                print("⏭️ Piesa următoare.")
+                msg = "Piesa următoare."
+                print(f"⏭️ {msg}")
                 self.was_playing_before_pause = True
-                return
+                return {"mode": mode, "query": query, "reason": reason, "status": "success", "msg": msg}
 
             elif mode == 'resume':
                 self.sp.start_playback(device_id=dev_id)
-                print("▶️ Playback reluat.")
+                msg = "Playback reluat."
+                print(f"▶️ {msg}")
                 self.was_playing_before_pause = False
-                return
+                return {"mode": mode, "query": query, "reason": reason, "status": "success", "msg": msg}
 
             # --- COMENZI PENTRU PIESE / PLAYLISTURI NOI ---
             if mode == 'playlist':
@@ -231,10 +235,15 @@ class MusicHandler:
                     print(f"▶️ Pornesc Playlist: {playlist['name']}")
                     self.sp.shuffle(True, device_id=dev_id)
                     self.sp.start_playback(device_id=dev_id, context_uri=playlist['uri'])
-                    print("✅ Playlist pornit.")
+                    msg = f"Playlist pornit: {playlist['name']}"
+                    print(f"✅ {msg}")
                     self.was_playing_before_pause = False
                     self._add_to_history(f"Playlist: {playlist['name']}")
-                else: print("❌ Nu am găsit playlist.")
+                    return {"mode": mode, "query": playlist['name'], "reason": reason, "status": "success", "msg": msg}
+                else:
+                    msg = "Nu am găsit playlist."
+                    print(f"❌ {msg}")
+                    return {"mode": mode, "query": query, "reason": reason, "status": "error", "msg": msg}
 
             elif mode == 'track':
                 results = self.sp.search(q=query, type='track', limit=1, market='US')
@@ -246,14 +255,21 @@ class MusicHandler:
                     self.sp.add_to_queue(track['uri'], device_id=dev_id)
                     time.sleep(0.5)
                     self.sp.next_track(device_id=dev_id)
-                    print(f"✅ Piesa a intrat! Enjoy.")
+                    msg = f"Piesa a intrat: {track_fullname}"
+                    print(f"✅ {msg}")
                     self.was_playing_before_pause = False
                     self._add_to_history(track_fullname)
-                else: print("❌ Nu am găsit piesa.")
+                    return {"mode": mode, "query": track_fullname, "reason": reason, "status": "success", "msg": msg}
+                else:
+                    msg = "Nu am găsit piesa."
+                    print(f"❌ {msg}")
+                    return {"mode": mode, "query": query, "reason": reason, "status": "error", "msg": msg}
 
         except Exception as e:
-            print(f"❌ Error Spotify: {e}")
+            msg = f"Error Spotify: {e}"
+            print(f"❌ {msg}")
             if DEBUG_MODE: traceback.print_exc()
+            return {"mode": mode, "query": query, "reason": reason, "status": "error", "msg": msg}
 
 if __name__ == "__main__":
     dj = MusicHandler()

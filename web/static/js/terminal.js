@@ -128,7 +128,7 @@ async function sendCommand() {
         if (res.intents && res.intents.length) {
             const INTENT_ICONS = {
                 led: '💡', music: '🎵', journal: '📘', target: '🎯',
-                study_timer: '⏱️', hype_mode: '🔥', general: '🧠', unknown: '❓'
+                general: '🧠', unknown: '❓'
             };
             const badgesHtml = res.intents.map(i =>
                 `<span class="intent-badge ${i}">${INTENT_ICONS[i] || ''} ${i}</span>`
