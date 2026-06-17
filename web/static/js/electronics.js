@@ -83,7 +83,7 @@ async function postJSON(url, payload) {
 }
 
 // ---- TAB SWITCHING ----
-const ALL_TABS = ['inventar', 'proiecte', 'wishlist'];
+const ALL_TABS = ['proiecte', 'inventar'];
 
 function switchTab(name) {
     ALL_TABS.forEach(t => {
@@ -131,9 +131,12 @@ async function loadAll() {
 //  HEADER STATS
 // ============================================================
 function renderHeaderStats() {
-    document.getElementById('hStatComponents').textContent = _components.length;
-    document.getElementById('hStatProjects').textContent   = _projects.length;
-    document.getElementById('hStatWishlist').textContent   = _wishlist.length;
+    const statComponents = document.getElementById('hStatComponents');
+    if (statComponents) statComponents.textContent = _components.length;
+    const statProjects = document.getElementById('hStatProjects');
+    if (statProjects) statProjects.textContent = _projects.length;
+    const statWishlist = document.getElementById('hStatWishlist');
+    if (statWishlist) statWishlist.textContent = _wishlist.length;
 }
 
 // ============================================================
@@ -212,7 +215,6 @@ function renderCompTable() {
             <td>
                 <div class="elab-row-actions">
                     <button class="elab-btn-reserve" onclick="openReserveModal('${comp.id}')" title="Rezervă pe proiect">📌</button>
-                    <button class="elab-btn-wishlist" onclick="quickAddToWishlist('${comp.id}', '${escHtml(comp.name)}')" title="Adaugă în coș">🛒</button>
                     <button class="elab-btn-edit"    onclick="openCompModal('${comp.id}')">✏️</button>
                     <button class="elab-btn-del"     onclick="deleteCompConfirm('${comp.id}')">🗑️</button>
                 </div>
@@ -609,7 +611,7 @@ function buildStepHtml(step, projId, parentPath, idx, totalSiblings, depth = 0) 
             ${hasChildren ? `<span style="font-size:10px;color:var(--text-faint)">${Math.round(stepProg)}%</span>` : ''}
             <div class="elab-plan-step-actions">
                 <button class="elab-devlog-btn" title="Adaugă sub-pas"
-                        onclick="openAddStepModal('${projId}', ${JSON.stringify(myPath)}, '${step.id}')">＋</button>
+                        onclick="openAddStepModal('${projId}', ${JSON.stringify(myPath).replace(/"/g, '&quot;')}, '${step.id}')">＋</button>
                 <button class="elab-devlog-btn" title="Schimbă prioritate"
                         onclick="cycleStepPriority('${projId}','${step.id}')">🏷️</button>
                 <button class="elab-devlog-btn del" title="Șterge pas"
@@ -1210,6 +1212,7 @@ function setWishFilter(prio) {
 // --- Render wishlist table ---
 function renderWishTable() {
     const tbody = document.getElementById('wishTableBody');
+    if (!tbody) return;
     let items = _wishFilter === 'all'
         ? _wishlist
         : _wishlist.filter(w => w.priority === _wishFilter);
