@@ -24,6 +24,7 @@ TARGETS_FILE = os.path.join(DATA_DIR, "targets.json")
 COMPLETED_FILE = os.path.join(DATA_DIR, "archive", "completed_goals.json")
 REMINDERS_FILE = os.path.join(DATA_DIR, "reminders.json")
 MAINTENANCE_FILE = os.path.join(DATA_DIR, "maintenance.json")
+SCENES_FILE = os.path.join(DATA_DIR, "scenes.json")
 
 # --- GYM DATA ---
 GYM_DIR = os.path.join(DATA_DIR, "gym")
@@ -58,7 +59,7 @@ ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'}
 sys.path.append(BASE_DIR)
 
 from logger_specialist import JournalCore
-from wled_specialist import WLEDStateManager
+from wled_specialist import WLEDStateManager, WLEDDispatcher
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max upload
@@ -105,9 +106,16 @@ def is_trusted_device(token):
     data = load_trusted_devices()
     for dev in data.get("devices", []):
         if dev.get("token") == token:
-            # Update last_used
-            dev["last_used"] = datetime.now().isoformat()
-            save_trusted_devices(data)
+            # Update last_used only every 5 minutes to avoid disk I/O on every request
+            last_used = dev.get("last_used", "")
+            try:
+                last_dt = datetime.fromisoformat(last_used)
+                if (datetime.now() - last_dt).total_seconds() > 300:
+                    dev["last_used"] = datetime.now().isoformat()
+                    save_trusted_devices(data)
+            except:
+                dev["last_used"] = datetime.now().isoformat()
+                save_trusted_devices(data)
             return True
     return False
 
@@ -147,18 +155,37 @@ def save_json_file(filepath, data):
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 # --- HELPERS LOGS ---
-def get_all_logs():
-    logs = []
+def get_available_months():
+    """Return sorted list of available month strings (YYYY-MM), newest first."""
     if not os.path.exists(LOGS_DIR):
-        return logs
+        return []
+    months = []
+    for file_path in glob.glob(os.path.join(LOGS_DIR, "log_*.jsonl")):
+        fname = os.path.basename(file_path)  # log_YYYY_MM.jsonl
+        parts = fname.replace('log_', '').replace('.jsonl', '').split('_')
+        if len(parts) == 2:
+            months.append(f"{parts[0]}-{parts[1]}")
+    return sorted(months, reverse=True)
 
-    for file_path in glob.glob(os.path.join(LOGS_DIR, "*.jsonl")):
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        logs.append(json.loads(line))
-                    except: pass
+def get_logs_for_month(year_month: str):
+    """Load and return grouped log entries for a single YYYY-MM month."""
+    try:
+        year, month = year_month.split('-')
+    except ValueError:
+        return []
+
+    file_path = os.path.join(LOGS_DIR, f"log_{year}_{month}.jsonl")
+    if not os.path.exists(file_path):
+        return []
+
+    logs = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if line.strip():
+                try:
+                    logs.append(json.loads(line))
+                except:
+                    pass
 
     grouped_logs = defaultdict(list)
     for log in logs:
@@ -172,19 +199,21 @@ def get_all_logs():
                     day_string = shifted.strftime("%Y-%m-%d")
                 log['display_time'] = datetime.fromisoformat(log['timestamp']).strftime("%H:%M")
                 grouped_logs[day_string].append(log)
-        except: continue
+        except:
+            continue
 
-    # Attach journal photos to each day
+    # Attach journal photos to each day (only for this month prefix)
     journal_photos = {}
     if os.path.exists(JOURNAL_PHOTOS_DIR):
         for fname in os.listdir(JOURNAL_PHOTOS_DIR):
             if allowed_file(fname):
                 parts = fname.split('_', 1)
                 if len(parts) >= 1:
-                    date_part = parts[0]
-                    if date_part not in journal_photos:
-                        journal_photos[date_part] = []
-                    journal_photos[date_part].append(fname)
+                    date_part = parts[0]  # YYYY-MM-DD
+                    if date_part.startswith(year_month):
+                        if date_part not in journal_photos:
+                            journal_photos[date_part] = []
+                        journal_photos[date_part].append(fname)
 
     sorted_days = sorted(grouped_logs.keys(), reverse=True)
     result = []
@@ -197,6 +226,14 @@ def get_all_logs():
             "journal_photos": journal_photos.get(day, [])
         })
     return result
+
+def get_all_logs():
+    """Legacy: load all months. Used only for full search if needed."""
+    all_results = []
+    for month in reversed(get_available_months()):  # oldest first, then sort
+        all_results.extend(get_logs_for_month(month))
+    all_results.sort(key=lambda d: d['date'], reverse=True)
+    return all_results
 
 def _get_log_file_for_date(date_str):
     year, month, _ = date_str.split('-')
@@ -835,13 +872,16 @@ def day_status():
     else:
         measurements_due = True
 
-    # --- Last weight (even if not today) ---
+    # --- Last weight (even if not today) + recent 7 ---
+    # Read WEIGHT_FILE only once for both last_weight_ever and recent_weights
     last_weight_ever = None
+    recent_weights = []
     if os.path.exists(WEIGHT_FILE):
         with open(WEIGHT_FILE, 'r', encoding='utf-8') as f:
             wl = json.load(f)
         if wl:
             last_weight_ever = wl[-1].get('weight')
+            recent_weights = list(reversed(wl[-7:]))
 
     # --- Schedule today ---
     schedule = []
@@ -849,13 +889,6 @@ def day_status():
         with open(DAY_SCHEDULE_FILE, 'r', encoding='utf-8') as f:
             sched = json.load(f)
         schedule = sched.get(today, [])
-
-    # --- Recent weight log (last 7) ---
-    recent_weights = []
-    if os.path.exists(WEIGHT_FILE):
-        with open(WEIGHT_FILE, 'r', encoding='utf-8') as f:
-            wl = json.load(f)
-        recent_weights = list(reversed(wl[-7:])) if wl else []
 
     return jsonify({
         "date": today,
@@ -980,10 +1013,24 @@ def list_trusted_devices():
     return jsonify(devices_data.get("devices", []))
 
 # ============ API LOGS ============
+@app.route('/api/logs/months')
+@requires_auth
+def api_logs_months():
+    """Return list of available months (YYYY-MM), newest first."""
+    months = get_available_months()
+    return jsonify({"months": months})
+
 @app.route('/api/logs')
 @requires_auth
 def api_logs():
-    return jsonify(get_all_logs())
+    """Return logs for a specific month. Defaults to current month.
+    Query param: ?month=YYYY-MM
+    """
+    month = request.args.get('month', '').strip()
+    if not month:
+        # Default: current month
+        month = datetime.now().strftime("%Y-%m")
+    return jsonify(get_logs_for_month(month))
 
 @app.route('/api/journal/entry', methods=['POST'])
 @requires_auth
@@ -2626,6 +2673,153 @@ def finance_inventory_delete():
                                if not (l.get('inventory_id') == inv_id and l.get('type') == 'invest')]
     _save_finance(data)
     return jsonify({'status': 'success'})
+
+
+# ==============================================================
+# SCENES API
+# ==============================================================
+
+def _load_scenes():
+    if os.path.exists(SCENES_FILE):
+        try:
+            with open(SCENES_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            pass
+    return {"scenes": []}
+
+def _save_scenes(data):
+    with open(SCENES_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+@app.route('/api/scenes', methods=['GET'])
+@requires_auth
+def get_scenes():
+    data = _load_scenes()
+    return jsonify(data)
+
+@app.route('/api/scenes/save', methods=['POST'])
+@requires_auth
+def save_scene():
+    body = request.json or {}
+    data = _load_scenes()
+    scene_id = body.get('id')
+    if scene_id:
+        # Update existing
+        for i, s in enumerate(data['scenes']):
+            if s['id'] == scene_id:
+                data['scenes'][i].update({
+                    'name': body.get('name', s['name']),
+                    'emoji': body.get('emoji', s.get('emoji', '🎬')),
+                    'music_prompt': body.get('music_prompt', s.get('music_prompt', '')),
+                    'lights': body.get('lights', s.get('lights', {})),
+                    'updated_at': datetime.now().isoformat()
+                })
+                break
+    else:
+        # New scene
+        import uuid as _uuid
+        new_scene = {
+            'id': str(_uuid.uuid4()),
+            'name': body.get('name', 'Scenă nouă'),
+            'emoji': body.get('emoji', '🎬'),
+            'music_prompt': body.get('music_prompt', ''),
+            'lights': body.get('lights', {}),
+            'created_at': datetime.now().isoformat()
+        }
+        data['scenes'].append(new_scene)
+        scene_id = new_scene['id']
+    _save_scenes(data)
+    return jsonify({'status': 'success', 'id': scene_id})
+
+@app.route('/api/scenes/delete', methods=['POST'])
+@requires_auth
+def delete_scene():
+    body = request.json or {}
+    scene_id = body.get('id')
+    data = _load_scenes()
+    data['scenes'] = [s for s in data['scenes'] if s['id'] != scene_id]
+    _save_scenes(data)
+    return jsonify({'status': 'success'})
+
+@app.route('/api/scenes/activate', methods=['POST'])
+@requires_auth
+def activate_scene():
+    body = request.json or {}
+    scene_id = body.get('id')
+    data = _load_scenes()
+    scene = next((s for s in data['scenes'] if s['id'] == scene_id), None)
+    if not scene:
+        return jsonify({'status': 'error', 'message': 'Scena nu există'}), 404
+
+    results = {'music': None, 'lights': None}
+
+    # --- Activate lights ---
+    lights = scene.get('lights', {})
+    if lights:
+        try:
+            import requests as _req
+            from config import WLED_IP_MAIN, WLED_IP_FLOOR
+            from concurrent.futures import ThreadPoolExecutor
+            def _send(ip, payload):
+                try:
+                    _req.post(f"http://{ip}/json/state", json=payload, timeout=2.0)
+                except Exception as e:
+                    pass
+            with ThreadPoolExecutor() as ex:
+                if 'main' in lights:
+                    ex.submit(_send, WLED_IP_MAIN, lights['main'])
+                if 'floor' in lights:
+                    ex.submit(_send, WLED_IP_FLOOR, lights['floor'])
+            results['lights'] = 'ok'
+        except Exception as e:
+            results['lights'] = f'error: {str(e)}'
+
+    # --- Activate music ---
+    music_prompt = scene.get('music_prompt', '').strip()
+    if music_prompt:
+        try:
+            sys.path.insert(0, BASE_DIR)
+            from music_specialist import MusicHandler
+            dj = MusicHandler()
+            result = dj.process_command(music_prompt, conversation_history="")
+            results['music'] = result.get('status', 'ok') if result else 'ok'
+        except Exception as e:
+            results['music'] = f'error: {str(e)}'
+
+    return jsonify({'status': 'success', 'results': results, 'scene_name': scene.get('name', '')})
+
+@app.route('/api/scenes/wled-snapshot', methods=['GET'])
+@requires_auth
+def wled_snapshot():
+    """Capturează starea curentă din ambele zone WLED."""
+    try:
+        import requests as _req
+        from config import WLED_IP_MAIN, WLED_IP_FLOOR
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _get(ip):
+            try:
+                r = _req.get(f"http://{ip}/json/state", timeout=1.5)
+                if r.status_code == 200:
+                    d = r.json()
+                    return {"on": d.get("on"), "bri": d.get("bri"), "seg": d.get("seg", [])}
+            except:
+                pass
+            return None
+
+        with ThreadPoolExecutor() as ex:
+            f_main  = ex.submit(_get, WLED_IP_MAIN)
+            f_floor = ex.submit(_get, WLED_IP_FLOOR)
+            main_state  = f_main.result()
+            floor_state = f_floor.result()
+
+        if main_state is None and floor_state is None:
+            return jsonify({'status': 'error', 'message': 'WLED offline sau inaccesibil'}), 503
+
+        return jsonify({'status': 'ok', 'main': main_state, 'floor': floor_state})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 if __name__ == '__main__':

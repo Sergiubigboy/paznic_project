@@ -23,12 +23,26 @@ function scoreClass(val, inverted) {
 }
 
 // ===== STATE =====
-let allData = [];
+let allData = [];          // data for current loaded month
+let availableMonths = [];  // ['2026-06', '2026-05', ...]
+let currentMonth = '';     // currently displayed month
 let lastSavedDate = null;
 let currentScoreEditDate = null;
 let journalPhotoPending = [null, null, null];
 let pendingEntryPhotoFiles = [];
 let currentEntryPhotoDate = null;
+let currentColumn = 0;
+let currentRenderedData = [];
+
+// ===== MONTH NAMES =====
+const MONTH_NAMES_RO = [
+    '', 'Ianuarie', 'Februarie', 'Martie', 'Aprilie', 'Mai', 'Iunie',
+    'Iulie', 'August', 'Septembrie', 'Octombrie', 'Noiembrie', 'Decembrie'
+];
+function fmtMonth(ym) {
+    const [y, m] = ym.split('-');
+    return `${MONTH_NAMES_RO[parseInt(m)]} ${y}`;
+}
 
 // ===== DATE PICKER =====
 function setJournalQuickDate(offsetDays, btn) {
@@ -143,33 +157,114 @@ async function doEntryPhotoUpload() {
     closeModal('entryPhotoModal');
     flash(`✅ ${done} poze adăugate la ${date}!`);
     pendingEntryPhotoFiles = [];
-    loadAll();
+    loadLogsForMonth(currentMonth);
+}
+
+// ===== MONTH PICKER =====
+function renderMonthPicker(months) {
+    let container = document.getElementById('monthPickerContainer');
+    if (!container) return;
+    if (!months || months.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const tabs = months.map(m => {
+        const isActive = m === currentMonth;
+        return `<button class="month-tab ${isActive ? 'active' : ''}" onclick="switchMonth('${m}')">${fmtMonth(m)}</button>`;
+    }).join('');
+
+    container.innerHTML = `<div class="month-tabs-row">${tabs}</div>`;
+}
+
+function switchMonth(month) {
+    if (month === currentMonth) return;
+    currentMonth = month;
+    currentColumn = 0;
+    // Update search box
+    const si = document.getElementById('searchInput');
+    if (si) si.value = '';
+    loadLogsForMonth(month);
+    renderMonthPicker(availableMonths);
 }
 
 // ===== LOAD =====
-function loadAll() {
-    Promise.all([
-        fetch('/api/logs').then(r => r.json()),
+async function loadAll() {
+    // First load the available months list
+    try {
+        const mRes = await fetch('/api/logs/months');
+        const mData = await mRes.json();
+        availableMonths = mData.months || [];
+    } catch(e) {
+        availableMonths = [];
+    }
+
+    // Default to current month
+    const nowMonth = offsetDate(0).slice(0, 7); // YYYY-MM
+    if (!currentMonth) {
+        currentMonth = availableMonths.includes(nowMonth) ? nowMonth : (availableMonths[0] || nowMonth);
+    }
+
+    renderMonthPicker(availableMonths);
+
+    // Load logs, targets, gym data in parallel
+    const [logs, targets, measurements, checks] = await Promise.all([
+        fetch(`/api/logs?month=${currentMonth}`).then(r => r.json()),
         fetch('/api/targets').then(r => r.json()),
         fetch('/api/gym/measurements').then(r => r.json()).catch(() => []),
         fetch('/api/gym/daily-checks').then(r => r.json()).catch(() => [])
-    ]).then(([logs, targets, measurements, checks]) => {
+    ]);
+
+    allData = logs;
+    renderLogs(logs);
+    renderSidebarTargets(targets.goals || []);
+    renderSidebarGym(measurements, checks);
+}
+
+async function loadLogsForMonth(month) {
+    currentColumn = 0;
+    const container = document.getElementById('logsContainer');
+    container.innerHTML = '<div style="color:var(--text-faint);font-size:13px;padding:24px 0;text-align:center">Se încarcă...</div>';
+
+    try {
+        const logs = await fetch(`/api/logs?month=${month}`).then(r => r.json());
         allData = logs;
         renderLogs(logs);
-        renderSidebarTargets(targets.goals || []);
-        renderSidebarGym(measurements, checks);
-    });
+    } catch(e) {
+        container.innerHTML = '<div style="color:var(--text-faint);font-size:13px;padding:24px 0">Eroare la încărcare.</div>';
+    }
 }
+
 loadAll();
 
-// ===== RENDER LOGS =====
 function renderLogs(daysArray) {
+    currentRenderedData = daysArray;
     const container = document.getElementById('logsContainer');
-    container.innerHTML = '';
     const noResults = document.getElementById('noResults');
+    const pagContainer = document.getElementById('journalPagination');
+
     noResults.className = daysArray.length === 0 ? 'empty-state no-results visible' : 'empty-state no-results';
 
-    daysArray.forEach(dayObj => {
+    if (daysArray.length === 0) {
+        container.innerHTML = '';
+        if (pagContainer) pagContainer.innerHTML = '';
+        return;
+    }
+
+    const COLUMN_SIZE = 16;
+    const totalColumns = Math.ceil(daysArray.length / COLUMN_SIZE);
+
+    if (currentColumn >= totalColumns) {
+        currentColumn = 0;
+    }
+
+    const startIndex = currentColumn * COLUMN_SIZE;
+    const endIndex = Math.min(startIndex + COLUMN_SIZE, daysArray.length);
+    const displayedDays = daysArray.slice(startIndex, endIndex);
+
+    const fragment = document.createDocumentFragment();
+
+    displayedDays.forEach(dayObj => {
         const group = document.createElement('div');
         group.className = 'day-group';
 
@@ -249,8 +344,48 @@ function renderLogs(daysArray) {
             }
             group.appendChild(card);
         });
-        container.appendChild(group);
+        fragment.appendChild(group);
     });
+
+    // Single DOM write
+    container.innerHTML = '';
+    container.appendChild(fragment);
+
+    // Render pagination controls
+    if (pagContainer) {
+        if (totalColumns <= 1) {
+            pagContainer.innerHTML = '';
+            return;
+        }
+
+        let html = '';
+        
+        // Prev button
+        html += `<button class="pag-btn" ${currentColumn === 0 ? 'disabled' : ''} onclick="changeColumn(${currentColumn - 1})">← Precedentă</button>`;
+        
+        // Column numbers
+        for (let c = 0; c < totalColumns; c++) {
+            const isActive = c === currentColumn;
+            html += `<button class="pag-btn num ${isActive ? 'active' : ''}" onclick="changeColumn(${c})">${c + 1}</button>`;
+        }
+
+        // Next button
+        html += `<button class="pag-btn" ${currentColumn === totalColumns - 1 ? 'disabled' : ''} onclick="changeColumn(${currentColumn + 1})">Următoarea →</button>`;
+
+        pagContainer.innerHTML = `<div class="pag-wrapper">${html}</div>`;
+    }
+}
+
+function changeColumn(index) {
+    currentColumn = index;
+    renderLogs(currentRenderedData);
+    const container = document.getElementById('logsContainer');
+    if (container) {
+        window.scrollTo({
+            top: container.getBoundingClientRect().top + window.pageYOffset - 100,
+            behavior: 'smooth'
+        });
+    }
 }
 
 // ===== SIDEBAR =====
@@ -287,19 +422,24 @@ function renderSidebarGym(measurements, checks) {
     el.innerHTML = html || '<div style="color:var(--text-faint);font-size:12px">—</div>';
 }
 
-// ===== SEARCH =====
+// ===== SEARCH (debounced, searches current month) =====
+let _searchTimer = null;
 document.getElementById('searchInput').addEventListener('input', function(e) {
-    const q = e.target.value.toLowerCase().trim();
-    if (!q) { renderLogs(allData); return; }
-    const filtered = allData.map(d => {
-        const matching = d.logs.filter(log => {
-            const a = log.analysis || {};
-            return [log.raw_text, a.short_summary, a.psychologist_feedback, a.what_went_well, a.pattern_alert, (a.tags||[]).join(' ')]
-                .filter(Boolean).join(' ').toLowerCase().includes(q);
-        });
-        return matching.length ? { ...d, logs: matching } : null;
-    }).filter(Boolean);
-    renderLogs(filtered);
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(() => {
+        const q = e.target.value.toLowerCase().trim();
+        currentColumn = 0;
+        if (!q) { renderLogs(allData); return; }
+        const filtered = allData.map(d => {
+            const matching = d.logs.filter(log => {
+                const a = log.analysis || {};
+                return [log.raw_text, a.short_summary, a.psychologist_feedback, a.what_went_well, a.pattern_alert, (a.tags||[]).join(' ')]
+                    .filter(Boolean).join(' ').toLowerCase().includes(q);
+            });
+            return matching.length ? { ...d, logs: matching } : null;
+        }).filter(Boolean);
+        renderLogs(filtered);
+    }, 250);
 });
 
 // ===== SUBMIT ENTRY =====
@@ -322,6 +462,22 @@ document.getElementById('submitEntryBtn').addEventListener('click', async functi
             lastSavedDate = logicalDate;
             flash('✅ Înregistrat!');
             await uploadJournalPhotos(logicalDate);
+
+            // If the entry is for the currently displayed month, reload
+            const entryMonth = logicalDate.slice(0, 7);
+            if (entryMonth !== currentMonth) {
+                // Switch to that month
+                currentMonth = entryMonth;
+                currentColumn = 0;
+                if (!availableMonths.includes(entryMonth)) {
+                    availableMonths.unshift(entryMonth);
+                    availableMonths.sort((a,b) => b.localeCompare(a));
+                }
+                renderMonthPicker(availableMonths);
+            } else {
+                currentColumn = 0;
+            }
+
             if (isPast) {
                 const rb = document.getElementById('rejudgeAfterSaveBtn');
                 rb.style.display = 'inline-flex'; rb.dataset.date = lastSavedDate;
@@ -332,7 +488,7 @@ document.getElementById('submitEntryBtn').addEventListener('click', async functi
                 document.getElementById('rejudgeAfterSaveBtn').style.display = 'none';
                 document.getElementById('entryStatus').style.display = 'none';
             }
-            loadAll();
+            loadLogsForMonth(currentMonth);
         } else flash('❌ ' + (res.message || 'Eroare'), 'error');
     } catch { this.disabled = false; this.textContent = '💾 Salvează'; flash('❌ Eroare rețea', 'error'); }
 });
@@ -353,7 +509,7 @@ function triggerRejudge(date, btn) {
             flash('✅ Zi re-analizată!');
             document.getElementById('rejudgeAfterSaveBtn').style.display = 'none';
             document.getElementById('entryStatus').style.display = 'none';
-            loadAll();
+            loadLogsForMonth(currentMonth);
         } else flash('❌ ' + (d.message||'Eroare'), 'error');
     }).catch(() => { btn.textContent = orig; btn.disabled = false; flash('❌ Eroare rețea','error'); });
 }
@@ -393,7 +549,7 @@ async function saveScores() {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ date: currentScoreEditDate, scores })
     }).then(r => r.json());
-    if (res.status === 'success') { flash('✅ Scoruri salvate!'); closeScoreModal(); loadAll(); }
+    if (res.status === 'success') { flash('✅ Scoruri salvate!'); closeScoreModal(); loadLogsForMonth(currentMonth); }
     else flash('❌ ' + (res.message||'Eroare'), 'error');
 }
 

@@ -61,14 +61,18 @@
                 <div id="entryStatus" style="margin-top:8px;font-size:12px;color:var(--text-muted);display:none;"></div>
             </div>
 
+            <!-- Month Picker -->
+            <div id="monthPickerContainer"></div>
+
             <!-- Search -->
             <div class="search-box">
                 <span class="search-icon">🔍</span>
-                <input type="text" id="searchInput" placeholder="Caută în jurnal...">
+                <input type="text" id="searchInput" placeholder="Caută în luna curentă...">
             </div>
 
             <!-- Logs -->
             <div id="logsContainer"></div>
+            <div id="journalPagination" class="pagination-row"></div>
             <div id="noResults" class="empty-state no-results">Nu am găsit nimic.</div>
         </div>
 
@@ -135,7 +139,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+<script src="{{ url_for('static', filename='js/script.js') }}?v=2.1"></script>
 <script>
 // Populate sidebar today status from day status data
 document.addEventListener('dayStatusLoaded', async (e) => {

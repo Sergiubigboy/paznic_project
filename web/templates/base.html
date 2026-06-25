@@ -5,18 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Chronos OS{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=2.1">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     {% block head_extra %}{% endblock %}
 </head>
 <body class="page-{{ active_page | default('') }}">
 
+<!-- ===== BACKGROUND PARTICLES ===== -->
+<canvas id="bgParticles"></canvas>
+
 <!-- ===== NAVBAR ===== -->
 {% if active_page != 'home' %}
 <nav class="navbar">
     <a href="/" class="nav-brand">
-        Chronos <span class="brand-dot">●</span>
+        <span class="brand-logo-text">Chronos</span> <span class="brand-dot">●</span>
         <span class="brand-sub">OS</span>
     </a>
     <div class="nav-links">
@@ -70,6 +74,7 @@
 
 <script src="{{ url_for('static', filename='js/shared.js') }}"></script>
 <script src="{{ url_for('static', filename='js/daily-status.js') }}"></script>
+<script src="{{ url_for('static', filename='js/animations.js') }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

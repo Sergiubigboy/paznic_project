@@ -57,6 +57,24 @@
         </div>
     </div>
 
+    <!-- ===== SCENES ===== -->
+    <div class="scenes-section" id="scenesSection">
+        <div class="scenes-header">
+            <div class="home-section-label scenes-label">🎬 Scene</div>
+            <button class="scenes-add-btn" id="scenesAddBtn" onclick="openSceneModal()">
+                <span>＋</span>
+                <span>Scenă Nouă</span>
+            </button>
+        </div>
+        <div class="scenes-grid" id="scenesGrid">
+            <div class="scenes-empty" id="scenesEmpty">
+                <div class="scenes-empty-icon">🎬</div>
+                <div class="scenes-empty-title">Nicio scenă salvată</div>
+                <div class="scenes-empty-desc">Creează prima ta scenă cu muzică și lumini</div>
+            </div>
+        </div>
+    </div>
+
     <!-- ===== MAIN NAV MENU ===== -->
     <div class="home-section-label">Navigare Rapidă</div>
     <div class="home-menu-grid" id="homeMenuGrid">
@@ -76,7 +94,7 @@
             <div class="hmc-glow"></div>
             <div class="hmc-icon">🎯</div>
             <div class="hmc-content">
-                <div class="hmc-title">Taskuri & Targeturi</div>
+                <div class="hmc-title">Taskuri &amp; Targeturi</div>
                 <div class="hmc-desc">Targeturi, remindere, task-uri zilnice</div>
                 <div class="hmc-stat" id="statTargets">Se încarcă...</div>
             </div>
@@ -142,6 +160,147 @@
     </div>
 
 </div>
+
+<!-- ===== SCENE MODAL ===== -->
+<div class="scene-modal-overlay" id="sceneModalOverlay">
+    <div class="scene-modal" id="sceneModal">
+        <div class="scene-modal-header">
+            <div class="scene-modal-title" id="sceneModalTitle">✨ Scenă Nouă</div>
+            <button class="scene-modal-close" id="sceneModalClose">✕</button>
+        </div>
+        <input type="hidden" id="sceneEditId">
+
+        <!-- Emoji + Name -->
+        <div class="scene-form-row">
+            <div class="scene-emoji-picker">
+                <button class="scene-emoji-btn" id="sceneEmojiBtn">🎬</button>
+                <div class="scene-emoji-grid" id="sceneEmojiGrid">
+                    <button data-emoji="🎬">🎬</button><button data-emoji="🌹">🌹</button>
+                    <button data-emoji="🌙">🌙</button><button data-emoji="🔥">🔥</button>
+                    <button data-emoji="❄️">❄️</button><button data-emoji="🎉">🎉</button>
+                    <button data-emoji="🎵">🎵</button><button data-emoji="💫">💫</button>
+                    <button data-emoji="🌊">🌊</button><button data-emoji="⚡">⚡</button>
+                    <button data-emoji="🌿">🌿</button><button data-emoji="🎮">🎮</button>
+                    <button data-emoji="🍃">🍃</button><button data-emoji="💜">💜</button>
+                    <button data-emoji="🌅">🌅</button><button data-emoji="🎷">🎷</button>
+                </div>
+            </div>
+            <div class="scene-name-wrap">
+                <label class="scene-label">Numele scenei</label>
+                <input type="text" class="scene-input" id="sceneNameInput" placeholder="ex: Romantic, Party, Focus..." maxlength="30">
+            </div>
+        </div>
+
+        <!-- Music prompt -->
+        <div class="scene-form-group">
+            <label class="scene-label">🎵 Muzică <span class="scene-label-sub">— prompt pentru AI DJ</span></label>
+            <textarea class="scene-textarea" id="sceneMusicPrompt" placeholder="ex: pune jazz ambient relaxant, ceva de citit, ceva romantic piano..." rows="2"></textarea>
+        </div>
+
+        <!-- Lights config -->
+        <div class="scene-form-group">
+            <label class="scene-label">💡 Lumini LED</label>
+            <div class="scene-lights-actions">
+                <button class="scene-capture-btn" id="sceneCaptureBtn">
+                    <span>📸</span><span>Capturează din WLED acum</span>
+                </button>
+                <button class="scene-manual-toggle" id="sceneManualToggle">⚙ Manual</button>
+            </div>
+            <div class="scene-lights-status" id="sceneLightsStatus" style="display:none"></div>
+            <div class="scene-manual-panel" id="sceneManualPanel" style="display:none">
+                <div class="scene-zones-grid">
+                    <!-- Main zone -->
+                    <div class="scene-zone">
+                        <div class="scene-zone-title">🔆 Main (Tavan/Dulap)</div>
+                        <div class="scene-zone-fields">
+                            <div class="scene-field">
+                                <span class="scene-field-label">ON</span>
+                                <label class="scene-toggle-switch">
+                                    <input type="checkbox" id="mainOn" checked>
+                                    <span class="scene-toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="scene-field">
+                                <span class="scene-field-label">Brightness</span>
+                                <input type="range" min="1" max="255" value="128" id="mainBri" class="scene-slider">
+                                <span class="scene-slider-val" id="mainBriVal">128</span>
+                            </div>
+                            <div class="scene-field">
+                                <span class="scene-field-label">Effect (fx)</span>
+                                <input type="number" min="0" max="200" value="0" id="mainFx" class="scene-num-input">
+                            </div>
+                            <div class="scene-field">
+                                <span class="scene-field-label">Palette (pal)</span>
+                                <input type="number" min="0" max="70" value="0" id="mainPal" class="scene-num-input">
+                            </div>
+                            <div class="scene-field">
+                                <span class="scene-field-label">Speed (sx)</span>
+                                <input type="range" min="0" max="255" value="128" id="mainSx" class="scene-slider">
+                                <span class="scene-slider-val" id="mainSxVal">128</span>
+                            </div>
+                            <div class="scene-field">
+                                <span class="scene-field-label">Intensity (ix)</span>
+                                <input type="range" min="0" max="255" value="128" id="mainIx" class="scene-slider">
+                                <span class="scene-slider-val" id="mainIxVal">128</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Floor zone -->
+                    <div class="scene-zone">
+                        <div class="scene-zone-title">🌊 Floor (Sub-birou)</div>
+                        <div class="scene-zone-fields">
+                            <div class="scene-field">
+                                <span class="scene-field-label">ON</span>
+                                <label class="scene-toggle-switch">
+                                    <input type="checkbox" id="floorOn" checked>
+                                    <span class="scene-toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="scene-field">
+                                <span class="scene-field-label">Brightness</span>
+                                <input type="range" min="1" max="255" value="180" id="floorBri" class="scene-slider">
+                                <span class="scene-slider-val" id="floorBriVal">180</span>
+                            </div>
+                            <div class="scene-field">
+                                <span class="scene-field-label">Effect (fx)</span>
+                                <input type="number" min="0" max="200" value="0" id="floorFx" class="scene-num-input">
+                            </div>
+                            <div class="scene-field">
+                                <span class="scene-field-label">Palette (pal)</span>
+                                <input type="number" min="0" max="70" value="0" id="floorPal" class="scene-num-input">
+                            </div>
+                            <div class="scene-field">
+                                <span class="scene-field-label">Speed (sx)</span>
+                                <input type="range" min="0" max="255" value="128" id="floorSx" class="scene-slider">
+                                <span class="scene-slider-val" id="floorSxVal">128</span>
+                            </div>
+                            <div class="scene-field">
+                                <span class="scene-field-label">Intensity (ix)</span>
+                                <input type="range" min="0" max="255" value="128" id="floorIx" class="scene-slider">
+                                <span class="scene-slider-val" id="floorIxVal">128</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="scene-modal-footer">
+            <button class="scene-cancel-btn" id="sceneCancelBtn">Anulează</button>
+            <button class="scene-save-btn" id="sceneSaveBtn">💾 Salvează Scena</button>
+        </div>
+
+        <!-- Loading overlay -->
+        <div class="scene-loading-overlay" id="sceneLoadingOverlay" style="display:none">
+            <div class="scene-loading-spinner"></div>
+            <div id="sceneLoadingText">Se salvează...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast notification -->
+<div class="scene-toast" id="sceneToast"></div>
+
 {% endblock %}
 
 {% block scripts %}
