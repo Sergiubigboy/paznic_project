@@ -1,7 +1,6 @@
 import os
 import time
 import logging
-from typing import Optional
 
 # --- IMPORTURI MODULE SPECIALISTE ---
 from wled_specialist import WLEDDispatcher, WLEDStateManager
@@ -149,7 +148,7 @@ class CommandDispatcher:
         
         return ask_gemini_json(prompt, schema=schema, temperature=0.1)
 
-    def process_text_command(self, text, sock):
+    def process_text_command(self, text, sock=None):
         if not text:
             return True
 
