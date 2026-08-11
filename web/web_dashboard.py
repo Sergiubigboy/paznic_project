@@ -2780,9 +2780,9 @@ def activate_scene():
     if music_prompt:
         try:
             sys.path.insert(0, BASE_DIR)
-            from music_specialist import MusicHandler
-            dj = MusicHandler()
-            result = dj.process_command(music_prompt, conversation_history="")
+            from agents.music_agent import MusicAgent
+            dj = MusicAgent()
+            result = dj.process_request(music_prompt)
             results['music'] = result.get('status', 'ok') if result else 'ok'
         except Exception as e:
             results['music'] = f'error: {str(e)}'

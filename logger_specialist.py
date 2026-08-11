@@ -95,6 +95,28 @@ class MemoryManager:
             self.collection.add(documents=[text], metadatas=[metadata], ids=[memory_id])
         except Exception as e: logging.error(f"Eroare ChromaDB: {e}")
 
+    def get_recent(self, n=5, where_filter=None):
+        """
+        Returnează cele mai recente N documente (după metadata['timestamp']),
+        indiferent de relevanța semantică — spre deosebire de query_memory()
+        care caută pe similaritate. Folosit pentru a da lui Chronos un
+        "recap" al conversațiilor recente la începutul unei sesiuni vocale noi.
+        """
+        try:
+            results = self.collection.get(
+                where=where_filter,
+                limit=max(n * 4, 20),  # supra-eșantionăm ca să putem sorta după timp
+                include=["documents", "metadatas"],
+            )
+            docs  = results.get("documents") or []
+            metas = results.get("metadatas") or []
+            paired = list(zip(docs, metas))
+            paired.sort(key=lambda dm: (dm[1] or {}).get("timestamp", ""), reverse=True)
+            return [doc for doc, _ in paired[:n] if doc]
+        except Exception as e:
+            logging.error(f"Eroare ChromaDB get_recent: {e}")
+            return []
+
     def query_memory(self, queries, n_results=3, where_filter=None):
         # Asigură-te că queries este o listă (dacă primește un singur string, îl transformă în listă)
         if isinstance(queries, str):

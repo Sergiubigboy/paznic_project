@@ -82,6 +82,12 @@ class AudioInterface:
         self._live_mode  : bool          = False
         self._live_queue : Optional[asyncio.Queue] = None
 
+        # Wake-word-as-interrupt: în „focus mode" (Chronos livrează un răspuns
+        # important) barge-in-ul pe voce e oprit, iar singura cale de a-l
+        # întrerupe e să spui din nou wake word-ul. Când e armat, audio-ul e
+        # rutat SIMULTAN către sesiunea live ȘI către detectorul OWW.
+        self._wake_interrupt_armed : bool = False
+
     # ─────────────────────────────────────────────────────
     # INIȚIALIZARE
     # ─────────────────────────────────────────────────────
@@ -199,6 +205,12 @@ class AudioInterface:
                     loop.call_soon_threadsafe(self._live_queue.put_nowait, chunk)
                 except asyncio.QueueFull:
                     pass
+                # ...și în paralel la detector, dacă wake-interrupt e armat
+                if self._wake_interrupt_armed:
+                    try:
+                        loop.call_soon_threadsafe(self._ww_queue.put_nowait, chunk)
+                    except asyncio.QueueFull:
+                        pass
             else:
                 # WAKE WORD MODE: trimitem la detector
                 try:
@@ -234,8 +246,10 @@ class AudioInterface:
 
         while self._running:
             try:
-                # Cât timp suntem în live mode, nu facem wake word detection
-                if self._live_mode:
+                # În live mode nu facem wake word detection — EXCEPTÂND cazul
+                # în care wake-interrupt e armat (focus mode), când wake word-ul
+                # e singura cale de a-l întrerupe pe Chronos.
+                if self._live_mode and not self._wake_interrupt_armed:
                     await asyncio.sleep(0.1)
                     confirmation = 0
                     audio_buffer.clear()
@@ -280,18 +294,31 @@ class AudioInterface:
                             continue
                         self._last_detect = now
 
-                        logger.info(
-                            f"\n🎯 [AudioInterface] WAKE WORD! '{best_name}' "
-                            f"score={best_score:.3f}"
-                        )
-                        await self.bus.publish(
-                            self.EventType.WAKE_WORD_DETECTED,
-                            {
-                                "timestamp": now,
-                                "score": float(best_score),
-                                "model_name": best_name,
-                            }
-                        )
+                        payload = {
+                            "timestamp": now,
+                            "score": float(best_score),
+                            "model_name": best_name,
+                        }
+
+                        if self._live_mode:
+                            # Sesiune live activă → wake word-ul e ÎNTRERUPERE,
+                            # nu pornire de sesiune nouă (altfel am avea două
+                            # sesiuni Gemini simultan, vorbind una peste alta).
+                            logger.info(
+                                f"\n🖐️ [AudioInterface] WAKE WORD ca ÎNTRERUPERE! "
+                                f"'{best_name}' score={best_score:.3f}"
+                            )
+                            await self.bus.publish(
+                                self.EventType.WAKE_WORD_INTERRUPT, payload
+                            )
+                        else:
+                            logger.info(
+                                f"\n🎯 [AudioInterface] WAKE WORD! '{best_name}' "
+                                f"score={best_score:.3f}"
+                            )
+                            await self.bus.publish(
+                                self.EventType.WAKE_WORD_DETECTED, payload
+                            )
                         self._oww_model.reset()
 
                         # Golim coada
@@ -321,12 +348,43 @@ class AudioInterface:
         self._live_mode  = True
         logger.info("🔴 [AudioInterface] LIVE MODE activ — audio → GeminiLive")
 
+    def arm_wake_interrupt(self) -> None:
+        """
+        Armează wake word-ul ca mecanism de întrerupere pe durata sesiunii live.
+        Folosit în „focus mode": barge-in-ul pe voce e dezactivat, deci singura
+        cale de a-l opri pe Chronos e să spui din nou wake word-ul.
+        """
+        if self._wake_interrupt_armed:
+            return
+        # Pornim de la zero: frame-urile vechi din coadă sunt irelevante și ar
+        # putea produce o detecție falsă imediată.
+        while not self._ww_queue.empty():
+            try: self._ww_queue.get_nowait()
+            except asyncio.QueueEmpty: break
+        if self._oww_model:
+            self._oww_model.reset()
+        self._wake_interrupt_armed = True
+        logger.info("🖐️ [AudioInterface] Wake-interrupt ARMAT (focus mode).")
+
+    def disarm_wake_interrupt(self) -> None:
+        """Dezarmează wake-interrupt — revenim la barge-in normal pe voce."""
+        if not self._wake_interrupt_armed:
+            return
+        self._wake_interrupt_armed = False
+        while not self._ww_queue.empty():
+            try: self._ww_queue.get_nowait()
+            except asyncio.QueueEmpty: break
+        if self._oww_model:
+            self._oww_model.reset()
+        logger.info("🟢 [AudioInterface] Wake-interrupt dezarmat.")
+
     def disable_live_mode(self) -> None:
         """
         Dezactivează live mode: revenim la wake word detection.
         """
         self._live_mode  = False
         self._live_queue = None
+        self._wake_interrupt_armed = False
         # Golim coada WW (frame-uri acumulate în live mode sunt irelevante)
         while not self._ww_queue.empty():
             try: self._ww_queue.get_nowait()

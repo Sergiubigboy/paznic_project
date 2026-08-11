@@ -52,6 +52,14 @@ class EventType(Enum):
     Payload: {"timestamp": float, "score": float, "model_name": str}
     """
 
+    WAKE_WORD_INTERRUPT = auto()
+    """Emis de AudioInterface când wake word-ul e detectat ÎN TIMPUL unei sesiuni
+    vocale live aflate în „focus mode" (Chronos livrează un răspuns important,
+    barge-in-ul pe voce e dezactivat). NU pornește o sesiune nouă — semnalizează
+    doar că Sergiu vrea să întrerupă răspunsul curent.
+    Payload: {"timestamp": float, "score": float, "model_name": str}
+    """
+
     AUDIO_STREAM_CHUNK = auto()
     """Emis de AudioInterface cu fiecare chunk audio brut (pentru streaming LLM).
     Payload: {"chunk": bytes, "sample_rate": int, "timestamp": float}

@@ -78,9 +78,13 @@ class LLMRouter:
             logger.error(f"❌ [LLMRouter] Dispatcher error: {e}", exc_info=True)
             return False
 
-        # Injectăm dispatcher în GeminiLive (după inițializare)
-        if self._live and self._dispatcher:
-            self._live.dispatcher = self._dispatcher
+        # Injectăm dispatcher + audio în GeminiLive (după inițializare).
+        # audio_interface e necesar ca sesiunea live să poată arma wake word-ul
+        # drept mecanism de întrerupere în focus mode.
+        if self._live:
+            if self._dispatcher:
+                self._live.dispatcher = self._dispatcher
+            self._live.audio_interface = self._audio
 
         self._initialized = True
         self._tasks = [
@@ -93,25 +97,16 @@ class LLMRouter:
         return True
 
     def _init_dispatcher_sync(self) -> None:
-        from music_specialist import MusicHandler
-        from wled_specialist import WLEDStateManager
-        from dispatcher import CommandDispatcher
+        from agents.chronos_agent import ChronosAgent
 
-        wled  = WLEDStateManager()
-        music = MusicHandler()
-        self._dispatcher = CommandDispatcher(music, wled)
+        self._dispatcher = ChronosAgent()
 
         try:
             import web.web_dashboard as wd
             wd.shared_dispatcher = self._dispatcher
-            logger.info("🌐 [LLMRouter] Dispatcher injectat în Web Dashboard.")
+            logger.info("🌐 [LLMRouter] ChronosAgent injectat în Web Dashboard.")
         except Exception as e:
             logger.warning(f"⚠️ [LLMRouter] Web inject: {e}")
-
-        try:
-            self._dispatcher.jural_expert.check_and_generate_missing_summaries()
-        except Exception:
-            pass
 
     # ─────────────────────────────────────────────────────
     # LISTENERS
@@ -177,10 +172,10 @@ class LLMRouter:
             asyncio.create_task(self._play_wake_beep())
 
             # ── Pauză muzică când începe sesiunea vocală ──
-            if self._dispatcher and hasattr(self._dispatcher, "music_expert") and self._dispatcher.music_expert:
+            if self._dispatcher and hasattr(self._dispatcher, "music_agent") and self._dispatcher.music_agent:
                 try:
                     asyncio.create_task(
-                        asyncio.to_thread(self._dispatcher.music_expert.pause_playback)
+                        asyncio.to_thread(self._dispatcher.music_agent.pause_playback)
                     )
                 except Exception as e:
                     logger.debug(f"[LLMRouter] Pause music err: {e}")
@@ -201,10 +196,10 @@ class LLMRouter:
                 logger.info("[LLMRouter] Live mode dezactivat → revenim la wake word.")
 
                 # ── Reluare muzică la finalizarea sesiunii ──
-                if self._dispatcher and hasattr(self._dispatcher, "music_expert") and self._dispatcher.music_expert:
+                if self._dispatcher and hasattr(self._dispatcher, "music_agent") and self._dispatcher.music_agent:
                     try:
                         asyncio.create_task(
-                            asyncio.to_thread(self._dispatcher.music_expert.resume_playback)
+                            asyncio.to_thread(self._dispatcher.music_agent.resume_playback)
                         )
                     except Exception as e:
                         logger.debug(f"[LLMRouter] Resume music err: {e}")
