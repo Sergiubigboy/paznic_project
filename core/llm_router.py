@@ -176,6 +176,15 @@ class LLMRouter:
             # ── Beep de confirmare: Chronos a auzit wake word-ul ──
             asyncio.create_task(self._play_wake_beep())
 
+            # ── Pauză muzică când începe sesiunea vocală ──
+            if self._dispatcher and hasattr(self._dispatcher, "music_expert") and self._dispatcher.music_expert:
+                try:
+                    asyncio.create_task(
+                        asyncio.to_thread(self._dispatcher.music_expert.pause_playback)
+                    )
+                except Exception as e:
+                    logger.debug(f"[LLMRouter] Pause music err: {e}")
+
             # Coada live cu buffer generos
             live_queue: asyncio.Queue = asyncio.Queue(maxsize=600)
 
@@ -190,6 +199,15 @@ class LLMRouter:
             finally:
                 self._audio.disable_live_mode()
                 logger.info("[LLMRouter] Live mode dezactivat → revenim la wake word.")
+
+                # ── Reluare muzică la finalizarea sesiunii ──
+                if self._dispatcher and hasattr(self._dispatcher, "music_expert") and self._dispatcher.music_expert:
+                    try:
+                        asyncio.create_task(
+                            asyncio.to_thread(self._dispatcher.music_expert.resume_playback)
+                        )
+                    except Exception as e:
+                        logger.debug(f"[LLMRouter] Resume music err: {e}")
 
     async def _play_wake_beep(self) -> None:
         """

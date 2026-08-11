@@ -41,32 +41,47 @@ class MusicHandler:
             if DEBUG_MODE: logging.warning(f"⚠️ Nu am putut salva istoricul: {e}")
 
     def send_to_google(self, command_text):
-        """Trimite comanda text prin Home Assistant către Google"""
+        """Trimite comanda text prin Home Assistant către Google cu fallback retry"""
         headers = {
             "Authorization": f"Bearer {HA_TOKEN}",
             "Content-Type": "application/json"
         }
-        # Adăugăm numele boxei la finalul comenzii
-        full_command = f"{command_text} on {SPEAKER_NAME}"
-        payload = {
-            "command": full_command
-        }
         
+        # Încercăm întâi comanda completă cu numele boxei
+        full_command = f"{command_text} on {SPEAKER_NAME}"
+        payload = {"command": full_command}
+        
+        last_error = ""
         try:
             response = requests.post(HA_URL, headers=headers, json=payload, timeout=10)
             if response.status_code == 200:
                 logging.info(f"✅ Trimis la Google: {full_command}")
-                return True
+                return True, "OK"
             else:
-                logging.error(f"❌ Eroare HA: {response.text}")
-                return False
+                last_error = f"HTTP {response.status_code}: {response.text[:100]}"
+                logging.warning(f"⚠️ Eroare HA la comanda cu boxă ({last_error}). Încerc fără nume boxă...")
         except Exception as e:
-            logging.error(f"❌ Eroare conexiune HA: {e}")
-            return False
+            last_error = str(e)
+            logging.warning(f"⚠️ Eroare conexiune HA ({last_error}). Încerc fără nume boxă...")
+
+        # Fallback 2: Încercăm comanda simplă direct către Google Assistant SDK fără 'on SPEAKER_NAME'
+        try:
+            payload_simple = {"command": command_text}
+            response2 = requests.post(HA_URL, headers=headers, json=payload_simple, timeout=10)
+            if response2.status_code == 200:
+                logging.info(f"✅ Trimis la Google (fallback simplu): {command_text}")
+                return True, "OK (fallback)"
+            else:
+                last_error = f"HTTP {response2.status_code}: {response2.text[:100]}"
+                logging.error(f"❌ Eroare HA fallback: {last_error}")
+                return False, last_error
+        except Exception as e:
+            logging.error(f"❌ Eroare conexiune HA fallback: {e}")
+            return False, str(e)
 
     def pause_playback(self):
         """Pauză temporară pentru a asculta comanda (folosit de main.py)"""
-        success = self.send_to_google("pause the music")
+        success, _ = self.send_to_google("pause the music")
         if success:
             self.was_playing_before_pause = True
             logging.info("⏸️ Muzică pusă pe pauză pentru a asculta comanda vocală.")
@@ -74,7 +89,7 @@ class MusicHandler:
     def resume_playback(self):
         """Reluăm muzica dacă era pornită înainte de pauză (folosit de main.py)"""
         if hasattr(self, 'was_playing_before_pause') and self.was_playing_before_pause:
-            success = self.send_to_google("resume the music")
+            success, _ = self.send_to_google("resume the music")
             if success:
                 logging.info("▶️ Muzică reluată.")
             self.was_playing_before_pause = False
@@ -141,7 +156,7 @@ class MusicHandler:
 
     def process_command(self, user_text, conversation_history=""):
         decision = self._ask_gemini_dj(user_text, conversation_history)
-        if not decision: return None
+        if not decision: return {"status": "error", "msg": "DJ AI nu a generat nicio comandă.", "reason": ""}
 
         command = decision.get('google_command')
         track_saved = decision.get('track_name_saved')
@@ -150,8 +165,8 @@ class MusicHandler:
         print(f"\n🧠 RAȚIONAMENT AI (DJ): {reason}")
         print(f"🤖 COMANDA GOOGLE: {command} on {SPEAKER_NAME}")
 
-        # Trimitem comanda către Home Assistant
-        success = self.send_to_google(command)
+        # Trimitem comanda către Home Assistant cu retry fallback
+        success, err_details = self.send_to_google(command)
         
         if success:
             # Salvăm în istoric dacă s-a cerut o piesă
@@ -166,7 +181,7 @@ class MusicHandler:
                 
             return {"status": "success", "msg": f"Am transmis: {command}", "reason": reason}
         else:
-            return {"status": "error", "msg": "Eroare la comunicarea cu boxa.", "reason": reason}
+            return {"status": "error", "msg": f"Eroare la comunicarea cu boxa ({err_details}).", "reason": reason}
 
 if __name__ == "__main__":
     dj = MusicHandler()
