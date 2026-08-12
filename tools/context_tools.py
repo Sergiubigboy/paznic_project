@@ -134,12 +134,8 @@ def _fmt_finante() -> str:
             f"valoare estimată {_money(inv['active_value'])} RON "
             f"(profit potențial {_money(inv['active_profit'])} RON)"
         )
-        lines.append(
-            f"  - Vândute: {inv['sold_count']} articole, "
-            f"recuperat {_money(inv['total_recovered'])} RON, "
-            f"profit realizat {_money(inv['realized_profit'])} RON"
-        )
         lines.append(f"  - Bani blocați acum în stoc (risc): {_money(inv['current_risk'])} RON")
+        # Ce ai vândut până acum → categoria separată 'vanzari' (la cerere explicită)
 
         active_items = [i for i in inventory if i.get("status") == "active"]
         if active_items:
@@ -174,16 +170,52 @@ def _fmt_finante() -> str:
         f"{_money(avere_totala)} RON"
     )
 
-    # Ultimele mișcări
-    recent = sorted(transactions, key=lambda t: t.get("date", ""), reverse=True)[:5]
-    if recent:
-        lines.append("")
-        lines.append("Ultimele 5 tranzacții:")
-        for tx in recent:
-            sign = "+" if tx.get("type") == "in" else "-"
-            note = f" ({tx['note']})" if tx.get("note") else ""
-            lines.append(f"  {tx.get('date', '?')}: {sign}{_money(tx.get('amount', 0))} RON{note}")
+    # Jurnalul de tranzacții NU e inclus aici intenționat — e zgomot (multe
+    # intrări, nu neapărat exacte) pentru o întrebare tipică de tip "cât am".
+    # Disponibil separat, la cerere explicită, în categoria 'tranzactii'.
 
+    return "\n".join(lines)
+
+
+def _fmt_tranzactii(n: int = 15) -> str:
+    """Jurnalul de tranzacții — DOAR la cerere explicită ('arată-mi tranzacțiile',
+    'ce mișcări am avut'), nu face parte din răspunsul standard de finanțe."""
+    transactions = _fin("transactions.json")
+    if not transactions:
+        return "=== TRANZACȚII ===\nNicio tranzacție înregistrată."
+
+    accounts = {a.get("id"): a.get("name", "?") for a in _fin("accounts.json")}
+    recent = sorted(transactions, key=lambda t: t.get("date", ""), reverse=True)[:n]
+
+    lines = [f"=== ULTIMELE {len(recent)} TRANZACȚII ==="]
+    for tx in recent:
+        sign = "+" if tx.get("type") == "in" else "-"
+        acc = accounts.get(tx.get("account_id"), "?")
+        note = f" ({tx['note']})" if tx.get("note") else ""
+        lines.append(f"  {tx.get('date', '?')} [{acc}]: {sign}{_money(tx.get('amount', 0))} RON{note}")
+    return "\n".join(lines)
+
+
+def _fmt_vanzari() -> str:
+    """Ce a vândut Sergiu până acum — DOAR la cerere explicită
+    ('ce am vândut', 'cum au mers vânzările'), nu face parte din finanțe standard."""
+    sold = [i for i in _fin("inventory_sold.json") if i.get("status") == "sold"]
+    if not sold:
+        return "=== VÂNZĂRI ===\nNimic vândut încă."
+
+    total_recovered = sum(float(i.get("sold_amount", 0)) for i in sold)
+    total_cost = sum(float(i.get("cost_basis", 0)) for i in sold)
+
+    lines = [
+        "=== CE AI VÂNDUT PÂNĂ ACUM ===",
+        f"Total: {len(sold)} articole, recuperat {_money(total_recovered)} RON, "
+        f"profit realizat {_money(total_recovered - total_cost)} RON",
+    ]
+    for it in sorted(sold, key=lambda i: i.get("sold_at", ""), reverse=True):
+        lines.append(
+            f"  - {it.get('name', '?')}: cumpărat cu {_money(it.get('cost_basis', 0))}, "
+            f"vândut cu {_money(it.get('sold_amount', 0))} RON pe {it.get('sold_at', '?')}"
+        )
     return "\n".join(lines)
 
 
@@ -362,12 +394,14 @@ def _fmt_obiceiuri() -> str:
 # ─────────────────────────────────────────────────────────────
 
 CATEGORIES = {
-    "finante":   _fmt_finante,
-    "targeturi": _fmt_targeturi,
-    "remindere": _fmt_remindere,
-    "proiecte":  _fmt_proiecte,
-    "sport":     _fmt_sport,
-    "obiceiuri": _fmt_obiceiuri,
+    "finante":    _fmt_finante,
+    "tranzactii": _fmt_tranzactii,   # DOAR la cerere explicită — nu în întrebări generale de bani
+    "vanzari":    _fmt_vanzari,      # DOAR la cerere explicită — "ce am vândut"
+    "targeturi":  _fmt_targeturi,
+    "remindere":  _fmt_remindere,
+    "proiecte":   _fmt_proiecte,
+    "sport":      _fmt_sport,
+    "obiceiuri":  _fmt_obiceiuri,
 }
 
 

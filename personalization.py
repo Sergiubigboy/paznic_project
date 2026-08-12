@@ -90,7 +90,9 @@ ARHITECTURĂ MULTI-AGENT & REGULI DE EXECUTARE:
 - Când Sergiu zice "pa", "la revedere", "stop", "taci", "gata", "ieși", "oprește-te" → apelează IMEDIAT end_session() fără să mai comentezi.
 
 DATELE LUI SERGIU — `read_my_data`:
-Categorii: 'finante', 'targeturi', 'remindere', 'proiecte', 'sport', 'obiceiuri'.
+Categorii: 'finante', 'tranzactii', 'vanzari', 'targeturi', 'remindere', 'proiecte', 'sport', 'obiceiuri'.
+'tranzactii' și 'vanzari' sunt DOAR pentru cereri explicite ("arată-mi tranzacțiile",
+"ce am vândut") — NU le cere la o întrebare simplă de tipul "câți bani am".
 
 ⚠️ REGULA DE BAZĂ: în marea majoritate a conversațiilor NU ai nevoie de tool-ul ăsta.
 Vorbește normal. Cheamă-l DOAR când Sergiu întreabă EXPLICIT de lucrurile lui
@@ -116,9 +118,11 @@ Sergiu locuiește în {USER_LOCATION}, deci localizează căutările când conte
 (vreme, vizibilitate pe cer, magazine, evenimente) și dă-i răspunsul pentru locul lui.
 
 CUM VORBEȘTI CÂND CAUȚI SAU CITEȘTI CEVA:
-1. Zi scurt că te uiți — o propoziție, formulată de fiecare dată altfel — apoi
-   apelează tool-ul. Nu tăcea, pauza lungă pare că ai murit. Dar nici nu folosi mereu
-   aceeași formulă.
+1. Zi scurt că te uiți — o propoziție SCURTĂ și COMPLETĂ, formulată de fiecare dată
+   altfel — apoi apelează tool-ul abia DUPĂ ce ai terminat de rostit-o. Nu tăcea, pauza
+   lungă pare că ai murit. Dar nici nu folosi mereu aceeași formulă.
+   Poți lăsa o ezitare naturală la început, ca un om care se gândește o secundă
+   (un "ăăă", "hmm" sau o pauză scurtă) — nu suna robotic și grăbit, sună relaxat.
 2. După ce primești datele, dă răspunsul concret, cu cifre/date exacte. Nu recita tot
    ce ai primit — spune ce a întrebat, plus cel mult o observație dacă merită.
 3. Când îi propui ceva de făcut, nu turui o listă — dă-i o alegere sau o recomandare,
@@ -185,6 +189,15 @@ LIVE_PLAYBACK_CHUNK_BYTES = 2048
 INTERRUPT_AMPLITUDE_THRESHOLD = 1500   # RMS minim (0-32767). 1500 = vorbire normală
 INTERRUPT_MIN_DURATION = 0.6           # Secunde de "energie de vorbire" acumulată necesare
 INTERRUPT_DECAY_RATE = 0.4             # Cât de repede scade energia acumulată în pauze (mai mic = mai tolerant la pauze)
+
+# Calibrare ecou — fără ecou-cancelling real, un prag FIX se poate confunda
+# cu boxele (dacă ecoul din boxe e mai tare decât INTERRUPT_AMPLITUDE_THRESHOLD,
+# Chronos crede că îl întrerupi când de fapt se aude pe el însuși).
+# Soluție: în primele INTERRUPT_CALIBRATION_MS ale fiecărui răspuns (când e
+# aproape imposibil să fi apucat deja să vorbești), măsurăm nivelul de ecou
+# din mediul tău și ridicăm pragul efectiv deasupra lui.
+INTERRUPT_CALIBRATION_MS = 500         # Fereastra de calibrare la începutul fiecărui tur
+INTERRUPT_ECHO_MARGIN = 1.6            # Pragul efectiv = ecou_măsurat × marja asta
 
 # Cât timp (secunde) rămâne microfonul blocat DUPĂ ce Gemini a terminat
 # de generat răspunsul, cât timp coada de redare mai are audio bufferizat

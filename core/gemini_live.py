@@ -55,6 +55,7 @@ try:
         LIVE_PLAYBACK_CHUNK_BYTES, SYSTEM_PROMPT, GEMINI_API_KEY,
         INTERRUPT_AMPLITUDE_THRESHOLD, INTERRUPT_MIN_DURATION,
         INTERRUPT_DECAY_RATE, INTERRUPT_ECHO_TAIL,
+        INTERRUPT_CALIBRATION_MS, INTERRUPT_ECHO_MARGIN,
     )
 except ImportError:
     LIVE_MODEL                    = "gemini-2.5-flash-native-audio-latest"
@@ -70,6 +71,8 @@ except ImportError:
     INTERRUPT_MIN_DURATION        = 0.6
     INTERRUPT_DECAY_RATE          = 0.4
     INTERRUPT_ECHO_TAIL           = 0.35
+    INTERRUPT_CALIBRATION_MS      = 500
+    INTERRUPT_ECHO_MARGIN         = 1.6
 
 _FLUSH_SENTINEL = object()
 _END_SENTINEL   = object()
@@ -109,6 +112,14 @@ class GeminiLiveSession:
         # Interrupt detection (echo prevention) — energie acumulată cu decay,
         # tolerantă la pauze scurte naturale din vorbire (vezi _ai_audio_active)
         self._interrupt_energy   = 0.0
+
+        # Calibrare ecou per-tur: în primele INTERRUPT_CALIBRATION_MS ale
+        # fiecărui răspuns măsurăm nivelul de ecou din boxe (fără input real
+        # din partea lui Sergiu, statistic), apoi ridicăm pragul de interrupt
+        # deasupra lui — altfel boxele se pot confunda cu o întrerupere reală.
+        self._turn_speech_start_ts = 0.0
+        self._echo_calib_samples   = []
+        self._echo_baseline_rms    = 0.0
 
         # Timestamp-ul ultimei scrieri REALE de audio către boxe.
         # Folosit pentru a ține microfonul blocat cât timp coada de redare
@@ -273,7 +284,12 @@ class GeminiLiveSession:
                         "la subiecte despre lume, sau ca să 'ai context' — acolo doar deranjează. "
                         "Cere STRICT categoriile necesare, de obicei UNA SINGURĂ. "
                         "Categorii: "
-                        "'finante' (conturi, solduri, avere totală, investiții, datorii, tranzacții), "
+                        "'finante' (conturi, solduri, avere totală, investiții active, datorii — "
+                        "PENTRU orice întrebare generală despre bani), "
+                        "'tranzactii' (jurnalul de mișcări bani — DOAR dacă cere EXPLICIT "
+                        "'arată-mi tranzacțiile' / 'ce mișcări am avut', NU la 'câți bani am'), "
+                        "'vanzari' (ce a vândut până acum, din investiții — DOAR dacă cere EXPLICIT "
+                        "'ce am vândut' / 'cum au mers vânzările'), "
                         "'targeturi' (obiectivele personale cu progres și termen), "
                         "'remindere' (de făcut + mentenanță scadentă), "
                         "'proiecte' (proiecte electronică/robotică + pașii rămași de făcut), "
@@ -288,7 +304,8 @@ class GeminiLiveSession:
                                 "items": {
                                     "type": "string",
                                     "enum": [
-                                        "finante", "targeturi", "remindere",
+                                        "finante", "tranzactii", "vanzari",
+                                        "targeturi", "remindere",
                                         "proiecte", "sport", "obiceiuri",
                                     ],
                                 },
@@ -597,21 +614,32 @@ class GeminiLiveSession:
         anterioară) în system prompt, ca Chronos să știe ce am mai vorbit cu
         el — nu doar ce se întâmplă în sesiunea curentă.
         """
+        # Data/ora reală — altfel „mâine", „azi", „weekend" sunt ghicite greșit,
+        # mai ales când caută pe net evenimente cu dată fixă.
+        from datetime import datetime
+        now  = datetime.now()
+        zile = ["luni", "marți", "miercuri", "joi", "vineri", "sâmbătă", "duminică"]
+        prompt = (
+            f"{SYSTEM_PROMPT}\n\n"
+            f"[ACUM] Este {zile[now.weekday()]}, {now.strftime('%d.%m.%Y, ora %H:%M')}. "
+            f"Calculează „azi/mâine/weekend” raportat la data asta, nu ghici."
+        )
+
         logger_agent = getattr(self.dispatcher, "logger_agent", None) if self.dispatcher else None
         if not logger_agent:
-            return SYSTEM_PROMPT
+            return prompt
 
         try:
             recap = await asyncio.to_thread(logger_agent.get_recent_conversations, 5)
         except Exception as e:
             logger.debug(f"[GeminiLive] Recap memorie indisponibil: {e}")
-            return SYSTEM_PROMPT
+            return prompt
 
         if not recap:
-            return SYSTEM_PROMPT
+            return prompt
 
         return (
-            f"{SYSTEM_PROMPT}\n\n"
+            f"{prompt}\n\n"
             f"[MEMORIE — CE AM MAI VORBIT CU SERGIU ÎN SESIUNI ANTERIOARE]\n"
             f"Ai deja context din conversații trecute. Folosește-l NATURAL, doar dacă "
             f"e relevant pentru ce zice Sergiu acum — nu-l recita, nu forța referiri.\n"
@@ -651,6 +679,9 @@ class GeminiLiveSession:
         self._focus_mode = False
         self._connection_lost     = False
         self._ended_intentionally = False
+        self._turn_speech_start_ts = 0.0
+        self._echo_calib_samples   = []
+        self._echo_baseline_rms    = 0.0
         self._stop_playback.clear()
 
         # Flush audio vechi
@@ -901,7 +932,26 @@ class GeminiLiveSession:
                 rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
                 chunk_dur = len(chunk) / float(LIVE_SAMPLE_RATE_IN)
 
-                if rms > INTERRUPT_AMPLITUDE_THRESHOLD:
+                # ── CALIBRARE ECOU: primele INTERRUPT_CALIBRATION_MS ale turului ──
+                # E statistic imposibil ca Sergiu să fi apucat deja să te
+                # întrerupă la câteva zeci de ms de la primul sunet — deci ce
+                # măsurăm acum e nivelul de ecou din boxele lui. Nu acumulăm
+                # energie de interrupt pe durata asta, doar calibrăm pragul.
+                elapsed_turn = time.time() - self._turn_speech_start_ts
+                if elapsed_turn < (INTERRUPT_CALIBRATION_MS / 1000.0):
+                    self._echo_calib_samples.append(rms)
+                    self._echo_baseline_rms = max(self._echo_calib_samples)
+                    continue
+
+                # Pragul efectiv se ridică deasupra ecoului măsurat — altfel,
+                # pe boxe tari, ecoul singur declanșează interrupt-ul (Chronos
+                # se aude pe el însuși și crede că a fost întrerupt).
+                effective_threshold = max(
+                    INTERRUPT_AMPLITUDE_THRESHOLD,
+                    self._echo_baseline_rms * INTERRUPT_ECHO_MARGIN
+                )
+
+                if rms > effective_threshold:
                     # Acumulăm energie de vorbire. Nu resetăm la zero la orice
                     # scădere - pauzele naturale din vorbire nu trebuie să
                     # anuleze un interrupt real aflat deja în desfășurare.
@@ -911,7 +961,9 @@ class GeminiLiveSession:
                     )
                     logger.debug(
                         f"[GeminiLive:send] 🗣️ Energie interrupt="
-                        f"{self._interrupt_energy:.2f}/{INTERRUPT_MIN_DURATION:.2f}s RMS={rms:.0f}"
+                        f"{self._interrupt_energy:.2f}/{INTERRUPT_MIN_DURATION:.2f}s "
+                        f"RMS={rms:.0f} (prag efectiv={effective_threshold:.0f}, "
+                        f"ecou={self._echo_baseline_rms:.0f})"
                     )
                 else:
                     self._interrupt_energy = max(
@@ -921,7 +973,10 @@ class GeminiLiveSession:
 
                 if self._interrupt_energy >= INTERRUPT_MIN_DURATION:
                     # Interrupt REAL
-                    logger.info(f"🗣️ [GeminiLive] INTERRUPT confirmat. RMS={rms:.0f}")
+                    logger.info(
+                        f"🗣️ [GeminiLive] INTERRUPT confirmat. RMS={rms:.0f} "
+                        f"(prag efectiv={effective_threshold:.0f})"
+                    )
                     self._stop_playback.set()
                     while not self._audio_out_queue.empty():
                         try:
@@ -1046,6 +1101,10 @@ class GeminiLiveSession:
 
                     # Audio / text de la model
                     if mt:
+                        if not self._ai_is_speaking:
+                            # Începe un tur nou de vorbire → recalibrăm ecoul
+                            self._turn_speech_start_ts = time.time()
+                            self._echo_calib_samples = []
                         self._ai_is_speaking = True
                         for part in (mt.parts or []):
                             id_ = getattr(part, "inline_data", None)

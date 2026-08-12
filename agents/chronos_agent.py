@@ -9,12 +9,14 @@ specializați și unelte (tools). El DECIDE ce sub-agenți/tool-uri să apeleze
 import time
 import asyncio
 import logging
+from datetime import datetime
 from typing import List, Dict, Any
 
 from agents.music_agent import MusicAgent
 from agents.wled_agent import WLEDAgent
 from agents.logger_agent import LoggerAgent
-from ai_core import ask_gemini_json
+from ai_core import ask_gemini_json, ask_gemini_text
+from config import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +135,52 @@ UNELTE (TOOLS):
         self._execute_agents(agents_to_call, text, reasoning)
         return True
 
+    def _general_chat_reply(self, text: str) -> str:
+        """
+        Generează un răspuns real pentru conversație (terminal + dashboard web).
+
+        Înainte, aici era doar un placeholder care afișa primele 60 de caractere
+        din memoria ChromaDB — de unde textul fără sens din terminalul web.
+        Acum răspunde efectiv, în personalitatea lui Chronos, cu memoria ca
+        context și cu acces la căutare web pentru informații actuale (vreme,
+        evenimente, știri) — la fel ca sesiunea vocală.
+        """
+        memory = ""
+        try:
+            memory = (self.logger_agent.search_memory(text) or "")[:1200]
+        except Exception as e:
+            logger.debug(f"[Chronos Agent] Memorie indisponibilă: {e}")
+
+        recent = ""
+        if self.conversation_history:
+            recent = "\n".join(line for _, line in self.conversation_history[-6:])
+
+        now = datetime.now()
+        zile = ["luni", "marți", "miercuri", "joi", "vineri", "sâmbătă", "duminică"]
+
+        prompt = f"""{SYSTEM_PROMPT}
+
+[ACUM] Este {zile[now.weekday()]}, {now.strftime('%d.%m.%Y, ora %H:%M')}.
+Calculează „azi/mâine/weekend” raportat la data asta, nu ghici.
+
+[CONTEXT DIN MEMORIE — folosește-l DOAR dacă e relevant pentru ce te întreabă acum]
+{memory or "(nimic relevant)"}
+
+[ULTIMELE SCHIMBURI]
+{recent or "(începutul conversației)"}
+
+Sergiu îți scrie ACUM, din terminal: "{text}"
+
+Răspunde-i direct, în română, scurt, în stilul tău. Text simplu pentru citit pe ecran,
+fără markdown și fără să te prezinți. Dacă întrebarea ține de informații actuale
+(vreme, evenimente, știri, prețuri), caută pe net și dă-i date concrete."""
+
+        reply = ask_gemini_text(prompt, temperature=0.9, use_search=True)
+        if not reply:
+            logger.warning("⚠️ [Chronos Agent] general_chat n-a putut genera răspuns.")
+            return "Nu am putut genera un răspuns acum, mai încearcă."
+        return reply
+
     def _execute_agents(self, agents_to_call: List[str], text: str, reasoning: str = "") -> dict:
         """Rulează agenții ceruți și salvează rezultatul în last_result."""
         actions_list = []
@@ -157,9 +205,8 @@ UNELTE (TOOLS):
                     actions_list.append({"text": "📘 Salvat în jurnal.", "status": "ok"})
 
                 elif ag_name == "general_chat":
-                    past_mem = self.logger_agent.search_memory(text)
-                    reply_text = f"Chronos: Răspuns bazat pe memorie ({past_mem[:60]}...)"
-                    actions_list.append({"text": "🧠 Răspuns general creat.", "status": "ok"})
+                    reply_text = self._general_chat_reply(text)
+                    actions_list.append({"text": "🧠 Răspuns generat.", "status": "ok"})
 
             except Exception as e:
                 logger.error(f"❌ [Chronos Agent] Eroare la apelare {ag_name}: {e}", exc_info=True)
