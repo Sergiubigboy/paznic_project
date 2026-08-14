@@ -12,7 +12,6 @@ async function init() {
         statusData = e.detail;
         renderChecklist(statusData);
         renderWeightSidebar(statusData);
-        renderScreenTimeSidebar(statusData);
         renderFoodCheckSidebar(statusData);
         renderJournalFeed(statusData);
     });
@@ -43,8 +42,6 @@ function renderChecklist(s) {
 
     const weightLogged = s.weight?.logged;
     const weightVal = weightLogged ? `${s.weight.value} kg` : (s.last_weight_ever ? `${s.last_weight_ever} kg (ieri)` : null);
-    const stLogged = s.screen_time?.logged;
-    const stVal = stLogged ? fmtMins(s.screen_time.minutes) : null;
     const foodLogged = s.food_check?.logged;
     const foodVal = foodLogged ? FOOD_LABELS_SHORT[s.food_check.level] : null;
     const journalLogged = (s.journal?.entries_today || 0) > 0;
@@ -60,10 +57,6 @@ function renderChecklist(s) {
         {
             done: journalLogged, icon: '📝', text: 'Scrie în jurnal',
             val: journalVal, href: null, action: () => document.getElementById('quickJournalText')?.focus()
-        },
-        {
-            done: stLogged, icon: '📱', text: 'Loghează screen time',
-            val: stVal, href: null, action: () => document.getElementById('stH')?.focus()
         },
         {
             done: foodLogged, icon: '🍽️', text: 'Bifează alimentația',
@@ -205,36 +198,6 @@ async function saveWeightQuick() {
     } else flash('❌ Eroare', 'error');
 }
 
-// ===== SCREEN TIME SIDEBAR =====
-function renderScreenTimeSidebar(s) {
-    const disp = document.getElementById('stCurrentDisplay');
-    if (s.screen_time?.logged) {
-        const m = s.screen_time.minutes;
-        document.getElementById('stH').value = Math.floor(m / 60);
-        document.getElementById('stM').value = m % 60;
-        if (disp) {
-            disp.innerHTML = `<span style="color:var(--green);font-size:11px;font-weight:700">✓ ${fmtMins(m)} logat azi</span>`;
-        }
-    } else {
-        if (disp) disp.innerHTML = `<span style="color:var(--text-faint);font-size:11px">Nelogat azi</span>`;
-    }
-}
-
-async function saveScreenTime() {
-    const h = parseInt(document.getElementById('stH').value) || 0;
-    const m = parseInt(document.getElementById('stM').value) || 0;
-    const total = h * 60 + m;
-    if (!total) { flash('❌ Introdu durata', 'error'); return; }
-    const res = await fetch('/api/screen-time', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ date: TODAY, minutes: total })
-    }).then(r => r.json());
-    if (res.status === 'success') {
-        flash(`✅ ${h}h ${m}m salvat!`);
-        await window.refreshDayStatus?.();
-    } else flash('❌ Eroare', 'error');
-}
-
 // ===== FOOD CHECK SIDEBAR =====
 function renderFoodCheckSidebar(s) {
     if (s.food_check?.logged) {
@@ -358,7 +321,6 @@ function renderBriefing(b) {
 
     document.getElementById('bGreeting').textContent = b.greeting || '';
     document.getElementById('bFocus').textContent = b.focus || '';
-    document.getElementById('bScreenRec').textContent = b.screen_time_rec || '—';
     document.getElementById('bFitness').textContent = b.fitness_tip || '—';
     document.getElementById('bMotivation').textContent = `"${b.motivation || ''}"`;
 

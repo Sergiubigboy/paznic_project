@@ -56,6 +56,7 @@ try:
         INTERRUPT_AMPLITUDE_THRESHOLD, INTERRUPT_MIN_DURATION,
         INTERRUPT_DECAY_RATE, INTERRUPT_ECHO_TAIL,
         INTERRUPT_CALIBRATION_MS, INTERRUPT_ECHO_MARGIN,
+        VOICE_ACTIVITY_THRESHOLD,
     )
 except ImportError:
     LIVE_MODEL                    = "gemini-2.5-flash-native-audio-latest"
@@ -73,6 +74,7 @@ except ImportError:
     INTERRUPT_ECHO_TAIL           = 0.35
     INTERRUPT_CALIBRATION_MS      = 500
     INTERRUPT_ECHO_MARGIN         = 1.6
+    VOICE_ACTIVITY_THRESHOLD      = 900
 
 _FLUSH_SENTINEL = object()
 _END_SENTINEL   = object()
@@ -294,7 +296,7 @@ class GeminiLiveSession:
                         "'remindere' (de făcut + mentenanță scadentă), "
                         "'proiecte' (proiecte electronică/robotică + pașii rămași de făcut), "
                         "'sport' (greutate, măsurători, fază bulk/cut), "
-                        "'obiceiuri' (obiceiuri zilnice bifate/nebifate, screen time)."
+                        "'obiceiuri' (obiceiuri zilnice bifate/nebifate)."
                     ),
                     parameters={
                         "type": "object",
@@ -625,6 +627,9 @@ class GeminiLiveSession:
             f"Calculează „azi/mâine/weekend” raportat la data asta, nu ghici."
         )
 
+        # Starea emoțională curentă → instrucțiuni de ton (niciodată verbalizate)
+        prompt += "\n\n" + self._emotion_block()
+
         logger_agent = getattr(self.dispatcher, "logger_agent", None) if self.dispatcher else None
         if not logger_agent:
             return prompt
@@ -646,18 +651,54 @@ class GeminiLiveSession:
             f"{recap}"
         )
 
+    @staticmethod
+    def _emotion_block() -> str:
+        """Harta comportamentală derivată din starea afectivă curentă."""
+        try:
+            from config import EMOTIONS_ENABLED
+            if not EMOTIONS_ENABLED:
+                return ""
+            from core.emotions import get_state
+            state = get_state()
+            logger.info(f"💗 [GeminiLive] Stare afectivă: {state.debug_line()}")
+            return state.behavior_prompt()
+        except Exception as e:
+            logger.debug(f"[GeminiLive] Bloc emoții indisponibil: {e}")
+            return ""
+
     async def _save_conversation_turn(self) -> None:
-        """Salvează schimbul (user↔Chronos) al turului tocmai încheiat, în fundal."""
-        logger_agent = getattr(self.dispatcher, "logger_agent", None) if self.dispatcher else None
-        if not logger_agent:
-            return
+        """
+        Închiderea unui tur: salvăm schimbul în memorie ȘI actualizăm starea
+        emoțională — ambele în fundal, ca să nu întârzie conversația.
+        """
         user_text = self._current_user_transcript.strip()
         ai_text   = self._current_ai_transcript.strip()
         if not user_text and not ai_text:
             return
-        asyncio.create_task(
-            asyncio.to_thread(logger_agent.save_conversation_turn, user_text, ai_text)
-        )
+
+        logger_agent = getattr(self.dispatcher, "logger_agent", None) if self.dispatcher else None
+        if logger_agent:
+            asyncio.create_task(
+                asyncio.to_thread(logger_agent.save_conversation_turn, user_text, ai_text)
+            )
+
+        # Cum l-a afectat pe Chronos ce tocmai i-a zis Sergiu
+        if user_text:
+            asyncio.create_task(self._update_emotions(user_text, ai_text))
+
+    async def _update_emotions(self, user_text: str, ai_text: str) -> None:
+        """Analiză afectivă în fundal — nu blochează niciodată răspunsul vocal."""
+        try:
+            from config import EMOTIONS_ENABLED, EMOTION_ANALYSIS_ENABLED
+            if not EMOTIONS_ENABLED:
+                return
+            from core.emotions import get_state, analyze_exchange
+            if EMOTION_ANALYSIS_ENABLED:
+                await asyncio.to_thread(analyze_exchange, user_text, ai_text)
+            else:
+                await asyncio.to_thread(get_state().register_interaction)
+        except Exception as e:
+            logger.debug(f"[GeminiLive] Actualizare emoții eșuată: {e}")
 
     # ─────────────────────────────────────────────────────────
     # SESIUNE PRINCIPALĂ
@@ -887,31 +928,32 @@ class GeminiLiveSession:
         np            = self._np
 
         while self._session_active:
-            try:
-                chunk = await asyncio.wait_for(mic_queue.get(), timeout=0.3)
-            except asyncio.TimeoutError:
-                # ── AI vorbeste (sau boxele încă redau coada): timer pauzat ──
-                if self._ai_audio_active():
-                    continue   # Nu schimbăm _last_turn_end, nu numărăm
-
-                # ── AI nu vorbeste: verificăm inactivitate ──
+            # ── VERIFICARE INACTIVITATE — rulează la FIECARE iterație ──
+            # Bug vechi: verificarea stătea în ramura `except TimeoutError`, dar
+            # microfonul livrează chunk-uri CONTINUU (la ~80ms), deci
+            # `mic_queue.get()` nu expira niciodată → codul ăsta nu rula deloc și
+            # sesiunea nu se închidea singură decât dacă ziceai „pa".
+            if not self._ai_audio_active():
                 elapsed   = time.time() - self._last_turn_end
                 remaining = LIVE_INACTIVITY_TIMEOUT - elapsed
 
-                if remaining <= 3.0 and not warned_close and remaining > 0:
+                if 0 < remaining <= 3.0 and not warned_close:
                     warned_close = True
                     print(f"\n⏰ Sesiunea se închide în ~{int(remaining)}s...")
 
                 if elapsed > LIVE_INACTIVITY_TIMEOUT:
                     logger.info(
-                        f"⏰ [GeminiLive] {elapsed:.0f}s inactivitate "
+                        f"⏰ [GeminiLive] {elapsed:.0f}s fără vorbire reală "
                         f"(prag={LIVE_INACTIVITY_TIMEOUT}s) → sesiune terminată."
                     )
                     self._ended_intentionally = True
                     self._session_active = False
                     break
-                continue
 
+            try:
+                chunk = await asyncio.wait_for(mic_queue.get(), timeout=0.3)
+            except asyncio.TimeoutError:
+                continue
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1012,6 +1054,13 @@ class GeminiLiveSession:
             # ── NORMAL: AI nu vorbeste, trimitem audio ──
             self._interrupt_energy = 0.0
 
+            # Trimitem TOT audio-ul (VAD-ul serverului are nevoie de stream
+            # continuu), dar countdown-ul de inactivitate îl resetăm DOAR când
+            # chiar se aude cineva vorbind. Altfel liniștea din cameră ținea
+            # sesiunea deschisă la nesfârșit, pentru că microfonul livrează
+            # chunk-uri non-stop indiferent dacă vorbești sau nu.
+            rms_now = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+
             try:
                 await session.send_realtime_input(
                     audio=self._types.Blob(
@@ -1020,8 +1069,9 @@ class GeminiLiveSession:
                     )
                 )
                 chunks_sent += 1
-                self._last_turn_end = time.time()   # User a vorbit → reset countdown
-                warned_close = False
+                if rms_now > VOICE_ACTIVITY_THRESHOLD:
+                    self._last_turn_end = time.time()   # se aude vorbire → reset
+                    warned_close = False
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1081,6 +1131,9 @@ class GeminiLiveSession:
                     # de argumentul (posibil parafrazat) din tool call.
                     if in_transcript and getattr(in_transcript, "text", None):
                         self._current_user_transcript += in_transcript.text
+                        # ASR-ul serverului a recunoscut CUVINTE reale (nu zgomot)
+                        # → cel mai sigur semnal că Sergiu chiar vorbește.
+                        self._last_turn_end = time.time()
 
                     # ── Transcript al vocii lui Chronos (ASR pe audio-ul redat) ──
                     # NU folosim mt.parts[].text pentru asta — acela e text de

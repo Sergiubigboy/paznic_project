@@ -378,14 +378,6 @@ def _fmt_obiceiuri() -> str:
     else:
         lines.append("  Niciun obicei definit.")
 
-    screen = _load_json(os.path.join(DATA_DIR, "screen_time.json"), [])
-    if isinstance(screen, list) and screen:
-        last = screen[-1]
-        minutes = int(last.get("minutes", 0) or 0)
-        lines.append(
-            f"Ultim screen time logat: {minutes // 60}h{minutes % 60:02d} pe {last.get('date', '?')}."
-        )
-
     return "\n".join(lines)
 
 

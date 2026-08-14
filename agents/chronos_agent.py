@@ -9,6 +9,7 @@ specializați și unelte (tools). El DECIDE ce sub-agenți/tool-uri să apeleze
 import time
 import asyncio
 import logging
+import threading
 from datetime import datetime
 from typing import List, Dict, Any
 
@@ -135,6 +136,36 @@ UNELTE (TOOLS):
         self._execute_agents(agents_to_call, text, reasoning)
         return True
 
+    @staticmethod
+    def _emotion_block() -> str:
+        """Harta comportamentală derivată din starea afectivă curentă."""
+        try:
+            from config import EMOTIONS_ENABLED
+            if not EMOTIONS_ENABLED:
+                return ""
+            from core.emotions import get_state
+            return get_state().behavior_prompt()
+        except Exception as e:
+            logger.debug(f"[Chronos Agent] Bloc emoții indisponibil: {e}")
+            return ""
+
+    def _update_emotions(self, user_text: str, ai_text: str) -> None:
+        """Analiză afectivă în fundal (thread separat) — nu blochează răspunsul."""
+        try:
+            from config import EMOTIONS_ENABLED, EMOTION_ANALYSIS_ENABLED
+            if not EMOTIONS_ENABLED or not user_text.strip():
+                return
+            from core.emotions import get_state, analyze_exchange
+            fn = analyze_exchange if EMOTION_ANALYSIS_ENABLED else None
+            if fn:
+                threading.Thread(
+                    target=fn, args=(user_text, ai_text), daemon=True
+                ).start()
+            else:
+                get_state().register_interaction()
+        except Exception as e:
+            logger.debug(f"[Chronos Agent] Actualizare emoții eșuată: {e}")
+
     def _general_chat_reply(self, text: str) -> str:
         """
         Generează un răspuns real pentru conversație (terminal + dashboard web).
@@ -163,6 +194,8 @@ UNELTE (TOOLS):
 [ACUM] Este {zile[now.weekday()]}, {now.strftime('%d.%m.%Y, ora %H:%M')}.
 Calculează „azi/mâine/weekend” raportat la data asta, nu ghici.
 
+{self._emotion_block()}
+
 [CONTEXT DIN MEMORIE — folosește-l DOAR dacă e relevant pentru ce te întreabă acum]
 {memory or "(nimic relevant)"}
 
@@ -179,6 +212,8 @@ fără markdown și fără să te prezinți. Dacă întrebarea ține de informa�
         if not reply:
             logger.warning("⚠️ [Chronos Agent] general_chat n-a putut genera răspuns.")
             return "Nu am putut genera un răspuns acum, mai încearcă."
+
+        self._update_emotions(text, reply)
         return reply
 
     def _execute_agents(self, agents_to_call: List[str], text: str, reasoning: str = "") -> dict:

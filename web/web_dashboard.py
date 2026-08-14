@@ -40,7 +40,6 @@ AESTHETIC_PHOTOS_DIR = os.path.join(GYM_DIR, "aesthetic")
 JOURNAL_PHOTOS_DIR = os.path.join(DATA_DIR, "journal_photos")
 
 # --- SCREEN TIME ---
-SCREEN_TIME_FILE = os.path.join(DATA_DIR, "screen_time.json")
 
 # --- DAY SCHEDULE ---
 DAY_SCHEDULE_FILE = os.path.join(DATA_DIR, "day_schedule.json")
@@ -795,16 +794,6 @@ def day_status():
             if yest_w:
                 weight_data["trend"] = round(today_w["weight"] - yest_w["weight"], 1)
 
-    # --- Screen time ---
-    st_data = {"logged": False, "minutes": None}
-    if os.path.exists(SCREEN_TIME_FILE):
-        with open(SCREEN_TIME_FILE, 'r', encoding='utf-8') as f:
-            st_entries = json.load(f)
-        today_st = next((e for e in reversed(st_entries) if e.get('date') == today), None)
-        if today_st:
-            st_data["logged"] = True
-            st_data["minutes"] = today_st["minutes"]
-
     # --- Food check ---
     food_data = {"logged": False, "level": None}
     if os.path.exists(DAILY_CHECKS_FILE):
@@ -893,7 +882,6 @@ def day_status():
     return jsonify({
         "date": today,
         "weight": weight_data,
-        "screen_time": st_data,
         "food_check": food_data,
         "journal": journal_data,
         "phase": phase,
@@ -1827,58 +1815,6 @@ def delete_weight_entry():
             json.dump(weights, f, indent=4)
     return jsonify({"status": "success"})
 
-# ============ SCREEN TIME ============
-@app.route('/api/screen-time', methods=['GET'])
-@requires_auth
-def get_screen_time():
-    if os.path.exists(SCREEN_TIME_FILE):
-        with open(SCREEN_TIME_FILE, 'r', encoding='utf-8') as f:
-            return jsonify(json.load(f))
-    return jsonify([])
-
-@app.route('/api/screen-time', methods=['POST'])
-@requires_auth
-def log_screen_time():
-    data = request.json or {}
-    date = data.get('date', datetime.now().strftime("%Y-%m-%d"))
-    minutes = data.get('minutes')
-    if minutes is None:
-        return jsonify({"status": "error", "message": "Minutes lipsă"}), 400
-    try:
-        minutes = int(minutes)
-    except (ValueError, TypeError):
-        return jsonify({"status": "error", "message": "Valoare invalidă"}), 400
-    entries = []
-    if os.path.exists(SCREEN_TIME_FILE):
-        with open(SCREEN_TIME_FILE, 'r', encoding='utf-8') as f:
-            entries = json.load(f)
-    existing = next((e for e in entries if e.get('date') == date), None)
-    if existing:
-        existing['minutes'] = minutes
-        existing['note'] = data.get('note', existing.get('note', ''))
-        existing['updated_at'] = datetime.now().isoformat()
-    else:
-        entries.append({"date": date, "minutes": minutes, "note": data.get('note', ''), "logged_at": datetime.now().isoformat()})
-    entries.sort(key=lambda x: x.get('date', ''))
-    with open(SCREEN_TIME_FILE, 'w', encoding='utf-8') as f:
-        json.dump(entries, f, indent=4, ensure_ascii=False)
-    return jsonify({"status": "success"})
-
-@app.route('/api/screen-time/delete', methods=['POST'])
-@requires_auth
-def delete_screen_time():
-    data = request.json or {}
-    date = data.get('date')
-    if not date:
-        return jsonify({"status": "error"}), 400
-    if os.path.exists(SCREEN_TIME_FILE):
-        with open(SCREEN_TIME_FILE, 'r', encoding='utf-8') as f:
-            entries = json.load(f)
-        entries = [e for e in entries if e.get('date') != date]
-        with open(SCREEN_TIME_FILE, 'w', encoding='utf-8') as f:
-            json.dump(entries, f, indent=4)
-    return jsonify({"status": "success"})
-
 # ============ DAY SCHEDULE (manual events) ============
 @app.route('/api/day/schedule', methods=['GET'])
 @requires_auth
@@ -1946,16 +1882,6 @@ def generate_briefing():
         cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
         food_checks = [c.get('level') for c in checks if c.get('date', '') >= cutoff]
 
-    # Screen time avg last 7 days
-    st_avg = None
-    if os.path.exists(SCREEN_TIME_FILE):
-        with open(SCREEN_TIME_FILE, 'r', encoding='utf-8') as f:
-            st_entries = json.load(f)
-        cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-        recent_st = [e.get('minutes', 0) for e in st_entries if e.get('date', '') >= cutoff]
-        if recent_st:
-            st_avg = round(sum(recent_st) / len(recent_st))
-
     # Events for today
     events_ctx = data.get('events', [])
 
@@ -1973,7 +1899,6 @@ DATA: {weekday}, {today}
 FAZA FITNESS: {phase.upper()}
 GREUTATE ACTUALĂ: {last_weight or 'necunoscută'} kg
 FOOD CHECKS ULTIMELE 7 ZILE: {', '.join(food_checks) if food_checks else 'nedisponibil'}
-SCREEN TIME MEDIU 7 ZILE: {f"{st_avg // 60}h {st_avg % 60}m" if st_avg else 'neînregistrat'}
 TARGETURI ACTIVE:
 {chr(10).join(targets_ctx) if targets_ctx else '- Niciun target activ'}
 AGENDA AZI: {', '.join(events_ctx) if events_ctx else 'necompletată'}
@@ -1982,10 +1907,9 @@ CONTEXT JURNAL RECENT: {recent_summary or 'nedisponibil'}
 Generează un briefing structurat, concis, în română, care include:
 1. Un salut scurt adaptat zilei (ex: "Luni grea, dar ești pregătit")
 2. Focus principal al zilei (1-2 fraze)
-3. Recomandare screen time maxim pentru azi (în ore, bazat pe trend)
-4. Sfat fitness/alimentar bazat pe faza curentă
-5. Top 3 acțiuni concrete pentru azi
-6. O frază motivațională scurtă la final
+3. Sfat fitness/alimentar bazat pe faza curentă
+4. Top 3 acțiuni concrete pentru azi
+5. O frază motivațională scurtă la final
 
 Fii direct, nu verbos. Vorbi-i ca unui prieten.
 """
@@ -1995,7 +1919,6 @@ Fii direct, nu verbos. Vorbi-i ca unui prieten.
             "properties": {
                 "greeting": {"type": "STRING"},
                 "focus": {"type": "STRING"},
-                "screen_time_rec": {"type": "STRING"},
                 "fitness_tip": {"type": "STRING"},
                 "top3_actions": {"type": "ARRAY", "items": {"type": "STRING"}},
                 "motivation": {"type": "STRING"},

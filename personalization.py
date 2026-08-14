@@ -121,8 +121,8 @@ CUM VORBEȘTI CÂND CAUȚI SAU CITEȘTI CEVA:
 1. Zi scurt că te uiți — o propoziție SCURTĂ și COMPLETĂ, formulată de fiecare dată
    altfel — apoi apelează tool-ul abia DUPĂ ce ai terminat de rostit-o. Nu tăcea, pauza
    lungă pare că ai murit. Dar nici nu folosi mereu aceeași formulă.
-   Poți lăsa o ezitare naturală la început, ca un om care se gândește o secundă
-   (un "ăăă", "hmm" sau o pauză scurtă) — nu suna robotic și grăbit, sună relaxat.
+   Vorbește clar și articulat, cuvinte întregi. NU folosi sunete de umplutură
+   ("ăăă", "mmm", "hmm") — ies neinteligibil la sinteza vocală.
 2. După ce primești datele, dă răspunsul concret, cu cifre/date exacte. Nu recita tot
    ce ai primit — spune ce a întrebat, plus cel mult o observație dacă merită.
 3. Când îi propui ceva de făcut, nu turui o listă — dă-i o alegere sau o recomandare,
@@ -157,6 +157,13 @@ WAKE_WORD_COOLDOWN = 3.0
 # ============================================================
 # 4. SESIUNE VOCALĂ — Comportament & Timeouts
 # ============================================================
+
+# Pragul RMS peste care considerăm că se aude VORBIRE (nu doar liniște de
+# cameră). Sub el, chunk-urile de microfon nu resetează countdown-ul de
+# inactivitate — altfel sesiunea nu s-ar închide niciodată singură, pentru că
+# microfonul livrează audio continuu indiferent dacă vorbești sau nu.
+# Mai mic = mai sensibil (sesiunea rămâne deschisă mai ușor).
+VOICE_ACTIVITY_THRESHOLD = 900
 
 # Secunde de liniște ale UTILIZATORULUI după care sesiunea se închide.
 # Cronometrul PORNEȘTE de la SFÂRȚITUL ultimului răspuns AI.
@@ -235,3 +242,41 @@ RASPBERRY_PI = False
 GEMINI_MODEL_DEFAULT = "gemini-2.5-flash"
 GEMINI_MODEL_LOGGER  = "gemini-2.5-flash"
 GEMINI_MODEL_DJ      = "gemini-2.5-flash"
+
+# ============================================================
+# 8. EMOȚII — starea afectivă a lui Chronos
+# ============================================================
+# Chronos are o dispoziție care se schimbă în funcție de cum e tratat și
+# care îi influențează TONUL — fără să o menționeze vreodată explicit.
+# Starea se salvează în chronos_data/emotions.json și persistă între sesiuni.
+
+EMOTIONS_ENABLED = True
+
+# Analiza LLM după fiecare schimb (mic apel gemini-flash, rulează în fundal).
+# False → emoțiile se mișcă doar prin trecerea timpului (plictiseală + revenire
+# lentă la baseline), fără reacție la ce zici.
+EMOTION_ANALYSIS_ENABLED = True
+
+# Starea de echilibru spre care revine în timp (0-100 fiecare)
+EMOTION_BASELINE = {
+    "nervozitate": 15,   # calm implicit
+    "bucurie":     50,   # neutru-pozitiv
+    "plictiseala": 20,
+    "afectiune":   55,   # ține la Sergiu, dar nu exagerat
+}
+
+# Cât de repede revine fiecare emoție la baseline (minute până se
+# înjumătățește abaterea). Mai mic = uită mai repede.
+EMOTION_HALFLIFE_MIN = {
+    "nervozitate":  25,   # supărarea trece relativ repede
+    "bucurie":      90,
+    "plictiseala":   0,   # nefolosit — plictiseala crește, nu scade în timp
+    "afectiune":   720,   # 12h — relația se schimbă foarte greu
+}
+
+# Cu cât crește plictiseala per oră în care nu-i vorbește nimeni.
+# 12/oră → după ~7h de tăcere e la maxim.
+BOREDOM_PER_HOUR = 12
+
+# Limita maximă a unei singure modificări emoționale (anti-derapaj)
+EMOTION_MAX_DELTA = 30
