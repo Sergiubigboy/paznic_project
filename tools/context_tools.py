@@ -19,7 +19,7 @@ Categorii disponibile: vezi CATEGORIES / available_categories().
 import json
 import logging
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -52,9 +52,21 @@ def _fin(path: str) -> list:
     return data if isinstance(data, list) else []
 
 
-def _money(val: float) -> str:
+def _num(val, default: float = 0.0) -> float:
+    """Conversie numerică tolerantă. `.get(k, 0)` întoarce None dacă cheia
+    EXISTĂ dar are valoarea null — cazul articolelor marcate vândute fără
+    sumă completată, care altfel arunca TypeError și rupea tot răspunsul."""
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _money(val) -> str:
     """Formatare sumă fără zecimale inutile (pentru rostire naturală)."""
-    val = round(float(val), 2)
+    val = round(_num(val), 2)
     return f"{int(val)}" if val == int(val) else f"{val:.2f}"
 
 
@@ -75,7 +87,7 @@ def _calc_balance(account_id: str, transactions: list) -> float:
     total = 0.0
     for tx in transactions:
         if tx.get("account_id") == account_id:
-            amount = float(tx.get("amount", 0))
+            amount = _num(tx.get("amount"))
             total += amount if tx.get("type") == "in" else -amount
     return round(total, 2)
 
@@ -84,13 +96,13 @@ def _calc_inv_summary(inventory: list) -> dict:
     active = [i for i in inventory if i.get("status") == "active"]
     sold = [i for i in inventory if i.get("status") == "sold"]
 
-    active_cost = sum(float(i.get("cost_basis", 0)) for i in active)
-    active_value = sum(float(i.get("estimated_value", 0)) for i in active)
+    active_cost = sum(_num(i.get("cost_basis")) for i in active)
+    active_value = sum(_num(i.get("estimated_value")) for i in active)
     active_profit = active_value - active_cost
 
-    total_invested = sum(float(i.get("cost_basis", 0)) for i in inventory)
-    total_recovered = sum(float(i.get("sold_amount", 0)) for i in sold)
-    realized_profit = total_recovered - sum(float(i.get("cost_basis", 0)) for i in sold)
+    total_invested = sum(_num(i.get("cost_basis")) for i in inventory)
+    total_recovered = sum(_num(i.get("sold_amount")) for i in sold)
+    realized_profit = total_recovered - sum(_num(i.get("cost_basis")) for i in sold)
 
     return {
         "active_cost": active_cost,
@@ -149,8 +161,8 @@ def _fmt_finante() -> str:
     # Datorii
     owed_to_me = [d for d in debts if d.get("direction") == "owed_to_me" and not d.get("settled")]
     i_owe = [d for d in debts if d.get("direction") != "owed_to_me" and not d.get("settled")]
-    total_owed_to_me = sum(float(d.get("amount", 0)) for d in owed_to_me)
-    total_i_owe = sum(float(d.get("amount", 0)) for d in i_owe)
+    total_owed_to_me = sum(_num(d.get("amount")) for d in owed_to_me)
+    total_i_owe = sum(_num(d.get("amount")) for d in i_owe)
 
     if owed_to_me or i_owe:
         lines.append("")
@@ -203,8 +215,8 @@ def _fmt_vanzari() -> str:
     if not sold:
         return "=== VÂNZĂRI ===\nNimic vândut încă."
 
-    total_recovered = sum(float(i.get("sold_amount", 0)) for i in sold)
-    total_cost = sum(float(i.get("cost_basis", 0)) for i in sold)
+    total_recovered = sum(_num(i.get("sold_amount")) for i in sold)
+    total_cost = sum(_num(i.get("cost_basis")) for i in sold)
 
     lines = [
         "=== CE AI VÂNDUT PÂNĂ ACUM ===",
@@ -341,7 +353,7 @@ def _fmt_sport() -> str:
         last = weights[-1]
         lines.append(f"Ultima cântărire: {last.get('weight', '?')} kg pe {last.get('date', '?')}.")
         if len(weights) > 1:
-            delta = float(last.get("weight", 0)) - float(weights[0].get("weight", 0))
+            delta = _num(last.get("weight")) - _num(weights[0].get("weight"))
             trend = "crescut" if delta > 0 else "scăzut" if delta < 0 else "stagnat"
             lines.append(f"Evoluție totală: a {trend} {abs(round(delta, 1))} kg de la prima cântărire.")
 
@@ -362,6 +374,22 @@ def _fmt_sport() -> str:
     return "\n".join(lines) if len(lines) > 1 else "=== SPORT / CORP ===\nNicio dată."
 
 
+def _streak(task_id: str, checks: dict) -> int:
+    """Câte zile CONSECUTIVE la rând a fost bifat obiceiul (până azi/ieri).
+    Calcul local, fără niciun apel API."""
+    today = date.today()
+    # Dacă azi nu e bifat încă, streak-ul poate fi viu de ieri
+    start = today if task_id in checks.get(today.isoformat(), []) else today - timedelta(days=1)
+    n = 0
+    while True:
+        d = (start - timedelta(days=n)).isoformat()
+        if task_id in checks.get(d, []):
+            n += 1
+        else:
+            break
+    return n
+
+
 def _fmt_obiceiuri() -> str:
     lines = ["=== OBICEIURI ZILNICE ==="]
 
@@ -373,10 +401,64 @@ def _fmt_obiceiuri() -> str:
 
     if tasks:
         for t in tasks:
-            mark = "BIFAT azi" if t.get("id") in done_today else "NEbifat azi"
-            lines.append(f"  - {t.get('name', '?')}: {mark}")
+            tid = t.get("id")
+            mark = "BIFAT azi" if tid in done_today else "NEbifat azi"
+            streak = _streak(tid, checks)
+            extra = f", serie de {streak} zile la rând" if streak >= 2 else ""
+            lines.append(f"  - {t.get('name', '?')}: {mark}{extra}")
     else:
         lines.append("  Niciun obicei definit.")
+
+    return "\n".join(lines)
+
+
+def _fmt_azi() -> str:
+    """Ce are Sergiu AZI: agendă, remindere scadente, deadline-uri apropiate."""
+    today = date.today()
+    lines = [f"=== AZI ({today.isoformat()}) ==="]
+
+    # Agenda din dashboard
+    schedule = _load_json(os.path.join(DATA_DIR, "day_schedule.json"), {})
+    events = schedule.get(today.isoformat(), []) if isinstance(schedule, dict) else []
+    if events:
+        lines.append("Agendă:")
+        for ev in events:
+            if isinstance(ev, dict):
+                ora = ev.get("time") or ev.get("ora") or ""
+                lines.append(f"  - {ora} {ev.get('title') or ev.get('text') or ''}".rstrip())
+            else:
+                lines.append(f"  - {ev}")
+    else:
+        lines.append("Agendă: nimic programat.")
+
+    # Deadline-uri apropiate (≤7 zile) sau depășite
+    goals = _load_json(os.path.join(DATA_DIR, "targets.json"), {}).get("goals", [])
+    urgente = []
+    for g in goals:
+        dl = g.get("deadline")
+        if not dl:
+            continue
+        try:
+            zile = (datetime.strptime(dl, "%Y-%m-%d").date() - today).days
+        except (ValueError, TypeError):
+            continue
+        if zile < 0:
+            urgente.append(f"  - {g.get('title', '?')}: TERMEN DEPĂȘIT cu {abs(zile)} zile "
+                           f"(progres {g.get('progress', 0)}%)")
+        elif zile <= 7:
+            urgente.append(f"  - {g.get('title', '?')}: mai are {zile} zile "
+                           f"(progres {g.get('progress', 0)}%)")
+    if urgente:
+        lines.append("Targeturi cu termen apropiat:")
+        lines.extend(urgente)
+
+    # Remindere active + mentenanță scadentă (reutilizăm logica existentă)
+    reminders = _load_json(os.path.join(DATA_DIR, "reminders.json"), {}).get("reminders", [])
+    pending = [r for r in reminders if not r.get("checked")]
+    if pending:
+        lines.append("De făcut:")
+        for r in pending:
+            lines.append(f"  - [{r.get('priority', '?')}] {r.get('title', '?')}")
 
     return "\n".join(lines)
 
@@ -386,6 +468,7 @@ def _fmt_obiceiuri() -> str:
 # ─────────────────────────────────────────────────────────────
 
 CATEGORIES = {
+    "azi":        _fmt_azi,          # agendă + termene apropiate + de făcut
     "finante":    _fmt_finante,
     "tranzactii": _fmt_tranzactii,   # DOAR la cerere explicită — nu în întrebări generale de bani
     "vanzari":    _fmt_vanzari,      # DOAR la cerere explicită — "ce am vândut"

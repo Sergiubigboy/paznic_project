@@ -57,15 +57,23 @@ class LoggerAgent:
         except Exception as e:
             logger.error(f"❌ [Logger Agent] Eroare salvare conversație: {e}")
 
-    def get_recent_conversations(self, n: int = 5) -> str:
+    def get_recent_conversations(self, n: int = 3, max_chars: int = 220) -> str:
         """
-        Recap text al ultimelor N conversații (indiferent de subiect) —
-        injectat în system prompt-ul unei sesiuni vocale noi, ca Chronos
-        să știe ce s-a discutat înainte cu el.
+        Recap text al ultimelor N conversații — injectat în system prompt-ul
+        unei sesiuni noi. Se plătește la FIECARE tur al sesiunii, deci ținem
+        puține și scurte: scopul e continuitatea firului, nu arhiva completă.
         """
         try:
             docs = self.memory_manager.get_recent(n=n, where_filter={"type": "conversation"})
-            return "\n---\n".join(docs) if docs else ""
+            if not docs:
+                return ""
+            scurte = []
+            for d in docs:
+                d = " ".join(d.split())          # colapsăm spațiile/newline-urile
+                if len(d) > max_chars:
+                    d = d[:max_chars].rsplit(" ", 1)[0] + "…"
+                scurte.append(d)
+            return "\n".join(scurte)
         except Exception as e:
             logger.error(f"❌ [Logger Agent] Eroare recap conversații: {e}")
             return ""

@@ -25,6 +25,22 @@ _SCOPE = "user-modify-playback-state user-read-playback-state"
 _sp = None
 _sp_init_failed = False
 
+# Unele dispozitive (difuzoare Google Cast controlate prin Assistant) nu accepta
+# comenzi de playback prin Spotify Web API: raspund 403 "Restriction violated".
+# Ne amintim asta ca sa nu mai pierdem un round-trip inutil la fiecare pauza —
+# mergem direct pe fallback-ul care functioneaza.
+_restricted_device = False
+
+
+def _is_restriction_error(e) -> bool:
+    txt = str(e).lower()
+    return "restriction violated" in txt or "403" in txt
+
+
+def playback_control_available() -> bool:
+    """False daca stim deja ca dispozitivul curent refuza comenzile API."""
+    return not _restricted_device
+
 
 def _get_client():
     """Lazy singleton — inițializează clientul Spotify (+ OAuth) la prima utilizare."""
@@ -87,6 +103,9 @@ def _find_target_device_id(sp) -> Optional[str]:
 
 def pause_playback_api() -> bool:
     """Pauză REALĂ prin Spotify Web API. True dacă a reușit (sau era deja pe pauză)."""
+    global _restricted_device
+    if _restricted_device:
+        return False          # stim ca nu merge — lasam fallback-ul sa preia
     sp = _get_client()
     if not sp:
         return False
@@ -95,6 +114,11 @@ def pause_playback_api() -> bool:
         logger.info("⏸️ [Spotify API] Playback pus pe pauză.")
         return True
     except Exception as e:
+        if _is_restriction_error(e):
+            _restricted_device = True
+            logger.info("ℹ️ [Spotify API] Dispozitivul nu accepta control prin API "
+                        "(difuzor Cast) — trec pe Google Assistant si nu mai reincerc.")
+            return False
         # Spotify răspunde adesea cu eroare dacă playerul e deja pe pauză — nu e o eroare reală.
         if "already paused" in str(e).lower() or "NO_ACTIVE_DEVICE" in str(e):
             logger.debug(f"[Spotify API] Pauză no-op: {e}")
@@ -105,6 +129,9 @@ def pause_playback_api() -> bool:
 
 def resume_playback_api() -> bool:
     """Resume REAL prin Spotify Web API. True dacă a reușit."""
+    global _restricted_device
+    if _restricted_device:
+        return False
     sp = _get_client()
     if not sp:
         return False
@@ -113,5 +140,104 @@ def resume_playback_api() -> bool:
         logger.info("▶️ [Spotify API] Playback reluat.")
         return True
     except Exception as e:
+        if _is_restriction_error(e):
+            _restricted_device = True
+            logger.info("ℹ️ [Spotify API] Dispozitivul nu accepta control prin API.")
+            return False
         logger.error(f"❌ [Spotify API] Resume eșuat: {e}")
         return False
+
+
+# ─────────────────────────────────────────────────────────────
+# CONTROL DIRECT — instant, ZERO apeluri LLM
+# ─────────────────────────────────────────────────────────────
+# Doar PORNIREA unei piese anume mai trece prin Google Assistant
+# (workaround ca să meargă fără Spotify deschis). Restul controlului
+# se face aici, prin API: mult mai rapid și mai fiabil.
+
+def now_playing() -> dict:
+    """Ce se aude acum: piesă, artist, album, progres."""
+    sp = _get_client()
+    if not sp:
+        return {"status": "error", "message": "Spotify API indisponibil."}
+    try:
+        cur = sp.current_playback()
+        if not cur or not cur.get("item"):
+            return {"status": "ok", "playing": False, "message": "Nu cântă nimic acum."}
+
+        item = cur["item"]
+        artists = ", ".join(a["name"] for a in item.get("artists", []))
+        prog = int((cur.get("progress_ms") or 0) / 1000)
+        dur = int((item.get("duration_ms") or 0) / 1000)
+        return {
+            "status": "ok",
+            "playing": bool(cur.get("is_playing")),
+            "track": item.get("name"),
+            "artist": artists,
+            "album": (item.get("album") or {}).get("name"),
+            "progres": f"{prog // 60}:{prog % 60:02d} / {dur // 60}:{dur % 60:02d}",
+            "volum": (cur.get("device") or {}).get("volume_percent"),
+        }
+    except Exception as e:
+        logger.error(f"❌ [Spotify API] now_playing: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def next_track() -> dict:
+    sp = _get_client()
+    if not sp:
+        return {"status": "error", "message": "Spotify API indisponibil."}
+    try:
+        sp.next_track(device_id=_find_target_device_id(sp))
+        logger.info("⏭️ [Spotify API] Piesa următoare.")
+        return {"status": "ok", "message": "Am dat mai departe."}
+    except Exception as e:
+        logger.error(f"❌ [Spotify API] next: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def previous_track() -> dict:
+    sp = _get_client()
+    if not sp:
+        return {"status": "error", "message": "Spotify API indisponibil."}
+    try:
+        sp.previous_track(device_id=_find_target_device_id(sp))
+        logger.info("⏮️ [Spotify API] Piesa anterioară.")
+        return {"status": "ok", "message": "Am dat înapoi."}
+    except Exception as e:
+        logger.error(f"❌ [Spotify API] previous: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def get_volume() -> Optional[int]:
+    sp = _get_client()
+    if not sp:
+        return None
+    try:
+        cur = sp.current_playback()
+        return (cur.get("device") or {}).get("volume_percent") if cur else None
+    except Exception:
+        return None
+
+
+def set_volume(percent: int) -> dict:
+    """Volum absolut, 0-100."""
+    sp = _get_client()
+    if not sp:
+        return {"status": "error", "message": "Spotify API indisponibil."}
+    percent = max(0, min(100, int(percent)))
+    try:
+        sp.volume(percent, device_id=_find_target_device_id(sp))
+        logger.info(f"🔊 [Spotify API] Volum → {percent}%")
+        return {"status": "ok", "volum": percent}
+    except Exception as e:
+        logger.error(f"❌ [Spotify API] set_volume: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def change_volume(delta: int) -> dict:
+    """Volum relativ (+/- procente) față de cel curent."""
+    current = get_volume()
+    if current is None:
+        return {"status": "error", "message": "Nu pot citi volumul curent."}
+    return set_volume(current + delta)

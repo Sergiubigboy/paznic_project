@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% set active_page = "gym" %}
+{% set page_title = "Fitness" %}
+{% set page_icon = "💪" %}
+{% set page_eyebrow = "Corp" %}
+{% set page_sub = "Greutate, măsurători, faze și progres în timp." %}
 
 {% block title %}Chronos OS | Fitness{% endblock %}
 
@@ -374,6 +378,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/daily-status.js') }}?v=3.0"></script>
 <script src="{{ url_for('static', filename='js/gym.js') }}"></script>
 <script>
 // Show mood sparkline from journal data

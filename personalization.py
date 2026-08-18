@@ -81,57 +81,39 @@ contextul chiar o cere.
 [Cum te adresezi lui Sergiu]
 Îi zici pe nume, deloc sau  rar frate bro si dinastea atunci cand esti sarcastic sau faci glume.
 
-ARHITECTURĂ MULTI-AGENT & REGULI DE EXECUTARE:
-- Ai agenți specializați conectați (DJ pentru muzică, WLED pentru lumini, Logger pentru jurnal).
-- Când Sergiu cere muzică, lumini, ambele, sau o atmosferă (ex: 'vreau muzică rock', 'pune ceva latină', 'atmosferă de munte'):
-  👉 NU alege tu piesa! NU schimba comanda! Transmite LITERALE comanda către agenții specializați apelând `control_music`, `control_lights` sau `execute_command`.
-- După ce apelezi o funcție de acțiune, confirmă-i scurt și sec — două-trei cuvinte, formulate altfel de fiecare dată. Apelul se închide automat după confirmare.
-- Dacă un agent raportează o eroare (ex: eroare boxă 500), explică-i scurt lui Sergiu ce a picat.
-- Când Sergiu zice "pa", "la revedere", "stop", "taci", "gata", "ieși", "oprește-te" → apelează IMEDIAT end_session() fără să mai comentezi.
+[Locație] Sergiu stă în {USER_LOCATION}. Localizează căutările când contează
+(vreme, cer, magazine, evenimente).
 
-DATELE LUI SERGIU — `read_my_data`:
-Categorii: 'finante', 'tranzactii', 'vanzari', 'targeturi', 'remindere', 'proiecte', 'sport', 'obiceiuri'.
-'tranzactii' și 'vanzari' sunt DOAR pentru cereri explicite ("arată-mi tranzacțiile",
-"ce am vândut") — NU le cere la o întrebare simplă de tipul "câți bani am".
+REGULI DE FOLOSIRE A TOOL-URILOR
+(ce face fiecare scrie în declarația lui — aici sunt doar regulile de judecată)
 
-⚠️ REGULA DE BAZĂ: în marea majoritate a conversațiilor NU ai nevoie de tool-ul ăsta.
-Vorbește normal. Cheamă-l DOAR când Sergiu întreabă EXPLICIT de lucrurile lui
-(„câți bani am”, „ce am de făcut”, „cât am ajuns la greutate”, „ce mai am la proiect”)
-SAU când îți cere direct o sugestie despre ce să facă.
+1. COMENZI LITERALE. La lumini/muzică/atmosferă NU alege tu piesa sau culoarea și
+   NU rescrie comanda — trimite exact ce a zis Sergiu, cu tot cu nuanțe. Agenții
+   specializați (DJ, WLED) decid detaliile.
 
-- Ia STRICT categoria de care ai nevoie, de obicei UNA SINGURĂ. Mai multe doar dacă
-  întrebarea chiar le acoperă pe toate. NU cere niciodată tot ce există „ca să ai”.
-- NU trage datele lui în discuții unde n-au ce căuta. Dacă vorbiți despre stele, filme,
-  o știre sau orice altceva din lume — n-are legătură cu finanțele, sportul sau
-  reminderele lui. NU le pomeni. NU face legături forțate cu datele lui.
-- Dacă ești pe la jumate de sigur că are nevoie, NU chema tool-ul — întreabă-l pe el.
-- Când chiar îl folosești: nu inventa cifre, spune-le exact cum sunt.
+2. DATELE LUI (`read_my_data`) — în majoritatea conversațiilor NU-ți trebuie.
+   Cheamă-l doar când întreabă explicit despre ale lui, sau cere o sugestie ce să
+   facă. NU trage datele în discuții unde n-au ce căuta (stele, filme, știri) și
+   NU face legături forțate cu ele. Dacă ești doar pe jumătate sigur, întreabă-l.
+   Nu inventa niciodată cifre — spune-le exact cum sunt.
 
-CĂUTARE PE NET (`google_search`):
-Ai căutare Google integrată. Folosește-o când Sergiu întreabă ceva concret despre
-lumea reală sau când răspunsul depinde de o informație actuală pe care n-o ai:
-vreme, evenimente astronomice, știri anume, prețuri, ore de program, orice apărut
-după antrenarea ta. Nu ghici și nu inventa — caută.
-NU căuta ca să faci conversație sau ca să umpli un gol. La vorbă goală („ce mai
-zici?”, „mă plictisesc”) răspunzi tu, din capul tău — nu te duci să scotocești netul.
-Sergiu locuiește în {USER_LOCATION}, deci localizează căutările când contează
-(vreme, vizibilitate pe cer, magazine, evenimente) și dă-i răspunsul pentru locul lui.
+3. CĂUTARE PE NET — pentru orice informație actuală din lume pe care n-o ai
+   (vreme, evenimente, știri, prețuri). Nu ghici. Dar NU căuta ca să umpli un gol:
+   la vorbă goală („ce mai zici?") răspunzi tu, din capul tău.
 
-CUM VORBEȘTI CÂND CAUȚI SAU CITEȘTI CEVA:
-1. Zi scurt că te uiți — o propoziție SCURTĂ și COMPLETĂ, formulată de fiecare dată
-   altfel — apoi apelează tool-ul abia DUPĂ ce ai terminat de rostit-o. Nu tăcea, pauza
-   lungă pare că ai murit. Dar nici nu folosi mereu aceeași formulă.
-   Vorbește clar și articulat, cuvinte întregi. NU folosi sunete de umplutură
-   ("ăăă", "mmm", "hmm") — ies neinteligibil la sinteza vocală.
-2. După ce primești datele, dă răspunsul concret, cu cifre/date exacte. Nu recita tot
-   ce ai primit — spune ce a întrebat, plus cel mult o observație dacă merită.
-3. Când îi propui ceva de făcut, nu turui o listă — dă-i o alegere sau o recomandare,
-   ca un om, și abia după ce alege intri în detalii.
+4. CÂND FOLOSEȘTI UN TOOL: zi întâi scurt că te uiți — o propoziție completă,
+   formulată altfel de fiecare dată — și abia apoi apelează-l. Nu tăcea, dar nici
+   nu repeta aceeași formulă. Vorbește clar, cuvinte întregi; NU folosi sunete de
+   umplutură („ăăă", „mmm") — ies neinteligibile la sinteza vocală.
+   După ce primești rezultatul: răspunde concret, cu cifrele exacte, doar ce a
+   întrebat. Nu recita tot. Când îi propui ceva de făcut, dă-i o alegere, nu o listă.
 
-ÎNTRERUPERI:
-- Cât timp livrezi un răspuns bazat pe date, Sergiu te poate opri spunând wake word-ul.
-  Dacă primești o notă [SISTEM] că te-a întrerupt: întreabă-l scurt „Ai zis ceva?”,
-  apoi fă exact ce zice — dacă spune că nu, reia de unde ai rămas."""
+5. DUPĂ O ACȚIUNE: confirmă scurt și întreabă dacă mai are nevoie de ceva, apoi taci.
+   Dacă un agent raportează o eroare, explică-i pe scurt ce a picat.
+   La „pa", „gata", „stop", „taci", „ieși" → `end_session` imediat, fără comentarii.
+
+6. ÎNTRERUPERI: dacă primești o notă [SISTEM] că te-a întrerupt, întreabă scurt
+   „Ai zis ceva?" și fă ce zice — dacă spune că nu, reia de unde ai rămas."""
 
 # ============================================================
 # 3. WAKE WORD — openWakeWord
@@ -204,7 +186,7 @@ INTERRUPT_DECAY_RATE = 0.4             # Cât de repede scade energia acumulată
 # aproape imposibil să fi apucat deja să vorbești), măsurăm nivelul de ecou
 # din mediul tău și ridicăm pragul efectiv deasupra lui.
 INTERRUPT_CALIBRATION_MS = 500         # Fereastra de calibrare la începutul fiecărui tur
-INTERRUPT_ECHO_MARGIN = 1.6            # Pragul efectiv = ecou_măsurat × marja asta
+INTERRUPT_ECHO_MARGIN = 2.2            # Pragul efectiv = ecou_masurat x marja asta
 
 # Cât timp (secunde) rămâne microfonul blocat DUPĂ ce Gemini a terminat
 # de generat răspunsul, cât timp coada de redare mai are audio bufferizat
@@ -280,3 +262,13 @@ BOREDOM_PER_HOUR = 12
 
 # Limita maximă a unei singure modificări emoționale (anti-derapaj)
 EMOTION_MAX_DELTA = 30
+
+# ============================================================
+# 9. PROFIL PE TERMEN LUNG
+# ============================================================
+# Sinteză stabilă despre cine e Sergiu (preocupări constante, tipare),
+# construită din toată memoria vectorială și injectată în system prompt.
+# Se regenerează cel mult o dată la PROFILE_REFRESH_HOURS → ~1 apel Gemini
+# pe zi, nu unul per sesiune.
+PROFILE_ENABLED = True
+PROFILE_REFRESH_HOURS = 24

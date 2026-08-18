@@ -7,7 +7,22 @@ let isDirty = false;
 // ============ INIT ============
 document.addEventListener('DOMContentLoaded', () => {
     loadFileTree();
+    initAppearance();
+    const h = (location.hash || '').slice(1);
+    if (h === 'appearance') switchSettingsTab('appearance');
 });
+
+// ============ TABURI ============
+const SETTINGS_TABS = ['files', 'appearance'];
+function _capTab(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+function switchSettingsTab(name) {
+    if (!SETTINGS_TABS.includes(name)) return;
+    SETTINGS_TABS.forEach(t => {
+        document.getElementById('panel' + _capTab(t))?.classList.toggle('active', t === name);
+        document.getElementById('tab' + _capTab(t))?.classList.toggle('active', t === name);
+    });
+    try { history.replaceState(null, '', '#' + name); } catch (e) {}
+}
 
 async function loadFileTree() {
     try {
@@ -269,4 +284,110 @@ function showFlash(msg, type = 'success') {
     el.className = `flash-msg show ${type}`;
     clearTimeout(el._t);
     el._t = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// ============ ASPECT (culoarea interfeței) ============
+const HEX_RE = /^#[0-9a-f]{6}$/i;
+
+function initAppearance() {
+    // Panoul rulează pe Chronos.theme din chronos-ui.js — un singur loc care
+    // ține starea, persistă pe server și pornește/oprește poll-ul pentru WLED.
+    if (!window.Chronos?.theme) { setTimeout(initAppearance, 200); return; }
+
+    const grid = document.getElementById('themeSwatches');
+    if (grid) {
+        grid.innerHTML = window.Chronos.theme.PRESETS.map(p =>
+            `<div class="theme-swatch" style="background:${p.hex}" data-hex="${p.hex}" title="${p.name}" onclick="pickThemeSwatch('${p.hex}')"></div>`
+        ).join('');
+    }
+
+    const picker = document.getElementById('themeColorPicker');
+    const hexInput = document.getElementById('themeColorHex');
+
+    picker?.addEventListener('input', () => {
+        hexInput.value = picker.value;
+        window.Chronos.theme.preview(picker.value);
+        markActiveSwatch(picker.value);
+    });
+    picker?.addEventListener('change', () => commitThemeColor(picker.value));
+
+    hexInput?.addEventListener('input', () => {
+        const v = hexInput.value.trim();
+        if (HEX_RE.test(v)) { picker.value = v; window.Chronos.theme.preview(v); markActiveSwatch(v); }
+    });
+    hexInput?.addEventListener('keydown', e => { if (e.key === 'Enter') commitThemeColor(hexInput.value.trim()); });
+    hexInput?.addEventListener('blur', () => commitThemeColor(hexInput.value.trim()));
+
+    document.addEventListener('chronos:theme', e => renderThemeState(e.detail));
+
+    // Cerere proprie (idempotentă, aceeași sursă ca shell-ul) — nu ne bazăm
+    // pe ordinea de execuție față de Chronos.theme.init() din chronos-ui.js.
+    window.Chronos.theme.refresh().then(renderThemeState);
+}
+
+function renderThemeState(state) {
+    if (!state) return;
+    document.querySelectorAll('.theme-mode-opt').forEach(b =>
+        b.classList.toggle('active', b.dataset.mode === state.mode));
+
+    const manualPanel = document.getElementById('themeManualPanel');
+    manualPanel?.classList.toggle('disabled', state.mode !== 'manual');
+
+    const picker = document.getElementById('themeColorPicker');
+    const hexInput = document.getElementById('themeColorHex');
+    if (picker) picker.value = state.color;
+    if (hexInput) hexInput.value = state.color;
+    markActiveSwatch(state.color);
+
+    const dot = document.getElementById('themePreviewDot');
+    if (dot) dot.style.background = state.resolved;
+
+    const status = document.getElementById('themeStatus');
+    if (!status) return;
+    status.classList.toggle('warn', !state.live);
+
+    let msg;
+    if (state.mode === 'manual') {
+        msg = 'Culoare fixă — rămâne așa până o schimbi.';
+    } else if (state.mode === 'wled') {
+        msg = state.live
+            ? 'Live din benzile LED, se actualizează la 25 secunde.'
+            : 'WLED e stins sau offline — momentan folosesc ultima culoare aleasă.';
+    } else {
+        msg = state.live
+            ? 'Urmărește starea lui Chronos, se actualizează când vorbești cu el.'
+            : 'Nu pot citi starea lui Chronos acum — folosesc ultima culoare aleasă.';
+    }
+    status.innerHTML = `<span class="ts-dot"></span> ${msg}`;
+}
+
+function markActiveSwatch(hex) {
+    document.querySelectorAll('.theme-swatch').forEach(s =>
+        s.classList.toggle('active', s.dataset.hex.toLowerCase() === (hex || '').toLowerCase()));
+}
+
+async function setThemeMode(mode) {
+    const d = await window.Chronos.theme.setMode(mode);
+    if (d.status === 'success') {
+        renderThemeState(d);
+        showFlash(
+            mode === 'manual' ? '🎨 Mod manual' :
+            mode === 'wled'   ? '💡 Urmărește culoarea camerei' :
+                                 '🧠 Urmărește starea lui Chronos',
+            'success'
+        );
+    } else showFlash(d.message || 'Eroare', 'error');
+}
+
+function pickThemeSwatch(hex) {
+    document.getElementById('themeColorPicker').value = hex;
+    document.getElementById('themeColorHex').value = hex;
+    commitThemeColor(hex);
+}
+
+async function commitThemeColor(hex) {
+    if (!HEX_RE.test(hex || '')) { showFlash('Cod de culoare invalid', 'error'); return; }
+    const d = await window.Chronos.theme.setColor(hex);
+    if (d.status === 'success') { renderThemeState(d); showFlash('🎨 Culoare salvată', 'success'); }
+    else showFlash(d.message || 'Eroare', 'error');
 }

@@ -1,9 +1,21 @@
 {% extends "base.html" %}
 {% set active_page = "settings" %}
+{% set page_title = "Setări" %}
+{% set page_icon = "⚙️" %}
+{% set page_eyebrow = "Sistem" %}
+{% set page_sub = "Editează fișierele de configurare și datele direct din browser." %}
 
 {% block title %}Chronos OS | Settings{% endblock %}
 
 {% block content %}
+
+<div class="seg-tabs" role="tablist">
+    <button class="seg-tab active" id="tabFiles" onclick="switchSettingsTab('files')">📁 Fișiere</button>
+    <button class="seg-tab"        id="tabAppearance" onclick="switchSettingsTab('appearance')">🎨 Aspect</button>
+</div>
+
+<!-- ══════════════════ FIȘIERE ══════════════════ -->
+<section class="tab-panel active" id="panelFiles">
 <div class="settings-layout">
 
     <!-- LEFT: File Tree -->
@@ -53,8 +65,8 @@
 
             <div class="editor-wrap">
                 <div class="editor-line-nums" id="lineNums"></div>
-                <textarea 
-                    id="editorTextarea" 
+                <textarea
+                    id="editorTextarea"
                     class="editor-textarea"
                     spellcheck="false"
                     autocorrect="off"
@@ -74,8 +86,58 @@
     </div>
 
 </div>
+</section>
+
+<!-- ══════════════════ ASPECT ══════════════════ -->
+<section class="tab-panel" id="panelAppearance">
+    <div class="theme-layout">
+
+        <div class="surface-card">
+            <div class="card-title" style="margin-bottom:4px">🎨 Culoarea interfeței</div>
+            <div class="card-sub" style="margin-bottom:18px">
+                Accentul folosit în butoane, evidențieri și glow-uri — pe toate paginile, instant.
+            </div>
+
+            <div class="theme-mode-grid">
+                <button type="button" class="theme-mode-opt" data-mode="manual" onclick="setThemeMode('manual')">
+                    <span class="tmo-ico">🎨</span>
+                    <span class="tmo-t">Manuală</span>
+                    <span class="tmo-d">alegi tu culoarea</span>
+                </button>
+                <button type="button" class="theme-mode-opt" data-mode="wled" onclick="setThemeMode('wled')">
+                    <span class="tmo-ico">💡</span>
+                    <span class="tmo-t">Culoarea camerei</span>
+                    <span class="tmo-d">după luminile WLED, live</span>
+                </button>
+                <button type="button" class="theme-mode-opt" data-mode="mood" onclick="setThemeMode('mood')">
+                    <span class="tmo-ico">🧠</span>
+                    <span class="tmo-t">Starea lui Chronos</span>
+                    <span class="tmo-d">după cum e dispus acum</span>
+                </button>
+            </div>
+
+            <div class="theme-status" id="themeStatus"></div>
+
+            <!-- Manual: presetări + culoare custom -->
+            <div class="theme-manual-panel" id="themeManualPanel">
+                <div class="form-label" style="margin-top:18px">Presetări</div>
+                <div class="theme-swatches" id="themeSwatches"></div>
+
+                <div class="form-label" style="margin-top:16px">Sau orice culoare</div>
+                <div class="theme-custom-row">
+                    <input type="color" id="themeColorPicker" value="#8b7aff">
+                    <input type="text" id="themeColorHex" class="form-input mono" value="#8b7aff" maxlength="7" placeholder="#8b7aff">
+                    <span class="theme-preview-dot" id="themePreviewDot"></span>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+</section>
+
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+<script src="{{ url_for('static', filename='js/settings.js') }}?v=3.0"></script>
 {% endblock %}

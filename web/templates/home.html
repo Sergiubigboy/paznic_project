@@ -1,179 +1,175 @@
 {% extends "base.html" %}
 {% set active_page = "home" %}
-{% block title %}Chronos OS | Home{% endblock %}
+{% block title %}Chronos OS{% endblock %}
+{% block topbar_title %}Acasă{% endblock %}
 
 {% block head_extra %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/home.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/home.css') }}?v=3.0">
 {% endblock %}
 
 {% block content %}
-<div class="home-page">
+<div class="home">
 
-    <!-- ===== ALERTS PANEL ===== -->
-    <div id="alertsPanel" class="home-alerts-panel" style="display:none">
-        <div class="home-alerts-header">
-            <span class="home-alerts-icon">🚨</span>
-            <span>Alerte Active</span>
-            <span id="alertsCount" class="alerts-badge">0</span>
-        </div>
-        <div id="alertsList" class="home-alerts-list"></div>
-    </div>
-
-    <!-- ===== HERO GREETING ===== -->
-    <div class="home-hero">
-        <div class="home-hero-text">
-            <div class="home-greeting" id="homeGreeting">Bună ziua</div>
-            <div class="home-date" id="homeDate"></div>
-        </div>
-        <div class="home-hero-stats" id="heroStats">
-            <div class="hero-stat-pill" id="hStatTime">
-                <span class="hero-stat-icon">⌚</span>
-                <span class="hero-stat-val" id="heroTime">--:--</span>
+    <!-- ═══════════ HERO ═══════════ -->
+    <section class="hero">
+        <div class="hero-main">
+            <div class="hero-eyebrow"><span class="dot"></span><span id="homeDate">—</span></div>
+            <h1 class="hero-greet" id="homeGreeting">Bun venit</h1>
+            <p class="hero-line" id="homeLine">Se sincronizează sistemul…</p>
+            <div class="hero-cta">
+                <button class="btn btn-primary" id="heroAsk">🧠 Vorbește cu Chronos</button>
+                <button class="btn" id="heroSearch">🔎 Caută <span class="kbd">Ctrl K</span></button>
             </div>
         </div>
+        <div class="hero-clock">
+            <div class="clock-time" id="heroTime">--:--</div>
+            <div class="clock-sec" id="heroSecs">--</div>
+        </div>
+    </section>
+
+    <!-- ═══════════ ALERTE ═══════════ -->
+    <section class="alerts" id="alertsPanel" hidden>
+        <div class="alerts-head">
+            <span class="alerts-ico">🚨</span>
+            <span>Necesită atenție</span>
+            <span class="alerts-count" id="alertsCount">0</span>
+        </div>
+        <div class="alerts-list" id="alertsList"></div>
+    </section>
+
+    <!-- ═══════════ PULS ═══════════ -->
+    <div class="sec-label">Pulsul zilei</div>
+    <section class="pulse-grid" id="pulseGrid">
+        <a href="/gym" class="pulse loading" id="pWeight">
+            <span class="pulse-ico">⚖️</span>
+            <span class="pulse-val" id="pWeightVal">—</span>
+            <span class="pulse-lbl">Greutate</span>
+        </a>
+        <a href="/targets" class="pulse loading" id="pTasks">
+            <span class="pulse-ico">✅</span>
+            <span class="pulse-val" id="pTasksVal">—</span>
+            <span class="pulse-lbl">Task-uri azi</span>
+            <span class="pulse-bar"><i id="pTasksBar"></i></span>
+        </a>
+        <a href="/targets" class="pulse loading" id="pTargets">
+            <span class="pulse-ico">🎯</span>
+            <span class="pulse-val" id="pTargetsVal">—</span>
+            <span class="pulse-lbl">Targeturi active</span>
+        </a>
+        <a href="/bani" class="pulse loading" id="pCash">
+            <span class="pulse-ico">💳</span>
+            <span class="pulse-val" id="pCashVal">—</span>
+            <span class="pulse-lbl">Lichid</span>
+        </a>
+        <a href="/bani" class="pulse loading" id="pRoad">
+            <span class="pulse-ico">🚚</span>
+            <span class="pulse-val" id="pRoadVal">—</span>
+            <span class="pulse-lbl">Bani pe drum</span>
+        </a>
+        <a href="/targets" class="pulse loading" id="pMaint">
+            <span class="pulse-ico">🔧</span>
+            <span class="pulse-val" id="pMaintVal">—</span>
+            <span class="pulse-lbl">Mentenanță</span>
+        </a>
+    </section>
+
+    <!-- ═══════════ SCENE ═══════════ -->
+    <div class="sec-label">
+        Scene
+        <button class="sec-action" onclick="openSceneModal()">＋ Scenă nouă</button>
     </div>
+    <section class="scenes" id="scenesGrid">
+        <div class="scenes-empty" id="scenesEmpty">
+            <span class="empty-state-icon">🎬</span>
+            <div class="empty-state-title">Nicio scenă salvată</div>
+            <div>Creează o combinație de lumini + muzică pe care s-o pornești dintr-un tap.</div>
+            <button class="btn btn-primary btn-sm" style="margin-top:14px" onclick="openSceneModal()">＋ Prima scenă</button>
+        </div>
+    </section>
 
-    <!-- ===== QUICK STATUS ROW ===== -->
-    <div class="home-quick-row" id="quickStatusRow">
-        <div class="home-quick-card loading" id="qWeight">
-            <div class="quick-icon">⚖️</div>
-            <div class="quick-val" id="qWeightVal">—</div>
-            <div class="quick-lbl">Greutate</div>
-        </div>
-        <div class="home-quick-card loading" id="qTasks">
-            <div class="quick-icon">✅</div>
-            <div class="quick-val" id="qTasksVal">—</div>
-            <div class="quick-lbl">Task-uri</div>
-        </div>
-        <div class="home-quick-card loading" id="qTargets">
-            <div class="quick-icon">🎯</div>
-            <div class="quick-val" id="qTargetsVal">—</div>
-            <div class="quick-lbl">Targeturi</div>
-        </div>
-        <div class="home-quick-card loading" id="qMaint">
-            <div class="quick-icon">🔧</div>
-            <div class="quick-val" id="qMaintVal">—</div>
-            <div class="quick-lbl">Mentenanță</div>
-        </div>
-    </div>
+    <!-- ═══════════ NAVIGARE ═══════════ -->
+    <div class="sec-label">Secțiuni</div>
+    <section class="menu-grid">
 
-    <!-- ===== SCENES ===== -->
-    <div class="scenes-section" id="scenesSection">
-        <div class="scenes-header">
-            <div class="home-section-label scenes-label">🎬 Scene</div>
-            <button class="scenes-add-btn" id="scenesAddBtn" onclick="openSceneModal()">
-                <span>＋</span>
-                <span>Scenă Nouă</span>
-            </button>
-        </div>
-        <div class="scenes-grid" id="scenesGrid">
-            <div class="scenes-empty" id="scenesEmpty">
-                <div class="scenes-empty-icon">🎬</div>
-                <div class="scenes-empty-title">Nicio scenă salvată</div>
-                <div class="scenes-empty-desc">Creează prima ta scenă cu muzică și lumini</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ===== MAIN NAV MENU ===== -->
-    <div class="home-section-label">Navigare Rapidă</div>
-    <div class="home-menu-grid" id="homeMenuGrid">
-
-        <a href="/journal" class="home-menu-card journal">
-            <div class="hmc-glow"></div>
-            <div class="hmc-icon">📘</div>
-            <div class="hmc-content">
-                <div class="hmc-title">Jurnal</div>
-                <div class="hmc-desc">Intrări zilnice, jurnalul personal</div>
-                <div class="hmc-stat" id="statJournal">Se încarcă...</div>
-            </div>
-            <div class="hmc-arrow">→</div>
+        <a href="/journal" class="menu-card c-journal">
+            <span class="mc-ico">📘</span>
+            <span class="mc-body">
+                <span class="mc-title">Jurnal</span>
+                <span class="mc-desc">Intrări zilnice, scoruri, poze</span>
+                <span class="mc-stat" id="statJournal">—</span>
+            </span>
+            <span class="mc-go">→</span>
         </a>
 
-        <a href="/targets" class="home-menu-card targets">
-            <div class="hmc-glow"></div>
-            <div class="hmc-icon">🎯</div>
-            <div class="hmc-content">
-                <div class="hmc-title">Taskuri &amp; Targeturi</div>
-                <div class="hmc-desc">Targeturi, remindere, task-uri zilnice</div>
-                <div class="hmc-stat" id="statTargets">Se încarcă...</div>
-            </div>
-            <div class="hmc-arrow">→</div>
+        <a href="/targets" class="menu-card c-targets">
+            <span class="mc-ico">🎯</span>
+            <span class="mc-body">
+                <span class="mc-title">Taskuri &amp; Targeturi</span>
+                <span class="mc-desc">Obiective, remindere, mentenanță</span>
+                <span class="mc-stat" id="statTargets">—</span>
+            </span>
+            <span class="mc-go">→</span>
         </a>
 
-        <a href="/gym" class="home-menu-card gym">
-            <div class="hmc-glow"></div>
-            <div class="hmc-icon">💪</div>
-            <div class="hmc-content">
-                <div class="hmc-title">Fitness</div>
-                <div class="hmc-desc">Greutate, măsurători, faze</div>
-                <div class="hmc-stat" id="statGym">Se încarcă...</div>
-            </div>
-            <div class="hmc-arrow">→</div>
+        <a href="/gym" class="menu-card c-gym">
+            <span class="mc-ico">💪</span>
+            <span class="mc-body">
+                <span class="mc-title">Fitness</span>
+                <span class="mc-desc">Greutate, măsurători, faze</span>
+                <span class="mc-stat" id="statGym">—</span>
+            </span>
+            <span class="mc-go">→</span>
         </a>
 
-        <a href="/bani" class="home-menu-card finance">
-            <div class="hmc-glow"></div>
-            <div class="hmc-icon">💰</div>
-            <div class="hmc-content">
-                <div class="hmc-title">Finanțe</div>
-                <div class="hmc-desc">Venituri, cheltuieli, economii</div>
-                <div class="hmc-stat" id="statFinance">—</div>
-            </div>
-            <div class="hmc-arrow">→</div>
+        <a href="/bani" class="menu-card c-money">
+            <span class="mc-ico">💰</span>
+            <span class="mc-body">
+                <span class="mc-title">Bani</span>
+                <span class="mc-desc">Conturi, investiții, datorii</span>
+                <span class="mc-stat" id="statFinance">—</span>
+            </span>
+            <span class="mc-go">→</span>
         </a>
 
-        <a href="/electronics" class="home-menu-card electronics">
-            <div class="hmc-glow"></div>
-            <div class="hmc-icon">⚡</div>
-            <div class="hmc-content">
-                <div class="hmc-title">Electronics Lab</div>
-                <div class="hmc-desc">Componente și proiecte</div>
-                <div class="hmc-stat" id="statElec">Se încarcă...</div>
-            </div>
-            <div class="hmc-arrow">→</div>
+        <a href="/electronics" class="menu-card c-lab">
+            <span class="mc-ico">⚡</span>
+            <span class="mc-body">
+                <span class="mc-title">Electronics Lab</span>
+                <span class="mc-desc">Componente și proiecte</span>
+                <span class="mc-stat" id="statElec">—</span>
+            </span>
+            <span class="mc-go">→</span>
         </a>
 
-        <a href="/terminal" class="home-menu-card terminal">
-            <div class="hmc-glow"></div>
-            <div class="hmc-icon">⌨️</div>
-            <div class="hmc-content">
-                <div class="hmc-title">Terminal AI</div>
-                <div class="hmc-desc">Comandă Chronos prin text</div>
-                <div class="hmc-stat">Powered by AI</div>
-            </div>
-            <div class="hmc-arrow">→</div>
-        </a>
+    </section>
 
-    </div>
+    <!-- ═══════════ LISTE ═══════════ -->
+    <div class="home-cols">
+        <section id="upcomingMaintSection" hidden>
+            <div class="sec-label">⏰ Mentenanță iminentă</div>
+            <div id="upcomingMaintList" class="mini-list"></div>
+        </section>
 
-    <!-- ===== UPCOMING MAINTENANCE ===== -->
-    <div id="upcomingMaintSection" style="display:none">
-        <div class="home-section-label">⏰ Mentenanță Iminentă</div>
-        <div id="upcomingMaintList" class="home-maint-list"></div>
-    </div>
-
-    <!-- ===== ACTIVE TARGETS ===== -->
-    <div id="activeTargetsSection" style="display:none">
-        <div class="home-section-label">🎯 Targeturi Active</div>
-        <div id="activeTargetsList" class="home-targets-list"></div>
+        <section id="activeTargetsSection" hidden>
+            <div class="sec-label">🎯 Targeturi active</div>
+            <div id="activeTargetsList" class="mini-list"></div>
+        </section>
     </div>
 
 </div>
 
-<!-- ===== SCENE MODAL ===== -->
+<!-- ═══════════ MODAL SCENĂ ═══════════ -->
 <div class="scene-modal-overlay" id="sceneModalOverlay">
     <div class="scene-modal" id="sceneModal">
         <div class="scene-modal-header">
             <div class="scene-modal-title" id="sceneModalTitle">✨ Scenă Nouă</div>
-            <button class="scene-modal-close" id="sceneModalClose">✕</button>
+            <button class="cp-icon" id="sceneModalClose">✕</button>
         </div>
         <input type="hidden" id="sceneEditId">
 
-        <!-- Emoji + Name -->
         <div class="scene-form-row">
             <div class="scene-emoji-picker">
-                <button class="scene-emoji-btn" id="sceneEmojiBtn">🎬</button>
+                <button class="scene-emoji-btn" id="sceneEmojiBtn" onclick="toggleEmojiPicker()">🎬</button>
                 <div class="scene-emoji-grid" id="sceneEmojiGrid">
                     <button data-emoji="🎬">🎬</button><button data-emoji="🌹">🌹</button>
                     <button data-emoji="🌙">🌙</button><button data-emoji="🔥">🔥</button>
@@ -186,123 +182,85 @@
                 </div>
             </div>
             <div class="scene-name-wrap">
-                <label class="scene-label">Numele scenei</label>
-                <input type="text" class="scene-input" id="sceneNameInput" placeholder="ex: Romantic, Party, Focus..." maxlength="30">
+                <label class="form-label">Numele scenei</label>
+                <input type="text" class="form-input" id="sceneNameInput" placeholder="ex: Romantic, Party, Focus…" maxlength="30">
             </div>
         </div>
 
-        <!-- Music prompt -->
-        <div class="scene-form-group">
-            <label class="scene-label">🎵 Muzică <span class="scene-label-sub">— prompt pentru AI DJ</span></label>
-            <textarea class="scene-textarea" id="sceneMusicPrompt" placeholder="ex: pune jazz ambient relaxant, ceva de citit, ceva romantic piano..." rows="2"></textarea>
+        <div class="form-group">
+            <label class="form-label">🎵 Muzică <span class="faint" style="text-transform:none;letter-spacing:0">— prompt pentru AI DJ</span></label>
+            <textarea class="form-input" id="sceneMusicPrompt" rows="2" placeholder="ex: jazz ambient relaxant, ceva de citit, piano romantic…"></textarea>
         </div>
 
-        <!-- Lights config -->
-        <div class="scene-form-group">
-            <label class="scene-label">💡 Lumini LED</label>
+        <div class="form-group">
+            <label class="form-label">💡 Lumini LED</label>
             <div class="scene-lights-actions">
-                <button class="scene-capture-btn" id="sceneCaptureBtn">
-                    <span>📸</span><span>Capturează din WLED acum</span>
-                </button>
-                <button class="scene-manual-toggle" id="sceneManualToggle">⚙ Manual</button>
+                <button class="btn btn-teal" id="sceneCaptureBtn"><span>📸</span><span>Capturează din WLED acum</span></button>
+                <button class="btn" id="sceneManualToggle">⚙ Manual</button>
             </div>
             <div class="scene-lights-status" id="sceneLightsStatus" style="display:none"></div>
+
             <div class="scene-manual-panel" id="sceneManualPanel" style="display:none">
                 <div class="scene-zones-grid">
-                    <!-- Main zone -->
                     <div class="scene-zone">
                         <div class="scene-zone-title">🔆 Main (Tavan/Dulap)</div>
                         <div class="scene-zone-fields">
-                            <div class="scene-field">
-                                <span class="scene-field-label">ON</span>
-                                <label class="scene-toggle-switch">
-                                    <input type="checkbox" id="mainOn" checked>
-                                    <span class="scene-toggle-slider"></span>
-                                </label>
-                            </div>
-                            <div class="scene-field">
-                                <span class="scene-field-label">Brightness</span>
-                                <input type="range" min="1" max="255" value="128" id="mainBri" class="scene-slider">
-                                <span class="scene-slider-val" id="mainBriVal">128</span>
-                            </div>
-                            <div class="scene-field">
-                                <span class="scene-field-label">Effect (fx)</span>
-                                <input type="number" min="0" max="200" value="0" id="mainFx" class="scene-num-input">
-                            </div>
-                            <div class="scene-field">
-                                <span class="scene-field-label">Palette (pal)</span>
-                                <input type="number" min="0" max="70" value="0" id="mainPal" class="scene-num-input">
-                            </div>
-                            <div class="scene-field">
-                                <span class="scene-field-label">Speed (sx)</span>
-                                <input type="range" min="0" max="255" value="128" id="mainSx" class="scene-slider">
-                                <span class="scene-slider-val" id="mainSxVal">128</span>
-                            </div>
-                            <div class="scene-field">
-                                <span class="scene-field-label">Intensity (ix)</span>
-                                <input type="range" min="0" max="255" value="128" id="mainIx" class="scene-slider">
-                                <span class="scene-slider-val" id="mainIxVal">128</span>
-                            </div>
+                            <div class="scene-field"><span class="scene-field-label">ON</span>
+                                <input type="checkbox" id="mainOn" checked></div>
+                            <div class="scene-field"><span class="scene-field-label">Brightness</span>
+                                <input type="range" min="1" max="255" value="128" id="mainBri">
+                                <span class="scene-slider-val" id="mainBriVal">128</span></div>
+                            <div class="scene-field"><span class="scene-field-label">Effect</span>
+                                <input type="number" min="0" max="200" value="0" id="mainFx" class="form-input"></div>
+                            <div class="scene-field"><span class="scene-field-label">Palette</span>
+                                <input type="number" min="0" max="70" value="0" id="mainPal" class="form-input"></div>
+                            <div class="scene-field"><span class="scene-field-label">Speed</span>
+                                <input type="range" min="0" max="255" value="128" id="mainSx">
+                                <span class="scene-slider-val" id="mainSxVal">128</span></div>
+                            <div class="scene-field"><span class="scene-field-label">Intensity</span>
+                                <input type="range" min="0" max="255" value="128" id="mainIx">
+                                <span class="scene-slider-val" id="mainIxVal">128</span></div>
                         </div>
                     </div>
-                    <!-- Floor zone -->
                     <div class="scene-zone">
                         <div class="scene-zone-title">🌊 Floor (Sub-birou)</div>
                         <div class="scene-zone-fields">
-                            <div class="scene-field">
-                                <span class="scene-field-label">ON</span>
-                                <label class="scene-toggle-switch">
-                                    <input type="checkbox" id="floorOn" checked>
-                                    <span class="scene-toggle-slider"></span>
-                                </label>
-                            </div>
-                            <div class="scene-field">
-                                <span class="scene-field-label">Brightness</span>
-                                <input type="range" min="1" max="255" value="180" id="floorBri" class="scene-slider">
-                                <span class="scene-slider-val" id="floorBriVal">180</span>
-                            </div>
-                            <div class="scene-field">
-                                <span class="scene-field-label">Effect (fx)</span>
-                                <input type="number" min="0" max="200" value="0" id="floorFx" class="scene-num-input">
-                            </div>
-                            <div class="scene-field">
-                                <span class="scene-field-label">Palette (pal)</span>
-                                <input type="number" min="0" max="70" value="0" id="floorPal" class="scene-num-input">
-                            </div>
-                            <div class="scene-field">
-                                <span class="scene-field-label">Speed (sx)</span>
-                                <input type="range" min="0" max="255" value="128" id="floorSx" class="scene-slider">
-                                <span class="scene-slider-val" id="floorSxVal">128</span>
-                            </div>
-                            <div class="scene-field">
-                                <span class="scene-field-label">Intensity (ix)</span>
-                                <input type="range" min="0" max="255" value="128" id="floorIx" class="scene-slider">
-                                <span class="scene-slider-val" id="floorIxVal">128</span>
-                            </div>
+                            <div class="scene-field"><span class="scene-field-label">ON</span>
+                                <input type="checkbox" id="floorOn" checked></div>
+                            <div class="scene-field"><span class="scene-field-label">Brightness</span>
+                                <input type="range" min="1" max="255" value="180" id="floorBri">
+                                <span class="scene-slider-val" id="floorBriVal">180</span></div>
+                            <div class="scene-field"><span class="scene-field-label">Effect</span>
+                                <input type="number" min="0" max="200" value="0" id="floorFx" class="form-input"></div>
+                            <div class="scene-field"><span class="scene-field-label">Palette</span>
+                                <input type="number" min="0" max="70" value="0" id="floorPal" class="form-input"></div>
+                            <div class="scene-field"><span class="scene-field-label">Speed</span>
+                                <input type="range" min="0" max="255" value="128" id="floorSx">
+                                <span class="scene-slider-val" id="floorSxVal">128</span></div>
+                            <div class="scene-field"><span class="scene-field-label">Intensity</span>
+                                <input type="range" min="0" max="255" value="128" id="floorIx">
+                                <span class="scene-slider-val" id="floorIxVal">128</span></div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <div class="scene-modal-footer">
-            <button class="scene-cancel-btn" id="sceneCancelBtn">Anulează</button>
-            <button class="scene-save-btn" id="sceneSaveBtn">💾 Salvează Scena</button>
+        <div class="btn-row" style="margin-top:20px;justify-content:flex-end">
+            <button class="btn btn-ghost" id="sceneCancelBtn">Anulează</button>
+            <button class="btn btn-primary" id="sceneSaveBtn">💾 Salvează scena</button>
         </div>
 
-        <!-- Loading overlay -->
         <div class="scene-loading-overlay" id="sceneLoadingOverlay" style="display:none">
             <div class="scene-loading-spinner"></div>
-            <div id="sceneLoadingText">Se salvează...</div>
+            <div id="sceneLoadingText">Se salvează…</div>
         </div>
     </div>
 </div>
 
-<!-- Toast notification -->
 <div class="scene-toast" id="sceneToast"></div>
-
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/home.js') }}"></script>
+<script src="{{ url_for('static', filename='js/home.js') }}?v=3.0"></script>
 {% endblock %}

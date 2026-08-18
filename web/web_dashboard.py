@@ -1,7 +1,9 @@
 import os
 import json
 import glob
+import re
 import sys
+import colorsys
 from time import time
 import uuid
 import shutil
@@ -25,6 +27,7 @@ COMPLETED_FILE = os.path.join(DATA_DIR, "archive", "completed_goals.json")
 REMINDERS_FILE = os.path.join(DATA_DIR, "reminders.json")
 MAINTENANCE_FILE = os.path.join(DATA_DIR, "maintenance.json")
 SCENES_FILE = os.path.join(DATA_DIR, "scenes.json")
+THEME_FILE = os.path.join(DATA_DIR, "theme.json")
 
 # --- GYM DATA ---
 GYM_DIR = os.path.join(DATA_DIR, "gym")
@@ -40,9 +43,6 @@ AESTHETIC_PHOTOS_DIR = os.path.join(GYM_DIR, "aesthetic")
 JOURNAL_PHOTOS_DIR = os.path.join(DATA_DIR, "journal_photos")
 
 # --- SCREEN TIME ---
-
-# --- DAY SCHEDULE ---
-DAY_SCHEDULE_FILE = os.path.join(DATA_DIR, "day_schedule.json")
 
 # --- DAILY TASKS ---
 DAILY_TASKS_FILE = os.path.join(DATA_DIR, "daily_tasks.json")
@@ -260,11 +260,6 @@ def targets():
 @requires_auth
 def gym():
     return render_template('gym.html', active_page='gym')
-
-@app.route('/day')
-@requires_auth
-def day_page():
-    return redirect('/')
 
 @app.route('/terminal')
 @requires_auth
@@ -872,13 +867,6 @@ def day_status():
             last_weight_ever = wl[-1].get('weight')
             recent_weights = list(reversed(wl[-7:]))
 
-    # --- Schedule today ---
-    schedule = []
-    if os.path.exists(DAY_SCHEDULE_FILE):
-        with open(DAY_SCHEDULE_FILE, 'r', encoding='utf-8') as f:
-            sched = json.load(f)
-        schedule = sched.get(today, [])
-
     return jsonify({
         "date": today,
         "weight": weight_data,
@@ -889,7 +877,6 @@ def day_status():
         "measurements_due": measurements_due,
         "days_since_measurements": days_since_meas,
         "last_weight_ever": last_weight_ever,
-        "schedule": schedule,
         "recent_weights": recent_weights
     })
 
@@ -939,6 +926,113 @@ def terminal_command():
     except Exception as e:
         import traceback
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ============ CHRONOS — PREZENȚĂ ÎN INTERFAȚĂ ============
+# Dock-ul din colț respiră în ritmul stării lui reale. Culoarea și viteza
+# pulsului vin de aici; textul rămâne vag intenționat — Chronos nu-și
+# verbalizează starea (vezi core/emotions.py).
+
+_MOOD_PALETTE = {
+    'agitat':    ('#ff5c7a', '255,92,122',  2.2, 'agitat'),
+    'pe_val':    ('#3ce68f', '60,230,143',  3.4, 'în formă'),
+    'plictisit': ('#59b8ff', '89,184,255',  8.5, 'te așteaptă'),
+    'distant':   ('#6a6b90', '106,107,144', 7.5, 'distant'),
+    'cald':      ('#ff7ac4', '255,122,196', 4.6, 'binedispus'),
+    'calm':      ('#8b7aff', '139,122,255', 5.5, 'calm'),
+}
+
+
+def _chronos_state_payload():
+    try:
+        from core.emotions import get_state
+        vals = get_state().snapshot()
+    except Exception:
+        vals = {}
+
+    if not vals:
+        color, rgb, pulse, short = _MOOD_PALETTE['calm']
+        return {
+            'available': False,
+            'values': {},
+            'mood': 'calm',
+            'mood_label': 'în standby',
+            'mood_short': 'sistem activ',
+            'color': color, 'color_rgb': rgb, 'pulse': pulse,
+            'wants_attention': False,
+        }
+
+    nerv = vals.get('nervozitate', 0)
+    buc  = vals.get('bucurie', 0)
+    plic = vals.get('plictiseala', 0)
+    afec = vals.get('afectiune', 0)
+
+    if nerv >= 60:
+        key, label = 'agitat', 'nu e în cea mai bună zi'
+    elif plic >= 70:
+        key, label = 'plictisit', 'n-ați mai vorbit de mult'
+    elif buc >= 70 and afec >= 60:
+        key, label = 'cald', 'binedispus'
+    elif buc >= 65:
+        key, label = 'pe_val', 'e în formă'
+    elif afec <= 30 or buc <= 25:
+        key, label = 'distant', 'cam retras'
+    else:
+        key, label = 'calm', 'echilibrat'
+
+    color, rgb, pulse, short = _MOOD_PALETTE[key]
+    return {
+        'available': True,
+        'values': vals,
+        'mood': key,
+        'mood_label': label,
+        'mood_short': short,
+        'color': color,
+        'color_rgb': rgb,
+        'pulse': pulse,
+        'wants_attention': plic >= 70 or nerv >= 80,
+    }
+
+
+@app.route('/api/chronos/state', methods=['GET'])
+@requires_auth
+def chronos_state():
+    return jsonify(_chronos_state_payload())
+
+
+@app.route('/api/chronos/chat', methods=['POST'])
+@requires_auth
+def chronos_chat():
+    """Același dispatcher ca terminalul, dar servit dock-ului de pe orice pagină."""
+    body = request.json or {}
+    text = (body.get('text') or '').strip()
+    if not text:
+        return jsonify({'status': 'error', 'message': 'Mesaj gol'}), 400
+
+    try:
+        global shared_dispatcher
+        if not shared_dispatcher:
+            return jsonify({'status': 'error',
+                            'message': 'Dispecerul central nu e conectat.'}), 500
+
+        shared_dispatcher.process_text_command(text, None)
+        res = getattr(shared_dispatcher, 'last_result', {}) or {}
+
+        actions = []
+        for a in res.get('actions', []):
+            actions.append(a.get('text', '') if isinstance(a, dict) else str(a))
+
+        return jsonify({
+            'status':  'success',
+            'intents': res.get('intents', ['general']),
+            'reply':   res.get('reply'),
+            'actions': actions,
+            'state':   _chronos_state_payload(),
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 # ============ STATIC MEDIA ============
 @app.route('/media/gym/photos/<filename>')
 @requires_auth
@@ -1815,130 +1909,6 @@ def delete_weight_entry():
             json.dump(weights, f, indent=4)
     return jsonify({"status": "success"})
 
-# ============ DAY SCHEDULE (manual events) ============
-@app.route('/api/day/schedule', methods=['GET'])
-@requires_auth
-def get_day_schedule():
-    date = request.args.get('date', datetime.now().strftime("%Y-%m-%d"))
-    schedule = {}
-    if os.path.exists(DAY_SCHEDULE_FILE):
-        with open(DAY_SCHEDULE_FILE, 'r', encoding='utf-8') as f:
-            schedule = json.load(f)
-    return jsonify(schedule.get(date, []))
-
-@app.route('/api/day/schedule', methods=['POST'])
-@requires_auth
-def save_day_schedule():
-    data = request.json or {}
-    date = data.get('date', datetime.now().strftime("%Y-%m-%d"))
-    events = data.get('events', [])
-    schedule = {}
-    if os.path.exists(DAY_SCHEDULE_FILE):
-        with open(DAY_SCHEDULE_FILE, 'r', encoding='utf-8') as f:
-            schedule = json.load(f)
-    schedule[date] = events
-    with open(DAY_SCHEDULE_FILE, 'w', encoding='utf-8') as f:
-        json.dump(schedule, f, indent=4, ensure_ascii=False)
-    return jsonify({"status": "success"})
-
-# ============ AI DAILY BRIEFING ============
-@app.route('/api/day/briefing', methods=['POST'])
-@requires_auth
-def generate_briefing():
-    """Generate an AI daily briefing based on all available context."""
-    data = request.json or {}
-    today = datetime.now().strftime("%Y-%m-%d")
-    weekday_ro = ["Luni", "Marți", "Miercuri", "Joi", "Vineri", "Sâmbătă", "Duminică"]
-    weekday = weekday_ro[datetime.now().weekday()]
-
-    # Collect context
-    # Targets
-    targets_ctx = []
-    if os.path.exists(TARGETS_FILE):
-        with open(TARGETS_FILE, 'r', encoding='utf-8') as f:
-            td = json.load(f)
-        for g in td.get('goals', [])[:5]:
-            targets_ctx.append(f"- {g.get('title')} ({g.get('priority','')}, {g.get('progress',0)}%)")
-
-    # Gym phase
-    phase = "sustinere"
-    if os.path.exists(PHASE_FILE):
-        with open(PHASE_FILE, 'r', encoding='utf-8') as f:
-            phase = json.load(f).get('current', 'sustinere')
-
-    # Last weight
-    last_weight = None
-    if os.path.exists(WEIGHT_FILE):
-        with open(WEIGHT_FILE, 'r', encoding='utf-8') as f:
-            wl = json.load(f)
-        if wl:
-            last_weight = wl[-1].get('weight')
-
-    # Last 7 days food checks
-    food_checks = []
-    if os.path.exists(DAILY_CHECKS_FILE):
-        with open(DAILY_CHECKS_FILE, 'r', encoding='utf-8') as f:
-            checks = json.load(f).get("checks", [])
-        cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-        food_checks = [c.get('level') for c in checks if c.get('date', '') >= cutoff]
-
-    # Events for today
-    events_ctx = data.get('events', [])
-
-    # Recent journal summary
-    recent_summary = data.get('recent_summary', '')
-
-    try:
-        sys.path.insert(0, BASE_DIR)
-        from ai_core import ask_gemini_json
-
-        prompt = f"""
-Ești Chronos, asistentul AI personal. Generează un briefing zilnic inteligent și motivant pentru utilizator.
-
-DATA: {weekday}, {today}
-FAZA FITNESS: {phase.upper()}
-GREUTATE ACTUALĂ: {last_weight or 'necunoscută'} kg
-FOOD CHECKS ULTIMELE 7 ZILE: {', '.join(food_checks) if food_checks else 'nedisponibil'}
-TARGETURI ACTIVE:
-{chr(10).join(targets_ctx) if targets_ctx else '- Niciun target activ'}
-AGENDA AZI: {', '.join(events_ctx) if events_ctx else 'necompletată'}
-CONTEXT JURNAL RECENT: {recent_summary or 'nedisponibil'}
-
-Generează un briefing structurat, concis, în română, care include:
-1. Un salut scurt adaptat zilei (ex: "Luni grea, dar ești pregătit")
-2. Focus principal al zilei (1-2 fraze)
-3. Sfat fitness/alimentar bazat pe faza curentă
-4. Top 3 acțiuni concrete pentru azi
-5. O frază motivațională scurtă la final
-
-Fii direct, nu verbos. Vorbi-i ca unui prieten.
-"""
-
-        schema = {
-            "type": "OBJECT",
-            "properties": {
-                "greeting": {"type": "STRING"},
-                "focus": {"type": "STRING"},
-                "fitness_tip": {"type": "STRING"},
-                "top3_actions": {"type": "ARRAY", "items": {"type": "STRING"}},
-                "motivation": {"type": "STRING"},
-                "energy_level": {"type": "STRING", "enum": ["high", "medium", "low"]},
-                "mood_vibe": {"type": "STRING"}
-            },
-            "required": ["greeting", "focus", "top3_actions", "motivation"]
-        }
-
-        result = ask_gemini_json(prompt, schema=schema, temperature=0.75)
-        if result:
-            result['generated_at'] = datetime.now().isoformat()
-            result['date'] = today
-            return jsonify({"status": "success", "briefing": result})
-        else:
-            return jsonify({"status": "error", "message": "AI nu a răspuns"}), 500
-
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
 # ============ DAILY TASKS API ============
 def load_daily_tasks():
     if os.path.exists(DAILY_TASKS_FILE):
@@ -2064,6 +2034,75 @@ def _save_json_list(filepath, data):
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
+def _new_id(prefix):
+    import time
+    return f"{prefix}_{int(time.time()*1000)}_{uuid.uuid4().hex[:5]}"
+
+
+def _migrate_inventory(inventory, sales):
+    """
+    Aduce inventarul la modelul v2 (cantități + vânzări separate) fără să
+    strice datele vechi. Rulează la fiecare load, e idempotentă.
+
+      • repară ID-urile duplicate (bug vechi: „adaugă” refolosea același id
+        dacă apăsai de mai multe ori în aceeași milisecundă)
+      • quantity / qty_remaining / unit_cost pentru produsele vechi (qty = 1)
+      • produsele deja vândute primesc o înregistrare de vânzare 'settled'
+    """
+    seen = set()
+    sale_by_inv = {s.get("inventory_id") for s in sales}
+    changed = False
+
+    for item in inventory:
+        # 1. ID unic
+        iid = item.get("id")
+        if not iid or iid in seen:
+            item["id"] = _new_id("inv")
+            changed = True
+        seen.add(item["id"])
+
+        # 2. Cantități
+        if "quantity" not in item:
+            qty = 1
+            item["quantity"] = qty
+            item["unit_cost"] = round(float(item.get("cost_basis", 0) or 0), 2)
+            item["qty_remaining"] = 0 if item.get("status") == "sold" else qty
+            changed = True
+        item.setdefault("unit_cost", round(
+            float(item.get("cost_basis", 0) or 0) / max(1, int(item.get("quantity", 1))), 2))
+        item.setdefault("qty_remaining", 0 if item.get("status") == "sold" else int(item.get("quantity", 1)))
+        item.setdefault("estimated_value", item.get("unit_cost", 0))
+        item.setdefault("note", "")
+
+        # 3. Vânzările vechi devin înregistrări de vânzare reglate
+        if item.get("status") == "sold" and item["id"] not in sale_by_inv and item.get("sold_amount") is not None:
+            qty = int(item.get("quantity", 1)) or 1
+            unit_cost = float(item.get("unit_cost", 0) or 0)
+            total = float(item.get("sold_amount", 0) or 0)
+            sales.append({
+                "id": _new_id("sale"),
+                "inventory_id": item["id"],
+                "name": item.get("name", ""),
+                "qty": qty,
+                "unit_cost": unit_cost,
+                "unit_price": round(total / qty, 2) if qty else total,
+                "total": round(total, 2),
+                "cost_total": round(unit_cost * qty, 2),
+                "profit": round(total - unit_cost * qty, 2),
+                "status": "settled",
+                "buyer": "",
+                "note": item.get("note", ""),
+                "date_sold": item.get("sold_at") or item.get("date_bought", ""),
+                "expected_date": "",
+                "account_id": item.get("sold_to_account_id"),
+                "settled_at": item.get("sold_at") or "",
+            })
+            sale_by_inv.add(item["id"])
+            changed = True
+
+    return changed
+
+
 def _load_finance():
     # Migrare automată din fișierul vechi dacă există și nu a fost migrat
     if os.path.exists(LEGACY_FINANCE_FILE) and not os.path.exists(FINANCE_DIR):
@@ -2072,28 +2111,35 @@ def _load_finance():
         _save_finance(old_data)
         os.rename(LEGACY_FINANCE_FILE, LEGACY_FINANCE_FILE + ".bak")
 
-    return {
+    data = {
         "accounts": _load_json_list(os.path.join(FINANCE_DIR, "accounts.json")),
         "transactions": _load_json_list(os.path.join(FINANCE_DIR, "transactions.json")),
         "debts": _load_json_list(os.path.join(FINANCE_DIR, "debts.json")),
         "inventory": _load_json_list(os.path.join(FINANCE_DIR, "inventory_active.json")) + \
                      _load_json_list(os.path.join(FINANCE_DIR, "inventory_sold.json")),
+        "sales": _load_json_list(os.path.join(FINANCE_DIR, "sales.json")),
         "investment_log": _load_json_list(os.path.join(FINANCE_DIR, "investment_log.json"))
     }
+
+    if _migrate_inventory(data["inventory"], data["sales"]):
+        _save_finance(data)
+
+    return data
 
 def _save_finance(data):
     os.makedirs(FINANCE_DIR, exist_ok=True)
     _save_json_list(os.path.join(FINANCE_DIR, "accounts.json"), data.get("accounts", []))
     _save_json_list(os.path.join(FINANCE_DIR, "transactions.json"), data.get("transactions", []))
     _save_json_list(os.path.join(FINANCE_DIR, "debts.json"), data.get("debts", []))
-    
+
     # Separăm inventarul pentru claritate vizuală în fișiere
     inventory = data.get("inventory", [])
-    active_inv = [i for i in inventory if i.get("status") == "active"]
+    active_inv = [i for i in inventory if i.get("status") != "sold"]
     sold_inv = [i for i in inventory if i.get("status") == "sold"]
-    
+
     _save_json_list(os.path.join(FINANCE_DIR, "inventory_active.json"), active_inv)
     _save_json_list(os.path.join(FINANCE_DIR, "inventory_sold.json"), sold_inv)
+    _save_json_list(os.path.join(FINANCE_DIR, "sales.json"), data.get("sales", []))
     _save_json_list(os.path.join(FINANCE_DIR, "investment_log.json"), data.get("investment_log", []))
 
 def _calc_balance(account_id, transactions):
@@ -2107,43 +2153,78 @@ def _calc_balance(account_id, transactions):
                 total -= float(tx.get('amount', 0))
     return round(total, 2)
 
-def _calc_inv_summary(inventory, investment_log):
-    """Calculate separated investment statistics for the Investment Hub."""
-    active = [i for i in inventory if i.get('status') == 'active']
-    sold   = [i for i in inventory if i.get('status') == 'sold']
+def _calc_inv_summary(inventory, sales):
+    """
+    Statistici pentru hub-ul de investiții, pe modelul v2 (cantități + vânzări).
 
-    # 1. STOC CURENT (Active)
-    active_cost = sum(float(i.get('cost_basis', 0)) for i in active)
-    active_estimated_value = sum(float(i.get('estimated_value', 0)) for i in active)
-    active_potential_profit = active_estimated_value - active_cost
-    active_roi_pct = round((active_potential_profit / active_cost * 100) if active_cost > 0 else 0, 1)
+    Trei planuri distincte, ca să nu se mai amestece:
+      STOC       — ce ai pe raft acum (unități rămase)
+      PE DRUM    — vândut, dar banii încă n-au intrat în conturi
+      REALIZAT   — vânzări încasate efectiv
+    """
+    def f(v):
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
 
-    # 2. PERFORMANȚĂ TOTALĂ (All-Time)
-    total_invested = sum(float(i.get('cost_basis', 0)) for i in inventory)
-    total_recovered = sum(float(i.get('sold_amount', 0)) for i in sold)
-    
-    total_cost_sold = sum(float(i.get('cost_basis', 0)) for i in sold)
-    realized_profit = total_recovered - total_cost_sold
-    
-    total_roi_pct = round(((realized_profit + active_potential_profit) / total_invested * 100) if total_invested > 0 else 0, 1)
+    pending = [s for s in sales if s.get('status') == 'pending']
+    settled = [s for s in sales if s.get('status') == 'settled']
 
-    # 3. EXPUNERE / RISC (Bani blocați)
+    # 1. STOC CURENT — doar unitățile rămase
+    stock_cost = sum(f(i.get('unit_cost')) * int(i.get('qty_remaining', 0) or 0) for i in inventory)
+    stock_value = sum(f(i.get('estimated_value')) * int(i.get('qty_remaining', 0) or 0) for i in inventory)
+    stock_potential = stock_value - stock_cost
+    stock_roi_pct = round((stock_potential / stock_cost * 100) if stock_cost > 0 else 0, 1)
+    units_in_stock = sum(int(i.get('qty_remaining', 0) or 0) for i in inventory)
+    active_count = len([i for i in inventory if int(i.get('qty_remaining', 0) or 0) > 0])
+
+    # 2. BANI PE DRUM — vândut, aștept plata
+    pending_total = sum(f(s.get('total')) for s in pending)
+    pending_profit = sum(f(s.get('profit')) for s in pending)
+    pending_cost = sum(f(s.get('cost_total')) for s in pending)
+
+    # 3. REALIZAT — bani intrați efectiv în conturi
+    total_recovered = sum(f(s.get('total')) for s in settled)
+    realized_profit = sum(f(s.get('profit')) for s in settled)
+
+    # 4. ALL-TIME
+    total_invested = sum(f(i.get('unit_cost')) * int(i.get('quantity', 0) or 0) for i in inventory)
+    projected_profit = realized_profit + pending_profit + stock_potential
+    total_roi_pct = round((projected_profit / total_invested * 100) if total_invested > 0 else 0, 1)
+
+    # 5. EXPUNERE — capital care încă n-a revenit în conturi
     current_risk = total_invested - total_recovered
 
     return {
-        'active_cost': round(active_cost, 2),
-        'active_estimated_value': round(active_estimated_value, 2),
-        'active_potential_profit': round(active_potential_profit, 2),
-        'active_roi_pct': active_roi_pct,
-        
+        # stoc
+        'stock_cost': round(stock_cost, 2),
+        'stock_value': round(stock_value, 2),
+        'stock_potential': round(stock_potential, 2),
+        'stock_roi_pct': stock_roi_pct,
+        'units_in_stock': units_in_stock,
+        'active_count': active_count,
+
+        # pe drum
+        'pending_total': round(pending_total, 2),
+        'pending_profit': round(pending_profit, 2),
+        'pending_cost': round(pending_cost, 2),
+        'pending_count': len(pending),
+
+        # realizat / all-time
         'total_invested': round(total_invested, 2),
         'total_recovered': round(total_recovered, 2),
         'realized_profit': round(realized_profit, 2),
+        'projected_profit': round(projected_profit, 2),
         'total_roi_pct': total_roi_pct,
         'current_risk': round(current_risk, 2),
-        
-        'active_count': len(active),
-        'sold_count': len(sold),
+        'sold_count': len(settled),
+
+        # compatibilitate cu numele vechi
+        'active_cost': round(stock_cost, 2),
+        'active_estimated_value': round(stock_value, 2),
+        'active_potential_profit': round(stock_potential, 2),
+        'active_roi_pct': stock_roi_pct,
     }
 
 @app.route('/bani')
@@ -2159,6 +2240,7 @@ def finance_data():
     transactions = data.get('transactions', [])
     debts        = data.get('debts', [])
     inventory    = data.get('inventory', [])
+    sales        = data.get('sales', [])
     inv_log      = data.get('investment_log', [])
 
     # Attach balances to accounts
@@ -2173,18 +2255,32 @@ def finance_data():
     real_out = sum(float(t['amount']) for t in transactions
                    if t.get('type') == 'out' and t.get('tag') not in ('invest', 'transfer'))
 
-    inv_summary = _calc_inv_summary(inventory, inv_log)
+    inv_summary = _calc_inv_summary(inventory, sales)
+
+    # Datorii nereglate — le arătăm în bilanțul de sus
+    debt_owed = sum(float(d.get('amount', 0)) for d in debts
+                    if d.get('direction') == 'owed_to_me' and not d.get('settled'))
+    debt_owing = sum(float(d.get('amount', 0)) for d in debts
+                     if d.get('direction') == 'i_owe' and not d.get('settled'))
+
+    # Averea totală: lichid + stoc (la cost) + bani pe drum + net datorii
+    net_worth = (total_balance + inv_summary['stock_cost']
+                 + inv_summary['pending_total'] + debt_owed - debt_owing)
 
     return jsonify({
         'accounts':      accounts,
         'transactions':  sorted(transactions, key=lambda x: x.get('date',''), reverse=True),
         'debts':         debts,
         'inventory':     sorted(inventory, key=lambda x: x.get('date_bought',''), reverse=True),
+        'sales':         sorted(sales, key=lambda x: x.get('date_sold',''), reverse=True),
         'investment_log': sorted(inv_log, key=lambda x: x.get('date',''), reverse=True),
         'summary': {
-            'total':     round(total_balance, 2),
-            'total_in':  round(real_in, 2),
-            'total_out': round(real_out, 2)
+            'total':      round(total_balance, 2),
+            'total_in':   round(real_in, 2),
+            'total_out':  round(real_out, 2),
+            'debt_owed':  round(debt_owed, 2),
+            'debt_owing': round(debt_owing, 2),
+            'net_worth':  round(net_worth, 2)
         },
         'inv_summary': inv_summary
     })
@@ -2431,137 +2527,381 @@ def finance_transfer():
     return jsonify({'status': 'success', 'transfer_ref': transfer_ref})
 
 
+# ══════════════════════════════════════════════════════════════
+#  INVESTIȚII v2 — cantități + vânzări în așteptare
+# ══════════════════════════════════════════════════════════════
+
+def _sync_item_status(item):
+    """Un produs e 'sold' doar când nu mai are nicio unitate pe stoc."""
+    item['qty_remaining'] = max(0, int(item.get('qty_remaining', 0) or 0))
+    item['cost_basis'] = round(float(item.get('unit_cost', 0) or 0) * int(item.get('quantity', 0) or 0), 2)
+    item['status'] = 'sold' if item['qty_remaining'] == 0 else 'active'
+    return item
+
+
+def _num(v, default=0.0):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _int(v, default=0):
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return default
+
+
 # --- INVEST MONEY ---
 @app.route('/api/finance/invest', methods=['POST'])
 @requires_auth
 def finance_invest():
-    """Deduct from source account and add product to inventory."""
-    import time
+    """Scade din cont și adaugă produsul (cu una sau mai multe bucăți) în stoc."""
     data = _load_finance()
     body = request.json or {}
-    acc_id   = body.get('source_account_id', '')
-    amount   = body.get('amount', 0)
-    name     = body.get('name', '').strip()
-    est_val  = body.get('estimated_value', 0)
-    note     = body.get('note', '').strip()
-    date     = body.get('date', datetime.now().strftime('%Y-%m-%d'))
+    acc_id  = body.get('source_account_id', '')
+    name    = (body.get('name') or '').strip()
+    note    = (body.get('note') or '').strip()
+    date    = body.get('date') or datetime.now().strftime('%Y-%m-%d')
+    qty     = max(1, _int(body.get('quantity'), 1))
 
-    try:
-        amount  = float(amount)
-        est_val = float(est_val) if est_val else amount
-        if amount <= 0: raise ValueError
-    except:
-        return jsonify({'status': 'error', 'message': 'Sumă invalidă'}), 400
+    # unit_cost e forma nouă; 'amount' rămâne acceptat pentru compatibilitate
+    if body.get('unit_cost') not in (None, ''):
+        unit_cost = _num(body.get('unit_cost'))
+    else:
+        unit_cost = _num(body.get('amount')) / qty
 
+    est_val = _num(body.get('estimated_value')) or unit_cost
+
+    if unit_cost <= 0:
+        return jsonify({'status': 'error', 'message': 'Preț pe bucată invalid'}), 400
     if not name:
         return jsonify({'status': 'error', 'message': 'Introduceți un nume pentru produs'}), 400
 
-    ts = int(time.time() * 1000)
-    # Transaction that reduces account balance
+    total = round(unit_cost * qty, 2)
+    inv_id = _new_id('inv')
+
     tx = {
-        'id': f"tx_{ts}",
+        'id': _new_id('tx'),
         'account_id': acc_id,
-        'amount': amount,
+        'amount': total,
         'type': 'out',
         'tag': 'invest',
-        'note': f'Investiție: {name}',
+        'note': f'Investiție: {name}' + (f' ×{qty}' if qty > 1 else ''),
         'date': date,
         'created_at': datetime.now().isoformat()
     }
-    inv_id = f"inv_{ts}"
-    inv_item = {
+    inv_item = _sync_item_status({
         'id': inv_id,
         'name': name,
-        'cost_basis': amount,
-        'estimated_value': est_val,
+        'quantity': qty,
+        'qty_remaining': qty,
+        'unit_cost': round(unit_cost, 2),
+        'cost_basis': total,
+        'estimated_value': round(est_val, 2),
         'source_account_id': acc_id,
         'date_bought': date,
         'status': 'active',
-        'sold_at': None,
-        'sold_amount': None,
-        'sold_to_account_id': None,
         'note': note,
         'created_at': datetime.now().isoformat()
-    }
-    inv_log = {
-        'id': f"ilog_{ts}",
+    })
+    data.setdefault('transactions', []).append(tx)
+    data.setdefault('inventory', []).append(inv_item)
+    data.setdefault('investment_log', []).append({
+        'id': _new_id('ilog'),
         'type': 'invest',
         'inventory_id': inv_id,
-        'amount': amount,
+        'name': name,
+        'qty': qty,
+        'amount': total,
         'account_id': acc_id,
         'profit': None,
         'date': date,
         'note': note
-    }
-    data.setdefault('transactions', []).append(tx)
-    data.setdefault('inventory', []).append(inv_item)
-    data.setdefault('investment_log', []).append(inv_log)
+    })
     _save_finance(data)
     return jsonify({'status': 'success', 'inventory_item': inv_item})
 
 
-# --- RECOVER FUNDS (SELL) ---
+# --- ADD MORE UNITS OF AN EXISTING PRODUCT ---
+@app.route('/api/finance/inventory/add-units', methods=['POST'])
+@requires_auth
+def finance_inventory_add_units():
+    """Mai cumperi bucăți din acelaşi produs. Costul pe bucată devine media ponderată."""
+    data = _load_finance()
+    body = request.json or {}
+    inv_id = body.get('id')
+    qty    = max(1, _int(body.get('quantity'), 1))
+    acc_id = body.get('source_account_id', '')
+    date   = body.get('date') or datetime.now().strftime('%Y-%m-%d')
+    note   = (body.get('note') or '').strip()
+
+    item = next((i for i in data.get('inventory', []) if i.get('id') == inv_id), None)
+    if not item:
+        return jsonify({'status': 'error', 'message': 'Produs negăsit'}), 404
+
+    unit_cost = _num(body.get('unit_cost')) or _num(item.get('unit_cost'))
+    if unit_cost <= 0:
+        return jsonify({'status': 'error', 'message': 'Preț pe bucată invalid'}), 400
+
+    total = round(unit_cost * qty, 2)
+    old_qty = _int(item.get('quantity'), 0)
+    old_cost = _num(item.get('unit_cost'))
+
+    # Media ponderată pe toate bucățile cumpărate vreodată
+    new_qty = old_qty + qty
+    item['unit_cost'] = round(((old_cost * old_qty) + total) / new_qty, 2) if new_qty else unit_cost
+    item['quantity'] = new_qty
+    item['qty_remaining'] = _int(item.get('qty_remaining'), 0) + qty
+    if body.get('estimated_value') not in (None, ''):
+        item['estimated_value'] = round(_num(body.get('estimated_value')), 2)
+    _sync_item_status(item)
+
+    data.setdefault('transactions', []).append({
+        'id': _new_id('tx'),
+        'account_id': acc_id,
+        'amount': total,
+        'type': 'out',
+        'tag': 'invest',
+        'note': f'Reaprovizionare: {item["name"]} ×{qty}',
+        'date': date,
+        'created_at': datetime.now().isoformat()
+    })
+    data.setdefault('investment_log', []).append({
+        'id': _new_id('ilog'),
+        'type': 'invest',
+        'inventory_id': inv_id,
+        'name': item['name'],
+        'qty': qty,
+        'amount': total,
+        'account_id': acc_id,
+        'profit': None,
+        'date': date,
+        'note': note or f'+{qty} buc.'
+    })
+    _save_finance(data)
+    return jsonify({'status': 'success', 'inventory_item': item})
+
+
+# --- SELL (instant sau în așteptare) ---
+@app.route('/api/finance/sell', methods=['POST'])
+@requires_auth
+def finance_sell():
+    return _do_sell(request.json or {})
+
+
+def _do_sell(body):
+    """
+    Vinde una sau mai multe bucăți.
+
+      mode='instant' → banii intră imediat în contul ales
+      mode='pending' → marchezi vânzarea, dar banii sunt „pe drum”;
+                       nu ating niciun cont până la /api/finance/sale/settle
+    """
+    data = _load_finance()
+    inv_id   = body.get('inventory_id', '')
+    qty      = max(1, _int(body.get('qty'), 1))
+    mode     = body.get('mode', 'instant')
+    dst_id   = body.get('dest_account_id', '')
+    buyer    = (body.get('buyer') or '').strip()
+    note     = (body.get('note') or '').strip()
+    date     = body.get('date') or datetime.now().strftime('%Y-%m-%d')
+    expected = body.get('expected_date') or ''
+
+    item = next((i for i in data.get('inventory', []) if i.get('id') == inv_id), None)
+    if not item:
+        return jsonify({'status': 'error', 'message': 'Produs negăsit'}), 404
+
+    remaining = _int(item.get('qty_remaining'), 0)
+    if remaining <= 0:
+        return jsonify({'status': 'error', 'message': 'Nu mai ai bucăți pe stoc din produsul ăsta'}), 400
+    if qty > remaining:
+        return jsonify({'status': 'error', 'message': f'Ai doar {remaining} buc. pe stoc'}), 400
+
+    # unit_price nou; 'amount' (total) acceptat pentru compatibilitate
+    if body.get('unit_price') not in (None, ''):
+        unit_price = _num(body.get('unit_price'))
+    else:
+        unit_price = _num(body.get('amount')) / qty
+
+    if unit_price <= 0:
+        return jsonify({'status': 'error', 'message': 'Preț de vânzare invalid'}), 400
+    if mode == 'instant' and not dst_id:
+        return jsonify({'status': 'error', 'message': 'Alege contul în care intră banii'}), 400
+
+    unit_cost  = _num(item.get('unit_cost'))
+    total      = round(unit_price * qty, 2)
+    cost_total = round(unit_cost * qty, 2)
+    profit     = round(total - cost_total, 2)
+    settled    = (mode == 'instant')
+
+    sale = {
+        'id': _new_id('sale'),
+        'inventory_id': inv_id,
+        'name': item.get('name', ''),
+        'qty': qty,
+        'unit_cost': round(unit_cost, 2),
+        'unit_price': round(unit_price, 2),
+        'total': total,
+        'cost_total': cost_total,
+        'profit': profit,
+        'status': 'settled' if settled else 'pending',
+        'buyer': buyer,
+        'note': note,
+        'date_sold': date,
+        'expected_date': expected,
+        'account_id': dst_id if settled else None,
+        'settled_at': date if settled else None,
+        'created_at': datetime.now().isoformat()
+    }
+
+    # Scoatem bucățile din stoc indiferent de mod — marfa a plecat
+    item['qty_remaining'] = remaining - qty
+    item['sold_at'] = date
+    _sync_item_status(item)
+
+    data.setdefault('sales', []).append(sale)
+
+    if settled:
+        data.setdefault('transactions', []).append({
+            'id': _new_id('tx'),
+            'account_id': dst_id,
+            'amount': total,
+            'type': 'in',
+            'tag': 'recover',
+            'sale_id': sale['id'],
+            'note': note or f'Vânzare: {item["name"]}' + (f' ×{qty}' if qty > 1 else ''),
+            'date': date,
+            'created_at': datetime.now().isoformat()
+        })
+
+    data.setdefault('investment_log', []).append({
+        'id': _new_id('ilog'),
+        'type': 'recover' if settled else 'pending',
+        'inventory_id': inv_id,
+        'sale_id': sale['id'],
+        'name': item.get('name', ''),
+        'qty': qty,
+        'amount': total,
+        'cost_basis': cost_total,
+        'account_id': dst_id if settled else None,
+        'profit': profit,
+        'date': date,
+        'note': note or (f'Aștept banii de la {buyer}' if buyer else 'Aștept banii')
+    })
+
+    _save_finance(data)
+    return jsonify({'status': 'success', 'sale': sale, 'profit': profit})
+
+
+# --- ÎNCASEZ BANII UNEI VÂNZĂRI ÎN AȘTEPTARE ---
+@app.route('/api/finance/sale/settle', methods=['POST'])
+@requires_auth
+def finance_sale_settle():
+    data = _load_finance()
+    body = request.json or {}
+    sale_id = body.get('id')
+    dst_id  = body.get('dest_account_id', '')
+    date    = body.get('date') or datetime.now().strftime('%Y-%m-%d')
+
+    sale = next((s for s in data.get('sales', []) if s.get('id') == sale_id), None)
+    if not sale:
+        return jsonify({'status': 'error', 'message': 'Vânzare negăsită'}), 404
+    if sale.get('status') != 'pending':
+        return jsonify({'status': 'error', 'message': 'Banii au fost deja încasați'}), 400
+    if not dst_id:
+        return jsonify({'status': 'error', 'message': 'Alege contul în care au intrat banii'}), 400
+
+    # Poți corecta suma la încasare (a negociat, a dat mai puțin etc.)
+    if body.get('amount') not in (None, ''):
+        total = round(_num(body.get('amount')), 2)
+        if total <= 0:
+            return jsonify({'status': 'error', 'message': 'Sumă invalidă'}), 400
+        sale['total'] = total
+        sale['unit_price'] = round(total / max(1, _int(sale.get('qty'), 1)), 2)
+        sale['profit'] = round(total - _num(sale.get('cost_total')), 2)
+
+    sale['status'] = 'settled'
+    sale['account_id'] = dst_id
+    sale['settled_at'] = date
+
+    data.setdefault('transactions', []).append({
+        'id': _new_id('tx'),
+        'account_id': dst_id,
+        'amount': sale['total'],
+        'type': 'in',
+        'tag': 'recover',
+        'sale_id': sale['id'],
+        'note': f'Încasare vânzare: {sale.get("name", "")}'
+                + (f' ×{sale.get("qty")}' if _int(sale.get('qty'), 1) > 1 else ''),
+        'date': date,
+        'created_at': datetime.now().isoformat()
+    })
+    data.setdefault('investment_log', []).append({
+        'id': _new_id('ilog'),
+        'type': 'recover',
+        'inventory_id': sale.get('inventory_id'),
+        'sale_id': sale['id'],
+        'name': sale.get('name', ''),
+        'qty': sale.get('qty'),
+        'amount': sale['total'],
+        'cost_basis': sale.get('cost_total'),
+        'account_id': dst_id,
+        'profit': sale.get('profit'),
+        'date': date,
+        'note': 'Bani încasați'
+    })
+    _save_finance(data)
+    return jsonify({'status': 'success', 'sale': sale})
+
+
+# --- ANULEZ O VÂNZARE ---
+@app.route('/api/finance/sale/cancel', methods=['POST'])
+@requires_auth
+def finance_sale_cancel():
+    """Anulează o vânzare în așteptare și pune bucățile înapoi pe stoc."""
+    data = _load_finance()
+    body = request.json or {}
+    sale_id = body.get('id')
+
+    sale = next((s for s in data.get('sales', []) if s.get('id') == sale_id), None)
+    if not sale:
+        return jsonify({'status': 'error', 'message': 'Vânzare negăsită'}), 404
+    if sale.get('status') != 'pending':
+        return jsonify({'status': 'error', 'message': 'Poți anula doar vânzările neîncasate'}), 400
+
+    item = next((i for i in data.get('inventory', []) if i.get('id') == sale.get('inventory_id')), None)
+    if item:
+        item['qty_remaining'] = _int(item.get('qty_remaining'), 0) + _int(sale.get('qty'), 1)
+        _sync_item_status(item)
+
+    data['sales'] = [s for s in data.get('sales', []) if s.get('id') != sale_id]
+    data['investment_log'] = [l for l in data.get('investment_log', [])
+                              if l.get('sale_id') != sale_id]
+    _save_finance(data)
+    return jsonify({'status': 'success'})
+
+
+# --- COMPATIBILITATE: vechiul /recover ---
 @app.route('/api/finance/recover', methods=['POST'])
 @requires_auth
 def finance_recover():
-    """Mark inventory item as sold and credit dest account. Calculate profit."""
-    import time
-    data = _load_finance()
+    """Ruta veche: vinde tot stocul rămas dintr-un produs, direct în cont."""
     body = request.json or {}
-    inv_id   = body.get('inventory_id', '')
-    dst_id   = body.get('dest_account_id', '')
-    amount   = body.get('amount', 0)
-    note     = body.get('note', '').strip()
-    date     = body.get('date', datetime.now().strftime('%Y-%m-%d'))
+    inv_id = body.get('inventory_id', '')
+    item = next((i for i in _load_finance().get('inventory', []) if i.get('id') == inv_id), None)
+    qty = max(1, _int(item.get('qty_remaining'), 1)) if item else 1
 
-    try:
-        amount = float(amount)
-        if amount <= 0: raise ValueError
-    except:
-        return jsonify({'status': 'error', 'message': 'Sumă invalidă'}), 400
-
-    inv_item = next((i for i in data.get('inventory', []) if i['id'] == inv_id), None)
-    if not inv_item:
-        return jsonify({'status': 'error', 'message': 'Produs negăsit'}), 404
-    if inv_item.get('status') == 'sold':
-        return jsonify({'status': 'error', 'message': 'Produsul a fost deja vândut'}), 400
-
-    profit = round(amount - float(inv_item.get('cost_basis', 0)), 2)
-    ts = int(time.time() * 1000)
-
-    # Update inventory
-    inv_item['status']             = 'sold'
-    inv_item['sold_at']            = date
-    inv_item['sold_amount']        = amount
-    inv_item['sold_to_account_id'] = dst_id
-
-    # Transaction crediting dest account
-    tx = {
-        'id': f"tx_{ts}",
-        'account_id': dst_id,
-        'amount': amount,
-        'type': 'in',
-        'tag': 'recover',
-        'note': note or f'Vânzare: {inv_item["name"]}',
-        'date': date,
-        'created_at': datetime.now().isoformat()
-    }
-    inv_log = {
-        'id': f"ilog_{ts}",
-        'type': 'recover',
+    return _do_sell({
         'inventory_id': inv_id,
-        'name': inv_item['name'],
-        'amount': amount,
-        'cost_basis': inv_item.get('cost_basis', 0),
-        'account_id': dst_id,
-        'profit': profit,
-        'date': date,
-        'note': note
-    }
-    data.setdefault('transactions', []).append(tx)
-    data.setdefault('investment_log', []).append(inv_log)
-    _save_finance(data)
-    return jsonify({'status': 'success', 'profit': profit, 'transaction': tx})
+        'qty': qty,
+        'mode': 'instant',
+        'dest_account_id': body.get('dest_account_id', ''),
+        'amount': body.get('amount', 0),
+        'note': body.get('note', ''),
+        'date': body.get('date', '')
+    })
 
 
 # --- INVENTORY CRUD ---
@@ -2572,11 +2912,19 @@ def finance_inventory_edit():
     body = request.json or {}
     inv_id = body.get('id')
     for item in data.get('inventory', []):
-        if item['id'] == inv_id:
-            if 'name' in body:            item['name']            = body['name']
-            if 'cost_basis' in body:      item['cost_basis']      = float(body['cost_basis'])
-            if 'estimated_value' in body: item['estimated_value'] = float(body['estimated_value'])
-            if 'note' in body:            item['note']            = body['note']
+        if item.get('id') == inv_id:
+            if 'name' in body:            item['name'] = (body['name'] or '').strip() or item['name']
+            if 'note' in body:            item['note'] = body['note']
+            if 'estimated_value' in body: item['estimated_value'] = round(_num(body['estimated_value']), 2)
+            if 'unit_cost' in body:       item['unit_cost'] = round(_num(body['unit_cost']), 2)
+            if 'quantity' in body:
+                new_total = max(0, _int(body['quantity'], _int(item.get('quantity'), 1)))
+                sold_units = _int(item.get('quantity'), 0) - _int(item.get('qty_remaining'), 0)
+                item['quantity'] = max(new_total, sold_units)
+                item['qty_remaining'] = max(0, item['quantity'] - sold_units)
+            if 'qty_remaining' in body:
+                item['qty_remaining'] = max(0, _int(body['qty_remaining'], 0))
+            _sync_item_status(item)
             break
     _save_finance(data)
     return jsonify({'status': 'success'})
@@ -2587,13 +2935,15 @@ def finance_inventory_delete():
     data = _load_finance()
     body = request.json or {}
     inv_id = body.get('id')
-    item = next((i for i in data.get('inventory', []) if i['id'] == inv_id), None)
-    if item and item.get('status') == 'sold':
-        return jsonify({'status': 'error', 'message': 'Nu poți șterge un produs vândut'}), 400
-    data['inventory'] = [i for i in data.get('inventory', []) if i['id'] != inv_id]
-    # Also remove associated invest log + reverse the account deduction tx
+
+    has_sales = any(s.get('inventory_id') == inv_id for s in data.get('sales', []))
+    if has_sales:
+        return jsonify({'status': 'error',
+                        'message': 'Produsul are vânzări înregistrate — nu-l pot șterge fără să strice istoricul'}), 400
+
+    data['inventory'] = [i for i in data.get('inventory', []) if i.get('id') != inv_id]
     data['investment_log'] = [l for l in data.get('investment_log', [])
-                               if not (l.get('inventory_id') == inv_id and l.get('type') == 'invest')]
+                              if not (l.get('inventory_id') == inv_id and l.get('type') == 'invest')]
     _save_finance(data)
     return jsonify({'status': 'success'})
 
@@ -2712,37 +3062,178 @@ def activate_scene():
 
     return jsonify({'status': 'success', 'results': results, 'scene_name': scene.get('name', '')})
 
+def _fetch_wled_zones():
+    """Interoghează ambele zone WLED în paralel. Returnează (main, floor);
+    fiecare e un dict {on, bri, seg} sau None dacă zona nu a răspuns."""
+    import requests as _req
+    from config import WLED_IP_MAIN, WLED_IP_FLOOR
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _get(ip):
+        try:
+            r = _req.get(f"http://{ip}/json/state", timeout=1.5)
+            if r.status_code == 200:
+                d = r.json()
+                return {"on": d.get("on"), "bri": d.get("bri"), "seg": d.get("seg", [])}
+        except Exception:
+            pass
+        return None
+
+    with ThreadPoolExecutor() as ex:
+        f_main = ex.submit(_get, WLED_IP_MAIN)
+        f_floor = ex.submit(_get, WLED_IP_FLOOR)
+        return f_main.result(), f_floor.result()
+
+
 @app.route('/api/scenes/wled-snapshot', methods=['GET'])
 @requires_auth
 def wled_snapshot():
     """Capturează starea curentă din ambele zone WLED."""
     try:
-        import requests as _req
-        from config import WLED_IP_MAIN, WLED_IP_FLOOR
-        from concurrent.futures import ThreadPoolExecutor
-
-        def _get(ip):
-            try:
-                r = _req.get(f"http://{ip}/json/state", timeout=1.5)
-                if r.status_code == 200:
-                    d = r.json()
-                    return {"on": d.get("on"), "bri": d.get("bri"), "seg": d.get("seg", [])}
-            except:
-                pass
-            return None
-
-        with ThreadPoolExecutor() as ex:
-            f_main  = ex.submit(_get, WLED_IP_MAIN)
-            f_floor = ex.submit(_get, WLED_IP_FLOOR)
-            main_state  = f_main.result()
-            floor_state = f_floor.result()
-
+        main_state, floor_state = _fetch_wled_zones()
         if main_state is None and floor_state is None:
             return jsonify({'status': 'error', 'message': 'WLED offline sau inaccesibil'}), 503
-
         return jsonify({'status': 'ok', 'main': main_state, 'floor': floor_state})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+# ==============================================================
+# TEMA VIZUALĂ — culoarea de accent a interfeței
+# ==============================================================
+# Trei surse posibile pentru --primary (butoane, glow-uri, evidențieri):
+#   manual — o culoare aleasă direct de Sergiu
+#   wled   — media culorilor din benzile LED ale camerei, chiar acum
+#   mood   — culoarea stării emoționale a lui Chronos (vezi core/emotions.py)
+
+DEFAULT_ACCENT = '#8b7aff'
+_HEX_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
+
+
+def _load_theme():
+    if os.path.exists(THEME_FILE):
+        try:
+            with open(THEME_FILE, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            if cfg.get('mode') in ('manual', 'wled', 'mood') and _HEX_RE.match(cfg.get('color', '')):
+                return cfg
+        except Exception:
+            pass
+    return {'mode': 'manual', 'color': DEFAULT_ACCENT}
+
+
+def _save_theme(cfg):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(THEME_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+
+_DEFAULT_H, _DEFAULT_L, _DEFAULT_S = colorsys.rgb_to_hls(
+    *(int(DEFAULT_ACCENT[i:i + 2], 16) / 255.0 for i in (1, 3, 5))
+)
+
+
+def _normalize_accent_hex(rgb):
+    """Orice RGB brut (dintr-un LED, o poză etc.) devine o culoare de accent
+    lizibilă pe fundal întunecat: nici prea stinsă, nici arzătoare.
+
+    Lumină albă/gri (saturație ~0) nu are nicio culoare reală de extras — la
+    saturație zero, nuanța (hue) e matematic nedefinită și oricare valoare
+    calculată din zgomotul de rotunjire e arbitrară. În loc să „boostăm" acel
+    zgomot într-o culoare la întâmplare (testat: gri pur ieșea roșu), păstrăm
+    nuanța accentului implicit — camera nu are culoare, deci nici UI-ul nu-și
+    schimbă una."""
+    r, g, b = (max(0, min(255, float(v))) / 255.0 for v in rgb)
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    if s <= 0.08:
+        h = _DEFAULT_H
+    s = max(0.42, min(0.92, s if s > 0.08 else 0.55))
+    l = max(0.46, min(0.72, l))
+    r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
+    return '#%02x%02x%02x' % (round(r2 * 255), round(g2 * 255), round(b2 * 255))
+
+
+def _wled_accent_hex():
+    """Media culorilor din zonele LED aprinse acum, normalizată ca accent UI.
+    None dacă WLED e offline sau ambele zone sunt stinse."""
+    try:
+        main_state, floor_state = _fetch_wled_zones()
+    except Exception:
+        return None
+
+    cols = []
+    for st in (main_state, floor_state):
+        if not st or st.get('on') is False:
+            continue
+        seg = (st.get('seg') or [{}])[0]
+        col = (seg.get('col') or [[255, 255, 255]])[0]
+        if col and len(col) >= 3 and any(col[:3]):
+            cols.append(col[:3])
+
+    if not cols:
+        return None
+    avg = [sum(c[i] for c in cols) / len(cols) for i in range(3)]
+    return _normalize_accent_hex(avg)
+
+
+def _resolve_theme(cfg):
+    """Întoarce (culoare_efectivă, e_live, sursă). e_live=False înseamnă că
+    sursa automată nu a răspuns și s-a căzut pe ultima culoare manuală."""
+    mode = cfg.get('mode', 'manual')
+    manual_color = cfg.get('color') or DEFAULT_ACCENT
+
+    if mode == 'mood':
+        try:
+            return _chronos_state_payload()['color'], True, 'mood'
+        except Exception:
+            return manual_color, False, 'mood'
+
+    if mode == 'wled':
+        hexv = _wled_accent_hex()
+        return (hexv, True, 'wled') if hexv else (manual_color, False, 'wled')
+
+    return manual_color, True, 'manual'
+
+
+@app.route('/api/theme', methods=['GET'])
+@requires_auth
+def get_theme():
+    cfg = _load_theme()
+    resolved, live, mode = _resolve_theme(cfg)
+    return jsonify({
+        'mode': cfg.get('mode', 'manual'),
+        'color': cfg.get('color', DEFAULT_ACCENT),
+        'resolved': resolved,
+        'live': live,
+    })
+
+
+@app.route('/api/theme', methods=['POST'])
+@requires_auth
+def set_theme():
+    body = request.json or {}
+    cfg = _load_theme()
+
+    mode = body.get('mode', cfg.get('mode', 'manual'))
+    if mode not in ('manual', 'wled', 'mood'):
+        return jsonify({'status': 'error', 'message': 'Mod invalid'}), 400
+    cfg['mode'] = mode
+
+    if 'color' in body:
+        c = (body.get('color') or '').strip()
+        if not _HEX_RE.match(c):
+            return jsonify({'status': 'error', 'message': 'Culoare invalidă (aștept #rrggbb)'}), 400
+        cfg['color'] = c
+
+    _save_theme(cfg)
+    resolved, live, _ = _resolve_theme(cfg)
+    return jsonify({
+        'status': 'success',
+        'mode': cfg['mode'],
+        'color': cfg.get('color', DEFAULT_ACCENT),
+        'resolved': resolved,
+        'live': live,
+    })
 
 
 if __name__ == '__main__':

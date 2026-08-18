@@ -146,9 +146,10 @@ function renderProgressBar(s, tasksAllDone) {
     }
 }
 
-// Load on page load + refresh every 90s
+// Încărcare la deschidere + reîmprospătare la 90s, dar NU când tabul e ascuns
+// (altfel Raspberry-ul lucra degeaba pentru o pagină pe care nu o vede nimeni).
 loadDayStatus();
-setInterval(loadDayStatus, 90000);
+setInterval(() => { if (!document.hidden) loadDayStatus(); }, 90000);
 
 // Public API for other scripts
 window.getDayStatus = () => _dayStatus;

@@ -1,52 +1,167 @@
 {% extends "base.html" %}
 {% set active_page = "terminal" %}
+{% set page_title = "Terminal" %}
+{% set page_icon = "⌨️" %}
+{% set page_eyebrow = "Sistem" %}
+{% set page_sub = "Comenzi brute către dispatcher. Pentru conversație normală, folosește dock-ul lui Chronos din colț." %}
 
 {% block title %}Chronos OS | Terminal{% endblock %}
 
+{% block head_extra %}
+<style>
+.term-shell {
+    display: flex; flex-direction: column;
+    height: min(70vh, 660px);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.01));
+    overflow: hidden;
+}
+.term-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,.025);
+}
+.term-dots { display: flex; gap: 6px; }
+.term-dots i { width: 11px; height: 11px; border-radius: 50%; background: rgba(255,255,255,.13); }
+.term-dots i:first-child { background: rgba(255,92,122,.55); }
+.term-dots i:nth-child(2) { background: rgba(255,211,107,.55); }
+.term-dots i:nth-child(3) { background: rgba(60,230,143,.55); }
+.term-path { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--text-faint); }
+.term-status {
+    margin-left: auto; display: flex; align-items: center; gap: 7px;
+    font-size: 11.5px; font-weight: 700; color: var(--text-muted);
+}
+.status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--text-faint); transition: all var(--t);
+}
+
+.terminal-output {
+    flex: 1; overflow-y: auto;
+    padding: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px; line-height: 1.75;
+}
+.term-line { display: flex; gap: 10px; margin-bottom: 3px; }
+.term-prefix {
+    flex: 0 0 72px; text-align: right;
+    font-weight: 700; font-size: 11px; color: var(--text-faint);
+    text-transform: uppercase; letter-spacing: .5px;
+    padding-top: 1px;
+}
+.term-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; color: var(--text-soft); }
+.term-line.user .term-prefix    { color: var(--primary); }
+.term-line.user .term-text      { color: #fff; }
+.term-line.system .term-prefix  { color: var(--teal); }
+.term-line.system .term-text    { color: var(--text); }
+.term-line.error .term-prefix,
+.term-line.error .term-text     { color: var(--red); }
+.term-line.success .term-text   { color: var(--green); }
+.term-line.info .term-text      { color: var(--text-muted); }
+
+.term-thinking { display: flex; align-items: center; gap: 9px; padding: 8px 0 8px 82px; }
+.term-thinking .term-dots { gap: 4px; }
+.term-thinking .term-dots span {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint);
+    animation: typingDot 1.2s ease-in-out infinite;
+}
+.term-thinking .term-dots span:nth-child(2) { animation-delay: .18s; }
+.term-thinking .term-dots span:nth-child(3) { animation-delay: .36s; }
+
+.intent-badge {
+    display: inline-block; font-size: 10.5px; font-weight: 700;
+    padding: 2px 9px; border-radius: 999px; margin-right: 5px;
+    background: var(--primary-dim); color: var(--primary);
+    border: 1px solid rgba(var(--primary-rgb),.28);
+}
+
+.term-quick-cmds {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+}
+.term-quick-btn {
+    font-size: 11.5px; font-weight: 600;
+    padding: 5px 12px; border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,.04);
+    color: var(--text-muted); cursor: pointer;
+    transition: all var(--t-fast);
+}
+.term-quick-btn:hover { color: #fff; border-color: var(--border-glow); background: var(--primary-dim); }
+
+.terminal-input-row {
+    display: flex; align-items: flex-end; gap: 10px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--border);
+    background: rgba(255,255,255,.02);
+}
+.term-prompt {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px; font-weight: 700; color: var(--teal);
+    padding-bottom: 11px;
+}
+.terminal-input-row textarea {
+    flex: 1; resize: none; max-height: 120px;
+    font-family: 'JetBrains Mono', monospace; font-size: 13px;
+}
+.term-send-btn {
+    width: 42px; height: 42px; flex: 0 0 42px;
+    border-radius: var(--radius-xs); border: none; cursor: pointer;
+    background: linear-gradient(135deg, var(--primary), #6d5cf0);
+    color: #fff; font-size: 15px;
+    transition: filter var(--t-fast), transform var(--t-fast);
+}
+.term-send-btn:hover { filter: brightness(1.12); }
+.term-send-btn:active { transform: scale(.93); }
+
+@media (max-width: 560px) {
+    .term-prefix { flex-basis: 54px; font-size: 10px; }
+    .term-thinking { padding-left: 64px; }
+}
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="terminal-container">
-
-    <div class="terminal-header">
-        <div>
-            <div class="section-title" style="font-size:18px">⌨️ Terminal Chronos</div>
-            <div class="section-subtitle">Trimite comenzi direct la Dispatcher</div>
-        </div>
-        <div class="terminal-status">
-            <div class="status-dot" id="statusDot"></div>
-            <span id="statusText">Conectat</span>
+<div class="term-shell">
+    <div class="term-bar">
+        <div class="term-dots"><i></i><i></i><i></i></div>
+        <span class="term-path">chronos@dispatcher</span>
+        <div class="term-status">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">Se conectează…</span>
         </div>
     </div>
 
-    <div class="terminal-window">
-        <div class="terminal-output" id="terminalOutput">
-            <div class="term-line info">
-                <span class="term-prefix">CHRONOS</span>
-                <span class="term-text">Terminal pornit. Scrie o comandă și apasă Enter sau →</span>
-            </div>
-            <div class="term-line info">
-                <span class="term-prefix">TIP</span>
-                <span class="term-text">Poți trimite orice comandă: led, muzică, jurnal, întrebări generale...</span>
-            </div>
+    <div class="terminal-output" id="terminalOutput">
+        <div class="term-line info">
+            <span class="term-prefix">CHRONOS</span>
+            <span class="term-text">Terminal pornit. Scrie o comandă și apasă Enter.</span>
         </div>
-
-        <div class="term-quick-cmds" id="quickCmds">
-            <span style="font-size:11px;color:var(--text-faint);margin-right:4px">Quick:</span>
-            <button class="term-quick-btn" onclick="fillCmd('pune muzică calmă')">🎵 Muzică calmă</button>
-            <button class="term-quick-btn" onclick="fillCmd('schimbă luminile în albastru calm')">💡 Lumini calme</button>
-            <button class="term-quick-btn" onclick="fillCmd('ce am făcut ieri?')">🧠 Memory</button>
-            <button class="term-quick-btn" onclick="fillCmd('rezumă ziua mea de azi')">🌅 Rezumă ziua</button>
-        </div>
-
-        <div class="terminal-input-row">
-            <div class="term-prompt">Chronos&gt;</div>
-            <textarea id="terminalInput" rows="1" placeholder="Scrie comanda..." onkeydown="handleTermKey(event)"></textarea>
-            <button class="term-send-btn" onclick="sendCommand()">➤</button>
+        <div class="term-line info">
+            <span class="term-prefix">TIP</span>
+            <span class="term-text">Orice comandă: led, muzică, jurnal, întrebări generale. ↑/↓ parcurg istoricul.</span>
         </div>
     </div>
 
+    <div class="term-quick-cmds" id="quickCmds">
+        <span class="faint" style="font-size:11px;margin-right:2px">Rapid:</span>
+        <button class="term-quick-btn" onclick="fillCmd('pune muzică calmă')">🎵 Muzică calmă</button>
+        <button class="term-quick-btn" onclick="fillCmd('schimbă luminile în albastru calm')">💡 Lumini calme</button>
+        <button class="term-quick-btn" onclick="fillCmd('ce am făcut ieri?')">🧠 Memorie</button>
+        <button class="term-quick-btn" onclick="fillCmd('rezumă ziua mea de azi')">🌅 Rezumă ziua</button>
+    </div>
+
+    <div class="terminal-input-row">
+        <div class="term-prompt">chronos&gt;</div>
+        <textarea id="terminalInput" class="form-input" rows="1" placeholder="Scrie comanda…" onkeydown="handleTermKey(event)"></textarea>
+        <button class="term-send-btn" onclick="sendCommand()">➤</button>
+    </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/terminal.js') }}"></script>
+<script src="{{ url_for('static', filename='js/terminal.js') }}?v=3.0"></script>
 {% endblock %}

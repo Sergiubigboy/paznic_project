@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% set active_page = "journal" %}
+{% set page_title = "Jurnal" %}
+{% set page_icon = "📘" %}
+{% set page_eyebrow = "Zi de zi" %}
+{% set page_sub = "Ce s-a întâmplat, cum te-ai simțit, ce a rămas în urmă." %}
 
 {% block title %}Chronos OS | Jurnal{% endblock %}
 
@@ -85,9 +89,6 @@
                 <div id="sidebarStatusItems">
                     <div class="empty-state" style="padding:10px 0">Se încarcă...</div>
                 </div>
-                <a href="/day" class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;margin-top:10px">
-                    Hub Zilnic →
-                </a>
             </div>
 
             <div class="sidebar-card">
@@ -139,6 +140,8 @@
 {% endblock %}
 
 {% block scripts %}
+<!-- doar aici e consumat evenimentul dayStatusLoaded -->
+<script src="{{ url_for('static', filename='js/daily-status.js') }}?v=3.0"></script>
 <script src="{{ url_for('static', filename='js/script.js') }}?v=2.1"></script>
 <script>
 // Populate sidebar today status from day status data

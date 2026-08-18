@@ -1,32 +1,32 @@
 {% extends "base.html" %}
+{% set active_page = "electronics" %}
+{% set page_title = "Electronics Lab" %}
+{% set page_icon = "⚡" %}
+{% set page_eyebrow = "Atelier" %}
+{% set page_sub = "Inventar de componente și proiectele în lucru." %}
 {% block title %}Electronics Lab — Chronos OS{% endblock %}
 
-{% block head_extra %}
+{% block page_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/electronics.css') }}">
+{% endblock %}
+
+{% block page_actions %}
+<div class="elab-header-stats" id="elabHeaderStats">
+  <div class="elab-stat-pill">
+    <span class="elab-stat-icon">📦</span>
+    <span id="hStatComponents">—</span>
+    <span class="elab-stat-lbl">componente</span>
+  </div>
+  <div class="elab-stat-pill">
+    <span class="elab-stat-icon">🔧</span>
+    <span id="hStatProjects">—</span>
+    <span class="elab-stat-lbl">proiecte</span>
+  </div>
+</div>
 {% endblock %}
 
 {% block content %}
 <div class="container-wide" id="elabPage">
-
-  <!-- Page header -->
-  <div class="section-header" style="margin-bottom:20px">
-    <div>
-      <div class="section-title">⚡ Electronics Lab</div>
-      <div class="section-subtitle">Inventar componente și proiecte</div>
-    </div>
-    <div class="elab-header-stats" id="elabHeaderStats">
-      <div class="elab-stat-pill">
-        <span class="elab-stat-icon">📦</span>
-        <span id="hStatComponents">—</span>
-        <span class="elab-stat-lbl">componente</span>
-      </div>
-      <div class="elab-stat-pill">
-        <span class="elab-stat-icon">🔧</span>
-        <span id="hStatProjects">—</span>
-        <span class="elab-stat-lbl">proiecte</span>
-      </div>
-    </div>
-  </div>
 
   <!-- Tab switcher -->
   <div class="elab-tabs">

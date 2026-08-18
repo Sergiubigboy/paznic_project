@@ -11,7 +11,7 @@ import asyncio
 import logging
 import threading
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from agents.music_agent import MusicAgent
 from agents.wled_agent import WLEDAgent
@@ -74,7 +74,18 @@ UNELTE (TOOLS):
         - Dacă vrea să noteze în jurnal (ex: "am fost la sală") → ["logger_agent"]
         - Dacă este o întrebare generală sau discuție → ["general_chat"]
 
-        Returnează lista de agenți ("agents") și raționamentul.
+        Separat, în "data_categories", pune datele personale REALE necesare ca să
+        se poată răspunde — STRICT ce trebuie, de obicei una singură:
+        - "câți bani am", "cât am investit" → ["finante"]
+        - "ce am de făcut azi", "ce am programat" → ["azi"]
+        - "cum stau cu obiectivele" → ["targeturi"]
+        - "ce mai am la proiect" → ["proiecte"]
+        - "cât cântăresc" → ["sport"]
+        - "arată-mi tranzacțiile" → ["tranzactii"] (DOAR la cerere explicită)
+        - "ce am vândut" → ["vanzari"] (DOAR la cerere explicită)
+        Lasă lista GOALĂ pentru conversație obișnuită sau subiecte despre lume.
+
+        Returnează lista de agenți ("agents"), datele necesare și raționamentul.
         """
 
         schema = {
@@ -86,6 +97,19 @@ UNELTE (TOOLS):
                         "type": "STRING",
                         "enum": ["music_agent", "wled_agent", "logger_agent", "general_chat"]
                     }
+                },
+                # Extindem schema apelului EXISTENT în loc să facem unul nou:
+                # planificatorul decide și ce date personale sunt necesare, deci
+                # calea text ajunge la aceleași informații ca vocea, fără niciun
+                # request Gemini în plus.
+                "data_categories": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "STRING",
+                        "enum": ["azi", "finante", "tranzactii", "vanzari", "targeturi",
+                                 "remindere", "proiecte", "sport", "obiceiuri"]
+                    },
+                    "description": "Datele personale necesare pentru a răspunde. Gol dacă nu-s necesare."
                 },
                 "reasoning": {"type": "STRING"}
             },
@@ -129,12 +153,45 @@ UNELTE (TOOLS):
         current_time = time.time()
         self.conversation_history.append((current_time, f"User: {text}"))
 
+        # ── Scurtcircuit autobuze: ZERO apeluri LLM ──
+        # Orarul e determinist (stație + ceas + GTFS local), deci n-are rost nici
+        # planificarea, nici generarea răspunsului. Dacă textul nu e clar despre
+        # autobuz, match_query întoarce None și mergem pe calea normală.
+        bus_args = self._match_bus(text)
+        if bus_args:
+            from tools import bus_tools
+            reply = bus_tools.answer(**bus_args)
+            logger.info(f"🚌 [Chronos Agent] Orar autobuz (fără LLM): {bus_args}")
+            self.last_result = {
+                "intents": ["bus"],
+                "reply": reply,
+                "actions": [{"text": "🚌 Orar autobuz.", "status": "ok"}],
+                "reasoning": "Întrebare despre autobuz — răspuns determinist din GTFS.",
+            }
+            self.conversation_history.append((time.time(), f"Chronos: {reply}"))
+            return True
+
         plan = self.plan_and_route(text)
         agents_to_call = plan.get("agents", ["general_chat"]) if isinstance(plan, dict) else ["general_chat"]
         reasoning = plan.get("reasoning", "") if isinstance(plan, dict) else ""
+        data_cats = plan.get("data_categories", []) if isinstance(plan, dict) else []
 
-        self._execute_agents(agents_to_call, text, reasoning)
+        self._execute_agents(agents_to_call, text, reasoning, data_cats)
         return True
+
+    @staticmethod
+    def _match_bus(text: str) -> Optional[dict]:
+        """Întrebare despre autobuz → argumente, altfel None (calea normală).
+
+        Tolerant la erori: dacă orarul nu e generat încă, comanda merge mai
+        departe prin planificator ca înainte.
+        """
+        try:
+            from tools import bus_tools
+            return bus_tools.match_query(text)
+        except Exception as e:
+            logger.debug(f"[Chronos Agent] Potrivire autobuz indisponibilă: {e}")
+            return None
 
     @staticmethod
     def _emotion_block() -> str:
@@ -182,6 +239,18 @@ UNELTE (TOOLS):
         except Exception as e:
             logger.debug(f"[Chronos Agent] Memorie indisponibilă: {e}")
 
+        # Datele personale cerute de planificator (decise în apelul LLM
+        # existent, deci fără request suplimentar)
+        date_reale = ""
+        cats = getattr(self, "_pending_data_cats", None) or []
+        if cats:
+            try:
+                from tools.context_tools import read_context
+                date_reale = read_context(cats)
+                logger.info(f"📂 [Chronos Agent] Date injectate în răspuns: {cats}")
+            except Exception as e:
+                logger.warning(f"⚠️ [Chronos Agent] Nu pot citi datele {cats}: {e}")
+
         recent = ""
         if self.conversation_history:
             recent = "\n".join(line for _, line in self.conversation_history[-6:])
@@ -195,6 +264,8 @@ UNELTE (TOOLS):
 Calculează „azi/mâine/weekend” raportat la data asta, nu ghici.
 
 {self._emotion_block()}
+
+{f"[DATELE TALE REALE — folosește cifrele EXACTE de aici, nu inventa]{chr(10)}{date_reale}" if date_reale else ""}
 
 [CONTEXT DIN MEMORIE — folosește-l DOAR dacă e relevant pentru ce te întreabă acum]
 {memory or "(nimic relevant)"}
@@ -216,10 +287,12 @@ fără markdown și fără să te prezinți. Dacă întrebarea ține de informa�
         self._update_emotions(text, reply)
         return reply
 
-    def _execute_agents(self, agents_to_call: List[str], text: str, reasoning: str = "") -> dict:
+    def _execute_agents(self, agents_to_call: List[str], text: str, reasoning: str = "",
+                        data_cats: List[str] = None) -> dict:
         """Rulează agenții ceruți și salvează rezultatul în last_result."""
         actions_list = []
         reply_text = None
+        self._pending_data_cats = data_cats or []
 
         for ag_name in agents_to_call:
             try:

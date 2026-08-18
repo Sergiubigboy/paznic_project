@@ -40,15 +40,45 @@ class WLEDAgent:
         vals = (vals + [255, 255, 255])[:3]
         return [max(0, min(255, int(v))) for v in vals]
 
+    @staticmethod
+    def _mood_hint() -> str:
+        """Starea afectivă a lui Chronos influențează alegerile cromatice —
+        folosește apelul LLM existent, deci nu costă niciun request în plus."""
+        try:
+            from config import EMOTIONS_ENABLED
+            if not EMOTIONS_ENABLED:
+                return ""
+            from core.emotions import get_state
+            s = get_state().snapshot()
+            return (
+                f"\n        STAREA TA DE SPIRIT ACUM (nervozitate={s['nervozitate']:.0f}, "
+                f"bucurie={s['bucurie']:.0f}, plictiseală={s['plictiseala']:.0f} din 100):\n"
+                "        Când comanda lasă loc de interpretare (ex: 'ceva frumos', 'atmosferă'),\n"
+                "        las-o să-ți influențeze alegerea: bine dispus → culori calde, vii,\n"
+                "        efecte cu mișcare; nervos → tonuri dure, reci sau roșii intense, static;\n"
+                "        plictisit → ceva dinamic, care să miște. Dacă cere o culoare ANUME,\n"
+                "        respect-o exact — starea influențează doar efectul și intensitatea.\n"
+            )
+        except Exception:
+            return ""
+
     def process_request(self, user_command: str) -> dict:
         """Procesează comanda și setează starea benzilor WLED."""
         logger.info(f"🎨 [WLED Agent] Procesez: '{user_command}'")
+
+        # Salvăm starea curentă ca „anulează" să poată reveni la ea
+        try:
+            from tools.scene_tools import snapshot_lights
+            snapshot_lights("cum erau luminile înainte")
+        except Exception as e:
+            logger.debug(f"[WLED Agent] Snapshot eșuat (non-critic): {e}")
 
         system_prompt = f"""
         Ești WLED Agent, AI-ul responsabil de luminile din cameră.
         Avem 2 zone:
         - Main (Top)
         - Floor (Bot)
+        {self._mood_hint()}
 
         DB Palete (main_pal / floor_pal): {self.palettes_db}
         DB Efecte (main_fx / floor_fx): {self.effects_db}

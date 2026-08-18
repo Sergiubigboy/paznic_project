@@ -40,6 +40,7 @@ Schimbări v6:
 """
 
 import asyncio
+import json
 import logging
 import time
 import threading
@@ -73,7 +74,7 @@ except ImportError:
     INTERRUPT_DECAY_RATE          = 0.4
     INTERRUPT_ECHO_TAIL           = 0.35
     INTERRUPT_CALIBRATION_MS      = 500
-    INTERRUPT_ECHO_MARGIN         = 1.6
+    INTERRUPT_ECHO_MARGIN         = 2.2
     VOICE_ACTIVITY_THRESHOLD      = 900
 
 _FLUSH_SENTINEL = object()
@@ -84,6 +85,23 @@ _END_SENTINEL   = object()
 # native-audio). Fără asta, Chronos se oprea pur și simplu în mijlocul frazei.
 MAX_RECONNECT_ATTEMPTS = 2
 RECONNECT_DELAY        = 0.4   # secunde
+
+# Fereastra pe care urmarim anvelopa ecoului (chunks de 80ms).
+# 25 x 80ms = 2s: destul de lunga incat o interventie scurta a lui Sergiu
+# sa nu miste percentila, destul de scurta incat sa urmareasca dinamica vocii.
+ECHO_WINDOW_CHUNKS = 25
+ECHO_PERCENTILE    = 75
+
+# Ce face Chronos după ce a executat o acțiune. Înainte închideam sesiunea
+# automat, ceea ce suna abrupt (mai ales când tocmai pusese el o întrebare).
+# Acum confirmă și lasă ușa deschisă; dacă Sergiu nu mai zice nimic, sesiunea
+# se închide singură prin timeout-ul de inactivitate.
+_DUPA_ACTIUNE = (
+    "Confirmă-i lui Sergiu scurt și sec ce ai făcut, apoi întreabă-l printr-o "
+    "formulare SCURTĂ dacă mai are nevoie de ceva (variaz-o de fiecare dată, "
+    "nu folosi mereu aceleași cuvinte). Apoi TACI și așteaptă. "
+    "Totul într-o singură replică scurtă — nu repeta confirmarea de două ori."
+)
 
 
 class GeminiLiveSession:
@@ -206,15 +224,18 @@ class GeminiLiveSession:
     def _build_tools(self) -> list:
         """
         Declară funcțiile pe care Gemini le poate apela.
-        Execuția e rutată prin dispatcher (wled_specialist, music_specialist, etc.)
+
+        CONSOLIDAT: tool-urile înrudite sunt grupate sub un parametru `action`
+        / `kind` în loc să fie declarate separat. Declarațiile se retrimit la
+        FIECARE tur, deci fiecare descriere în plus se plătește de fiecare
+        dată — 17 tool-uri costau ~2250 tokeni/tur, 8 costă ~jumătate, la
+        aceeași funcționalitate.
         """
         types = self._types
         try:
             return [
-                # Căutare web nativă (grounding Google) — pentru orice informație
-                # actuală din lume: vreme, evenimente astronomice, știri, prețuri.
-                # Modelul își localizează singur interogările pe baza locației
-                # din system prompt.
+                # Căutare web nativă (grounding Google) — informații actuale
+                # din lume. Modelul își localizează singur interogările.
                 types.Tool(google_search=types.GoogleSearch()),
 
                 types.Tool(function_declarations=[
@@ -222,56 +243,65 @@ class GeminiLiveSession:
                 types.FunctionDeclaration(
                     name="control_lights",
                     description=(
-                        "Controlează luminile LED WLED din camera lui Sergiu. "
-                        "Trimite comanda LITERALE în română exact cum a spus-o Sergiu. "
-                        "Exemple: 'pune luminile roșii', 'stinge luminile', 'mod curcubeu'."
+                        "Lumini LED WLED. Trimite comanda LITERAL în română, cum a zis-o "
+                        "Sergiu (ex: 'vreau o atmosferă roșie faină'). Nu o rescrie."
                     ),
                     parameters={
                         "type": "object",
-                        "properties": {
-                            "command": {
-                                "type": "string",
-                                "description": "Comanda originală pentru lumini."
-                            },
-                        },
+                        "properties": {"command": {"type": "string"}},
                         "required": ["command"],
                     },
                 ),
 
                 types.FunctionDeclaration(
-                    name="control_music",
+                    name="music",
                     description=(
-                        "Controlează muzica pe Spotify / Google Home speaker. "
-                        "Trimite comanda LITERALE a lui Sergiu (ex: 'vreau muzică rock', "
-                        "'pune ceva latină', 'mărește volumul', 'pauză'). "
-                        "NU alege tu piesa! Agentul specializat DJ va alege piesa potrivită."
+                        "Muzică. action='play' PORNEȘTE ceva nou — pune în `query` comanda "
+                        "LITERALĂ a lui Sergiu (gen/vibe/piesă), un DJ alege piesa. "
+                        "Celelalte acțiuni controlează instant redarea curentă. "
+                        "'like'/'dislike' când își dă cu părerea despre ce cântă "
+                        "('asta e tare' / 'scoate-o') — DJ-ul învață din asta."
                     ),
                     parameters={
                         "type": "object",
                         "properties": {
-                            "command": {
-                                "type": "string",
-                                "description": "Comanda originală pentru muzică."
-                            },
+                            "action": {"type": "string", "enum": [
+                                "play", "pause", "resume", "next", "previous",
+                                "volume_up", "volume_down", "set_volume", "now_playing",
+                                "like", "dislike"]},
+                            "query": {"type": "string", "description": "Doar pentru play."},
+                            "value": {"type": "integer", "description": "Procent volum."},
                         },
-                        "required": ["command"],
+                        "required": ["action"],
+                    },
+                ),
+
+                types.FunctionDeclaration(
+                    name="scene",
+                    description=(
+                        "Scene salvate (lumini+muzică) și anulare. action='activate' cu "
+                        "`name` ('Cozy Night', 'Energie Mobtrap'); action='undo' readuce "
+                        "luminile cum erau ('nu, anulează', 'pune-le înapoi')."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string", "enum": ["activate", "undo"]},
+                            "name": {"type": "string"},
+                        },
+                        "required": ["action"],
                     },
                 ),
 
                 types.FunctionDeclaration(
                     name="execute_command",
                     description=(
-                        "Execută o comandă combinată sau de atmosferă (ex: 'atmosferă de munte', "
-                        "'schimbă muzica și luminile'). Se rutează în paralel către toți agenții."
+                        "Comandă combinată de atmosferă, care atinge și lumini, și muzică "
+                        "(ex: 'atmosferă de munte'). Trimite textul literal."
                     ),
                     parameters={
                         "type": "object",
-                        "properties": {
-                            "command": {
-                                "type": "string",
-                                "description": "Comanda originală a utilizatorului."
-                            },
-                        },
+                        "properties": {"command": {"type": "string"}},
                         "required": ["command"],
                     },
                 ),
@@ -279,39 +309,20 @@ class GeminiLiveSession:
                 types.FunctionDeclaration(
                     name="read_my_data",
                     description=(
-                        "Citește datele personale REALE ale lui Sergiu din sistem. "
-                        "FOLOSEȘTE DOAR când Sergiu întreabă explicit despre lucrurile LUI "
-                        "(banii lui, ce are el de făcut, progresul lui) sau îți cere o "
-                        "sugestie despre ce să facă. NU-l folosi în conversații obișnuite, "
-                        "la subiecte despre lume, sau ca să 'ai context' — acolo doar deranjează. "
-                        "Cere STRICT categoriile necesare, de obicei UNA SINGURĂ. "
-                        "Categorii: "
-                        "'finante' (conturi, solduri, avere totală, investiții active, datorii — "
-                        "PENTRU orice întrebare generală despre bani), "
-                        "'tranzactii' (jurnalul de mișcări bani — DOAR dacă cere EXPLICIT "
-                        "'arată-mi tranzacțiile' / 'ce mișcări am avut', NU la 'câți bani am'), "
-                        "'vanzari' (ce a vândut până acum, din investiții — DOAR dacă cere EXPLICIT "
-                        "'ce am vândut' / 'cum au mers vânzările'), "
-                        "'targeturi' (obiectivele personale cu progres și termen), "
-                        "'remindere' (de făcut + mentenanță scadentă), "
-                        "'proiecte' (proiecte electronică/robotică + pașii rămași de făcut), "
-                        "'sport' (greutate, măsurători, fază bulk/cut), "
-                        "'obiceiuri' (obiceiuri zilnice bifate/nebifate)."
+                        "Citește datele REALE ale lui Sergiu. DOAR când întreabă explicit "
+                        "despre ale LUI (banii lui, ce are de făcut, progresul lui) sau cere "
+                        "o sugestie ce să facă. NU în conversație obișnuită sau la subiecte "
+                        "despre lume. Ia STRICT ce trebuie, de obicei O categorie. "
+                        "'tranzactii'/'vanzari' doar la cerere explicită, nu la 'câți bani am'."
                     ),
                     parameters={
                         "type": "object",
                         "properties": {
                             "categories": {
                                 "type": "array",
-                                "items": {
-                                    "type": "string",
-                                    "enum": [
-                                        "finante", "tranzactii", "vanzari",
-                                        "targeturi", "remindere",
-                                        "proiecte", "sport", "obiceiuri",
-                                    ],
-                                },
-                                "description": "Categoriile de citit.",
+                                "items": {"type": "string", "enum": [
+                                    "azi", "finante", "tranzactii", "vanzari", "targeturi",
+                                    "remindere", "proiecte", "sport", "obiceiuri"]},
                             },
                         },
                         "required": ["categories"],
@@ -319,39 +330,69 @@ class GeminiLiveSession:
                 ),
 
                 types.FunctionDeclaration(
-                    name="save_journal",
+                    name="bus",
                     description=(
-                        "Salvează o notă sau gând în jurnalul personal al lui Sergiu."
+                        "Când îi vine lui Sergiu următorul autobuz de acasă (Str. Argeșului 24) "
+                        "spre una din destinațiile lui. Apelează la 'când am bus spre X', "
+                        "'în cât timp am autobuz', 'cu ce ajung la X'. "
+                        "`variante`=true doar dacă cere explicit și cursele de mai târziu. "
+                        "Răspunsul vine gata calculat — citește-l ca atare, nu recalcula ore."
                     ),
                     parameters={
                         "type": "object",
                         "properties": {
-                            "entry": {
-                                "type": "string",
-                                "description": "Textul de salvat în jurnal."
-                            },
+                            "destination": {"type": "string", "enum": [
+                                "scoala", "sala", "centru", "tudor", "unirii"]},
+                            "variante": {"type": "boolean"},
                         },
-                        "required": ["entry"],
+                        "required": ["destination"],
+                    },
+                ),
+
+                types.FunctionDeclaration(
+                    name="save_data",
+                    description=(
+                        "Notează în datele lui Sergiu. Alege `kind`: "
+                        "cheltuiala/incasare (`value`=suma, `text`=pe ce, `extra`=contul); "
+                        "reminder (`text`=ce); reminder_gata (`text`=ce a terminat — merge "
+                        "și pentru mentenanță, ex 'am curățat imprimanta'); "
+                        "target (`text`=obiectiv); target_progres (`text`=care, `value`=0-100); "
+                        "greutate (`value`=kg); proiect_pas (`text`=pasul terminat); "
+                        "proiect_devlog (`text`=titlu, `extra`=detalii); "
+                        "obicei (`text`=care); jurnal (`text`=gândul)."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": [
+                                "cheltuiala", "incasare", "reminder", "reminder_gata",
+                                "target", "target_progres", "greutate", "proiect_pas",
+                                "proiect_devlog", "obicei", "jurnal"]},
+                            "text": {"type": "string"},
+                            "value": {"type": "number"},
+                            "extra": {"type": "string"},
+                        },
+                        "required": ["kind"],
+                    },
+                ),
+
+                types.FunctionDeclaration(
+                    name="send_telegram",
+                    description="Mesaj pe telefonul lui Sergiu. DOAR la cerere explicită.",
+                    parameters={
+                        "type": "object",
+                        "properties": {"text": {"type": "string"}},
+                        "required": ["text"],
                     },
                 ),
 
                 types.FunctionDeclaration(
                     name="end_session",
                     description=(
-                        "Termină sesiunea vocală. Apelează IMEDIAT când utilizatorul "
-                        "spune: 'pa', 'la revedere', 'stop', 'taci', 'gata', "
-                        "'terminat', 'ieși', 'opreste-te', 'bye' sau orice rămas-bun."
+                        "Închide sesiunea. Apelează IMEDIAT la 'pa', 'gata', 'stop', "
+                        "'taci', 'ieși' sau orice rămas-bun."
                     ),
-                    parameters={
-                        "type": "object",
-                        "properties": {
-                            "reason": {
-                                "type": "string",
-                                "description": "Motivul închiderii (opțional)."
-                            },
-                        },
-                        "required": [],
-                    },
+                    parameters={"type": "object", "properties": {}, "required": []},
                 ),
 
                 ]),
@@ -378,11 +419,23 @@ class GeminiLiveSession:
 
         responses = []
         should_close = False
+        # Gemini trimite uneori ACELAȘI apel de două ori în același batch.
+        # Fără dedup, acțiunea se execută de două ori (două remindere identice)
+        # și modelul confirmă de două ori, ca și cum ar vorbi două voci.
+        deja_executate = {}
 
         for fc in fcs:
             name  = getattr(fc, "name", "unknown")
             args  = dict(fc.args) if getattr(fc, "args", None) else {}
             fc_id = getattr(fc, "id", None)
+
+            amprenta = (name, json.dumps(args, sort_keys=True, default=str))
+            if amprenta in deja_executate:
+                logger.warning(f"⚠️ [GeminiLive] Tool call DUPLICAT ignorat: {name}({args})")
+                responses.append(self._types.FunctionResponse(
+                    id=fc_id, name=name, response=deja_executate[amprenta]
+                ))
+                continue
 
             logger.info(f"🔧 [GeminiLive] Tool call: {name}({args})")
 
@@ -401,8 +454,31 @@ class GeminiLiveSession:
                 # NU auto-închidem sesiunea (conversația continuă natural).
                 self._enter_focus_mode()
 
-            # ── Dispatcher tools ──
-            elif name in ("control_lights", "control_music", "save_journal", "execute_command"):
+            # ── bus: orarul autobuzelor, calculat local ──
+            # Ca și read_my_data, rezultatul E răspunsul — deci sincron.
+            elif name == "bus":
+                result = await self._bus(
+                    args.get("destination") or "",
+                    bool(args.get("variante")),
+                )
+                self._enter_focus_mode()
+
+            # ── Tool-uri LOCALE: rezultat imediat, zero apeluri LLM ──
+            elif name in self.LOCAL_TOOLS:
+                try:
+                    result = await asyncio.to_thread(self._run_local_tool, name, args)
+                except Exception as e:
+                    logger.error(f"❌ [GeminiLive] Tool local '{name}': {e}", exc_info=True)
+                    result = {"status": "error", "message": str(e)}
+                logger.info(f"⚡ [GeminiLive] {name} → {result.get('message', result.get('status'))}")
+                # NU mai închidem sesiunea după acțiune — confirmă și întreabă
+                # dacă mai are nevoie de ceva. Dacă nu răspunde, se închide
+                # singură prin timeout-ul de inactivitate.
+                result["urmatorul_pas"] = _DUPA_ACTIUNE
+                self._enter_focus_mode()
+
+            # ── Dispatcher tools (agenți cu propriul LLM) ──
+            elif name in ("control_lights", "execute_command"):
                 # Preferăm transcriptul VERBATIM (ASR server-side) al ce a zis
                 # Sergiu, nu argumentul din tool call — Gemini tinde să
                 # rescrie/scurteze comanda (ex: "vreau o atmosferă romantică
@@ -419,13 +495,12 @@ class GeminiLiveSession:
                 # (vezi _save_conversation_turn). Dacă vine un al doilea tool
                 # call în același tur, va refolosi același transcript — corect,
                 # e tot ce a zis Sergiu în turul ăsta.
-                # Auto-close după ce Gemini confirmă scurt audio acțiunea
-                self._close_after_turn = True
                 self._enter_focus_mode()
 
             else:
                 result = {"status": "error", "message": f"Tool necunoscut: {name}"}
 
+            deja_executate[amprenta] = result
             responses.append(self._types.FunctionResponse(
                 id=fc_id, name=name, response=result
             ))
@@ -472,7 +547,7 @@ class GeminiLiveSession:
             return {
                 "status": "success",
                 "executed": True,
-                "info": "Comanda a fost transmisă agenților specializați. Confirmă-i INSTANT lui Sergiu, scurt și sec, că s-a rezolvat — formulează-o altfel decât data trecută."
+                "info": "Comanda a fost transmisă agenților specializați. " + _DUPA_ACTIUNE
             }
         except Exception as e:
             logger.error(f"❌ [GeminiLive] Dispatch error: {e}", exc_info=True)
@@ -481,6 +556,82 @@ class GeminiLiveSession:
     # ─────────────────────────────────────────────────────────
     # CITIRE DATE PERSONALE
     # ─────────────────────────────────────────────────────────
+
+    # Tool-uri executate LOCAL: scriu/citesc direct din fișiere sau lovesc un
+    # API (Spotify/Telegram/WLED). Niciunul nu implică un apel LLM — modelul
+    # vocal a extras deja argumentele structurate prin function calling.
+    LOCAL_TOOLS = frozenset({"music", "scene", "save_data", "send_telegram"})
+
+    def _run_local_tool(self, name: str, args: dict) -> dict:
+        """Execuție sincronă a tool-urilor locale (rulată într-un thread)."""
+        from tools import data_write_tools as W
+
+        # ── MUZICĂ ──
+        if name == "music":
+            agent = getattr(self.dispatcher, "music_agent", None)
+            if not agent:
+                return {"status": "error", "message": "Agentul de muzică lipsește."}
+            action = args.get("action", "")
+            if action == "play":
+                # Selecție de piesă → DJ (singurul care mai face un apel LLM).
+                # Rulăm în fundal ca să nu blocăm confirmarea vocală.
+                query = args.get("query") or self._current_user_transcript.strip()
+                threading.Thread(target=agent.process_request,
+                                 args=(query,), daemon=True).start()
+                return {"status": "ok", "message": "Am dat comanda la DJ."}
+            return agent.control(action, args.get("value"))
+
+        # ── SCENE + UNDO ──
+        if name == "scene":
+            if args.get("action") == "undo":
+                from tools.scene_tools import undo_lights
+                return undo_lights()
+            from tools.scene_tools import activate_scene
+            res = activate_scene(args.get("name", ""))
+            prompt = res.pop("music_prompt", "") if res.get("status") == "ok" else ""
+            if prompt:
+                agent = getattr(self.dispatcher, "music_agent", None)
+                if agent:
+                    threading.Thread(target=agent.process_request,
+                                     args=(prompt,), daemon=True).start()
+                    res["message"] += " Pornesc și muzica."
+            return res
+
+        # ── SCRIERE DATE — un singur tool, rutat pe `kind` ──
+        if name == "save_data":
+            kind = (args.get("kind") or "").strip()
+            text = args.get("text") or ""
+            val = args.get("value")
+            extra = args.get("extra") or ""
+
+            if kind in ("cheltuiala", "incasare"):
+                return W.add_transaction(val, "in" if kind == "incasare" else "out",
+                                         text, extra)
+            if kind == "reminder":
+                return W.add_reminder(text, extra or "Med")
+            if kind == "reminder_gata":
+                return W.complete_reminder(text)
+            if kind == "target":
+                return W.add_target(text, deadline=extra)
+            if kind == "target_progres":
+                return W.update_target_progress(text, val or 0)
+            if kind == "greutate":
+                return W.log_weight(val, text)
+            if kind == "proiect_pas":
+                return W.complete_project_step(text, extra)
+            if kind == "proiect_devlog":
+                return W.add_devlog(text, extra)
+            if kind == "obicei":
+                return W.check_habit(text)
+            if kind == "jurnal":
+                return W.quick_capture(text, "jurnal")
+            return {"status": "error", "message": f"Tip necunoscut: {kind}"}
+
+        if name == "send_telegram":
+            from tools.telegram_tools import send_telegram
+            return send_telegram(args.get("text", ""))
+
+        return {"status": "error", "message": f"Tool local necunoscut: {name}"}
 
     async def _read_my_data(self, categories: list) -> dict:
         """
@@ -509,6 +660,36 @@ class GeminiLiveSession:
                 "status": "error",
                 "message": f"Nu am putut citi datele: {e}",
                 "info": "Spune-i scurt lui Sergiu că datele nu sunt accesibile acum.",
+            }
+
+    async def _bus(self, destination: str, variante: bool = False) -> dict:
+        """Următorul autobuz spre `destination` — calcul local, fără rețea.
+
+        Textul e deja formulat complet de bus_tools; modelul nu trebuie decât
+        să-l rostească. Orice recalculare din partea lui ar strica orele, de
+        aceea `info` insistă pe citire ca atare.
+        """
+        logger.info(f"🚌 [GeminiLive] Orar autobuz: {destination}")
+        try:
+            from tools import bus_tools
+            text = await asyncio.to_thread(
+                bus_tools.answer, destination, 5 if variante else 3
+            )
+            return {
+                "status": "ok",
+                "raspuns": text,
+                "info": (
+                    "Spune-i lui Sergiu exact asta, natural, fără să schimbi "
+                    "orele, liniile sau numele stațiilor. Nu adăuga calcule "
+                    "proprii și nu-l sfătui să meargă pe jos."
+                ),
+            }
+        except Exception as e:
+            logger.error(f"❌ [GeminiLive] Orar autobuz eșuat: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": str(e),
+                "info": "Spune-i scurt că nu ai orarul autobuzelor acum.",
             }
 
     # ─────────────────────────────────────────────────────────
@@ -635,10 +816,22 @@ class GeminiLiveSession:
             return prompt
 
         try:
-            recap = await asyncio.to_thread(logger_agent.get_recent_conversations, 5)
+            recap = await asyncio.to_thread(logger_agent.get_recent_conversations, 3)
         except Exception as e:
             logger.debug(f"[GeminiLive] Recap memorie indisponibil: {e}")
             return prompt
+
+        # Profil stabil (cache-uit, se regenerează cel mult o dată pe zi)
+        try:
+            from core.user_profile import get_profile_block, refresh_in_background
+            # DOAR din cache aici: regenerarea e un apel LLM de ~9s si ar
+            # intarzia cu tot atat momentul in care Chronos incepe sa asculte.
+            profil = await asyncio.to_thread(get_profile_block, None, False)
+            if profil:
+                prompt += "\n\n" + profil
+            refresh_in_background(logger_agent)   # improspatare pt sesiunea urmatoare
+        except Exception as e:
+            logger.debug(f"[GeminiLive] Profil indisponibil: {e}")
 
         if not recap:
             return prompt
@@ -927,6 +1120,20 @@ class GeminiLiveSession:
         warned_close  = False
         np            = self._np
 
+        # Ceasul de inactivitate pornește ABIA ACUM, cand chiar incepem sa
+        # ascultam. Daca ar porni de la wake word, tot ce se intampla intre
+        # timp (pauza muzica, handshake WebSocket, construirea promptului) s-ar
+        # scadea din timpul lui Sergiu — iar la un setup mai lent decat
+        # LIVE_INACTIVITY_TIMEOUT sesiunea se inchidea instant, cu 0 chunks.
+        self._last_turn_end = time.time()
+
+        # Ceasul de inactivitate pornește ABIA ACUM, când chiar începem să
+        # ascultăm. Dacă l-am lăsa pornit de la wake word, tot ce se întâmplă
+        # între timp (pauză muzică, handshake WebSocket, construirea promptului)
+        # s-ar scădea din timpul lui Sergiu — iar la un setup mai lent decât
+        # LIVE_INACTIVITY_TIMEOUT sesiunea se închidea instantaneu, cu 0 chunks.
+        self._last_turn_end = time.time()
+
         while self._session_active:
             # ── VERIFICARE INACTIVITATE — rulează la FIECARE iterație ──
             # Bug vechi: verificarea stătea în ramura `except TimeoutError`, dar
@@ -979,15 +1186,36 @@ class GeminiLiveSession:
                 # întrerupă la câteva zeci de ms de la primul sunet — deci ce
                 # măsurăm acum e nivelul de ecou din boxele lui. Nu acumulăm
                 # energie de interrupt pe durata asta, doar calibrăm pragul.
+                # ── BASELINE DE ECOU: percentila pe fereastra glisanta ──
+                # O calibrare doar pe primele 500ms nu ajunge — vorbirea are
+                # dinamica mare, iar daca raspunsul incepe incet, pragul ramane
+                # jos si mai tarziu propriul ecou al lui Chronos il depaseste,
+                # deci se autoîntrerupe ("sare propozitii").
+                # Nici "actualizeaza doar sub prag" nu merge: pragul si-ar bloca
+                # propria crestere. Solutia: urmarim anvelopa ultimelor ~2s si
+                # luam o percentila inalta. Ecoul, fiind continuu, ridica
+                # percentila odata cu el; o interventie scurta a lui Sergiu
+                # (0.6s din 2s de fereastra) NU apuca sa o miste, deci trece
+                # de prag si intrerupe normal.
+                # Cat timp NU banuim o intrerupere, fereastra urmareste ecoul.
+                # Din momentul in care energia incepe sa se acumuleze, INGHETAM
+                # baseline-ul: altfel vocea lui Sergiu ar intra in fereastra,
+                # ar ridica pragul peste ea insasi si intreruperea n-ar mai
+                # trece niciodata.
+                if self._interrupt_energy <= 0.0:
+                    self._echo_calib_samples.append(rms)
+                    if len(self._echo_calib_samples) > ECHO_WINDOW_CHUNKS:
+                        self._echo_calib_samples = self._echo_calib_samples[-ECHO_WINDOW_CHUNKS:]
+
                 elapsed_turn = time.time() - self._turn_speech_start_ts
                 if elapsed_turn < (INTERRUPT_CALIBRATION_MS / 1000.0):
-                    self._echo_calib_samples.append(rms)
+                    # Fereastra de bootstrap: doar ascultam, nu acuzam pe nimeni
                     self._echo_baseline_rms = max(self._echo_calib_samples)
                     continue
 
-                # Pragul efectiv se ridică deasupra ecoului măsurat — altfel,
-                # pe boxe tari, ecoul singur declanșează interrupt-ul (Chronos
-                # se aude pe el însuși și crede că a fost întrerupt).
+                self._echo_baseline_rms = float(
+                    np.percentile(self._echo_calib_samples, ECHO_PERCENTILE)
+                )
                 effective_threshold = max(
                     INTERRUPT_AMPLITUDE_THRESHOLD,
                     self._echo_baseline_rms * INTERRUPT_ECHO_MARGIN

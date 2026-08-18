@@ -56,29 +56,8 @@ function fmtDateShort(dateStr) {
     });
 }
 
-// Hamburger nav
-const hamburgerBtn = document.getElementById('hamburgerBtn');
-const mobileNav = document.getElementById('mobileNav');
-if (hamburgerBtn && mobileNav) {
-    hamburgerBtn.addEventListener('click', () => {
-        hamburgerBtn.classList.toggle('open');
-        mobileNav.classList.toggle('open');
-    });
-    // Close on nav link click
-    mobileNav.querySelectorAll('a').forEach(a => {
-        a.addEventListener('click', () => {
-            hamburgerBtn.classList.remove('open');
-            mobileNav.classList.remove('open');
-        });
-    });
-    // Close on outside click
-    document.addEventListener('click', (e) => {
-        if (!hamburgerBtn.contains(e.target) && !mobileNav.contains(e.target)) {
-            hamburgerBtn.classList.remove('open');
-            mobileNav.classList.remove('open');
-        }
-    });
-}
+// Navigația (rail, bottom bar, sheet, paletă) e gestionată de chronos-ui.js.
+// Vechiul hamburger a dispărut odată cu navbar-ul.
 
 // Auto-resize textarea
 document.querySelectorAll('textarea').forEach(ta => {

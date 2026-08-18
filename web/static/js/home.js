@@ -1,301 +1,294 @@
 'use strict';
-// ============================================================
-//  HOME DASHBOARD — home.js
-//  Chronos OS | Smart home page with alerts, stats, menu, scenes
-// ============================================================
+/* ══════════════════════════════════════════════════════════════
+   CHRONOS OS — Acasă v3
+   Hero, pulsul zilei, scene, meniu. Un singur ciclu de încărcare,
+   toate fetch-urile în paralel, ceas pe interval de 1s doar
+   când tabul e vizibil.
+   ══════════════════════════════════════════════════════════════ */
 
-const DAYS_RO = ['Duminică','Luni','Marți','Miercuri','Joi','Vineri','Sâmbătă'];
-const MONTHS_RO = ['ianuarie','februarie','martie','aprilie','mai','iunie',
-                   'iulie','august','septembrie','octombrie','noiembrie','decembrie'];
+const DAYS_RO = ['duminică', 'luni', 'marți', 'miercuri', 'joi', 'vineri', 'sâmbătă'];
+const MONTHS_RO = ['ianuarie', 'februarie', 'martie', 'aprilie', 'mai', 'iunie',
+    'iulie', 'august', 'septembrie', 'octombrie', 'noiembrie', 'decembrie'];
 
-// ---- CLOCK & DATE ----
-function updateClock() {
+function escHtml(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+const $id = id => document.getElementById(id);
+
+function money(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    const abs = Math.abs(n);
+    if (abs >= 10000) return (n / 1000).toLocaleString('ro-RO', { maximumFractionDigits: 1 }) + 'k';
+    return Math.round(n).toLocaleString('ro-RO');
+}
+
+/* ─────────── CEAS & SALUT ─────────── */
+let clockTimer = null;
+
+function tickClock() {
     const now = new Date();
-    const h = String(now.getHours()).padStart(2,'0');
-    const m = String(now.getMinutes()).padStart(2,'0');
-    const el = document.getElementById('heroTime');
-    if (el) el.textContent = `${h}:${m}`;
+    const t = $id('heroTime');
+    const s = $id('heroSecs');
+    if (t) t.textContent = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+    if (s) s.textContent = String(now.getSeconds()).padStart(2, '0');
+}
+
+function startClock() {
+    tickClock();
+    clearInterval(clockTimer);
+    clockTimer = setInterval(() => { if (!document.hidden) tickClock(); }, 1000);
 }
 
 function setGreeting() {
     const h = new Date().getHours();
-    let greet = 'Bun venit';
-    if (h >= 5  && h < 12) greet = 'Bună dimineața ☀️';
-    else if (h >= 12 && h < 17) greet = 'Bună ziua 🌤️';
-    else if (h >= 17 && h < 21) greet = 'Bună seara 🌆';
-    else greet = 'Noapte bună 🌙';
-    const el = document.getElementById('homeGreeting');
-    if (el) el.textContent = greet;
-}
+    const g = h >= 5 && h < 12 ? 'Bună dimineața'
+        : h >= 12 && h < 18 ? 'Bună ziua'
+        : h >= 18 && h < 23 ? 'Bună seara'
+        : 'Noapte bună';
+    const el = $id('homeGreeting');
+    if (el) el.textContent = g + ', Sergiu';
 
-function setDate() {
     const now = new Date();
-    const dayName = DAYS_RO[now.getDay()];
-    const day = now.getDate();
-    const month = MONTHS_RO[now.getMonth()];
-    const year = now.getFullYear();
-    const el = document.getElementById('homeDate');
-    if (el) el.textContent = `${dayName}, ${day} ${month} ${year}`;
+    const d = $id('homeDate');
+    if (d) d.textContent = `${DAYS_RO[now.getDay()]}, ${now.getDate()} ${MONTHS_RO[now.getMonth()]} ${now.getFullYear()}`;
 }
 
-// ---- ALERTS ----
+/* Linia de sub salut se compune din ce s-a încărcat efectiv */
+const brief = { tasks: null, alerts: 0, pending: 0, targets: null };
+function renderLine() {
+    const el = $id('homeLine');
+    if (!el) return;
+    const bits = [];
+    if (brief.alerts > 0) bits.push(`${brief.alerts} ${brief.alerts === 1 ? 'lucru cere' : 'lucruri cer'} atenție`);
+    if (brief.tasks && brief.tasks.total > 0) {
+        bits.push(brief.tasks.done === brief.tasks.total
+            ? 'task-urile de azi sunt bifate'
+            : `${brief.tasks.done}/${brief.tasks.total} task-uri bifate`);
+    }
+    if (brief.targets > 0) bits.push(`${brief.targets} ${brief.targets === 1 ? 'target activ' : 'targeturi active'}`);
+    if (brief.pending > 0) bits.push(`${money(brief.pending)} RON pe drum`);
+    el.textContent = bits.length
+        ? bits.join(' · ').replace(/^./, c => c.toUpperCase()) + '.'
+        : 'Totul e liniștit. Nimic urgent pe azi.';
+}
+
+/* ─────────── ALERTE ─────────── */
 async function loadAlerts() {
     try {
-        const res  = await fetch('/api/home/alerts');
-        const data = await res.json();
+        const data = await fetch('/api/home/alerts').then(r => r.json());
         const alerts = data.alerts || [];
+        brief.alerts = alerts.length;
+        renderLine();
 
-        const panel = document.getElementById('alertsPanel');
-        const list  = document.getElementById('alertsList');
-        const badge = document.getElementById('alertsCount');
-
-        if (!alerts.length) {
-            if (panel) panel.style.display = 'none';
-            return;
-        }
-
-        if (badge) badge.textContent = alerts.length;
-        if (panel) panel.style.display = '';
-
-        if (list) {
-            list.innerHTML = alerts.map(a => `
-                <a href="${a.link || '/targets'}" class="home-alert-item ${a.severity || 'info'}">
-                    <span class="hai-icon">${a.icon || '⚠️'}</span>
-                    <div class="hai-body">
-                        <div class="hai-title">${escHtml(a.title)}</div>
-                        ${a.detail ? `<div class="hai-detail">${escHtml(a.detail)}</div>` : ''}
-                    </div>
-                    <span class="hai-link">→</span>
-                </a>
-            `).join('');
-        }
-    } catch(e) { console.error('Alerts error:', e); }
+        const panel = $id('alertsPanel');
+        if (!alerts.length) { if (panel) panel.hidden = true; return; }
+        if (panel) panel.hidden = false;
+        $id('alertsCount').textContent = alerts.length;
+        $id('alertsList').innerHTML = alerts.map(a => `
+            <a href="${a.link || '/targets'}" class="alert-item ${a.severity || 'info'}">
+                <span class="ai-ico">${a.icon || '⚠️'}</span>
+                <span class="mi-body">
+                    <span class="ai-t" style="display:block">${escHtml(a.title)}</span>
+                    ${a.detail ? `<span class="ai-d" style="display:block">${escHtml(a.detail)}</span>` : ''}
+                </span>
+                <span class="ai-go">→</span>
+            </a>`).join('');
+    } catch (e) { console.error('alerts', e); }
 }
 
-// ---- DAY STATUS ----
-async function loadDayStatus() {
+/* ─────────── PULS: ZI + TARGETURI ─────────── */
+/* Nume propriu, ca să nu se bată cu loadDayStatus() din daily-status.js */
+async function loadTodayPulse() {
     try {
-        const res  = await fetch('/api/day/status');
-        const data = await res.json();
+        const d = await fetch('/api/day/status').then(r => r.json());
 
-        // Weight
-        const qWeight = document.getElementById('qWeight');
-        const qWeightVal = document.getElementById('qWeightVal');
-        if (data.weight?.logged) {
-            qWeightVal.textContent = data.weight.value + ' kg';
-            qWeight.classList.remove('loading');
-            qWeight.classList.add('done');
-        } else {
-            qWeightVal.textContent = data.last_weight_ever ? (data.last_weight_ever + ' kg') : '—';
-            qWeight.classList.remove('loading');
-        }
+        // Greutate
+        const w = $id('pWeight'), wv = $id('pWeightVal');
+        w.classList.remove('loading');
+        if (d.weight?.logged) { wv.textContent = d.weight.value + ' kg'; w.classList.add('done'); }
+        else wv.textContent = d.last_weight_ever ? d.last_weight_ever + ' kg' : '—';
 
-        // Targets
-        const targets = data.targets || [];
-        const qTargets = document.getElementById('qTargets');
-        const qTargetsVal = document.getElementById('qTargetsVal');
-        qTargetsVal.textContent = targets.length;
-        qTargets.classList.remove('loading');
+        // Targeturi
+        const targets = d.targets || [];
+        brief.targets = targets.length;
+        $id('pTargets').classList.remove('loading');
+        $id('pTargetsVal').textContent = targets.length;
 
-        // Render active targets section
+        // Statistici pentru cardurile de meniu
+        $id('statGym').textContent = d.weight?.logged
+            ? `${d.weight.value} kg logat azi`
+            : (d.last_weight_ever ? `Ultima: ${d.last_weight_ever} kg` : 'Nicio înregistrare');
+        const jc = d.journal?.entries_today || 0;
+        $id('statJournal').textContent = jc > 0 ? `${jc} ${jc === 1 ? 'intrare' : 'intrări'} azi` : 'Nicio intrare azi';
+        $id('statTargets').textContent = `${targets.length} ${targets.length === 1 ? 'target activ' : 'targeturi active'}`;
+
+        // Lista de targeturi
         if (targets.length) {
-            const sect = document.getElementById('activeTargetsSection');
-            const list = document.getElementById('activeTargetsList');
-            if (sect) sect.style.display = '';
-            if (list) {
-                const sorted = [...targets].sort((a,b) => {
-                    const order = {High:0, Med:1, Low:2};
-                    return (order[a.priority]??1) - (order[b.priority]??1);
-                });
-                list.innerHTML = sorted.map(g => {
+            const sect = $id('activeTargetsSection');
+            sect.hidden = false;
+            const order = { High: 0, Med: 1, Low: 2 };
+            $id('activeTargetsList').innerHTML = [...targets]
+                .sort((a, b) => (order[a.priority] ?? 1) - (order[b.priority] ?? 1))
+                .slice(0, 6)
+                .map(g => {
                     const prog = g.progress || 0;
-                    const dl = g.deadline ? (() => {
-                        const d = Math.round((new Date(g.deadline) - new Date()) / 86400000);
-                        return d < 0 ? `<span style="color:var(--red)">⚠️ Expirat ${Math.abs(d)}z</span>` :
-                               d === 0 ? `<span style="color:var(--orange)">🔥 Azi!</span>` :
-                               `📅 ${d}z rămase`;
-                    })() : '';
-                    return `<a href="/targets" class="home-target-item">
-                        <div class="hti-body">
-                            <div class="hti-title">${escHtml(g.title || '')}</div>
-                            <div class="hti-meta">${dl}</div>
-                        </div>
-                        <div class="hti-prog-wrap">
-                            <div class="hti-prog-bar"><div class="hti-prog-fill" style="width:${prog}%"></div></div>
-                            <div class="hti-prog-pct">${prog}%</div>
-                        </div>
+                    let meta = '';
+                    if (g.deadline) {
+                        const days = Math.round((new Date(g.deadline) - new Date()) / 86400000);
+                        meta = days < 0 ? `⚠️ expirat de ${Math.abs(days)}z`
+                             : days === 0 ? '🔥 azi!'
+                             : `📅 ${days}z rămase`;
+                    }
+                    return `<a href="/targets" class="mini-item">
+                        <span class="mi-ico">🎯</span>
+                        <span class="mi-body">
+                            <span class="mi-t" style="display:block">${escHtml(g.title || '')}</span>
+                            <span class="mi-s" style="display:block">${meta}</span>
+                        </span>
+                        <span class="mi-prog">
+                            <span class="mi-bar"><i style="width:${prog}%"></i></span>
+                            <span class="mi-pct">${prog}%</span>
+                        </span>
                     </a>`;
                 }).join('');
-            }
         }
-
-        // Journal stat
-        const jStat = document.getElementById('statJournal');
-        const jCount = data.journal?.entries_today || 0;
-        if (jStat) jStat.textContent = jCount > 0 ? `${jCount} întrări azi` : 'Nicio intrare azi';
-
-        // Gym stat
-        const gymStat = document.getElementById('statGym');
-        if (gymStat) {
-            if (data.weight?.logged) {
-                gymStat.textContent = `${data.weight.value} kg azi`;
-            } else if (data.last_weight_ever) {
-                gymStat.textContent = `Ultimul: ${data.last_weight_ever} kg`;
-            } else {
-                gymStat.textContent = 'Nicio înregistrare';
-            }
-        }
-
-        // Targets stat
-        const tStat = document.getElementById('statTargets');
-        if (tStat) tStat.textContent = `${targets.length} targeturi active`;
-
-    } catch(e) { console.error('Day status error:', e); }
+        renderLine();
+    } catch (e) { console.error('day status', e); }
 }
 
-// ---- DAILY TASKS ----
+/* ─────────── PULS: TASK-URI ZILNICE ─────────── */
 async function loadDailyTasks() {
     try {
-        const res  = await fetch('/api/daily-tasks');
-        const data = await res.json();
-        const today = new Date().toISOString().slice(0,10);
-        const total   = (data.tasks || []).length;
-        const checked = ((data.checks || {})[today] || []).length;
+        const d = await fetch('/api/daily-tasks').then(r => r.json());
+        const today = new Date().toISOString().slice(0, 10);
+        const total = (d.tasks || []).length;
+        const done = ((d.checks || {})[today] || []).length;
 
-        const qTasks = document.getElementById('qTasks');
-        const qTasksVal = document.getElementById('qTasksVal');
+        const card = $id('pTasks'), val = $id('pTasksVal'), bar = $id('pTasksBar');
+        card.classList.remove('loading');
+        if (!total) { val.textContent = '—'; return; }
+        val.textContent = `${done}/${total}`;
+        bar.style.width = Math.round(done / total * 100) + '%';
+        if (done === total) card.classList.add('done');
 
-        if (total === 0) {
-            qTasksVal.textContent = '—';
-            qTasks.classList.remove('loading');
-        } else {
-            qTasksVal.textContent = `${checked}/${total}`;
-            qTasks.classList.remove('loading');
-            if (checked === total) qTasks.classList.add('done');
-        }
-    } catch(e) { console.error('Tasks error:', e); }
+        brief.tasks = { done, total };
+        renderLine();
+    } catch (e) { console.error('tasks', e); }
 }
 
-// ---- MAINTENANCE ----
+/* ─────────── PULS: MENTENANȚĂ ─────────── */
 async function loadMaintenance() {
     try {
-        const res  = await fetch('/api/maintenance');
-        const data = await res.json();
+        const d = await fetch('/api/maintenance').then(r => r.json());
         const today = new Date();
-
         const upcoming = [];
-        let overdueCount = 0;
-        let totalPending = 0;
+        let overdue = 0;
 
-        (data.items || []).forEach(item => {
-            (item.tasks || []).forEach(task => {
-                const interval = task.interval_days || 30;
-                let daysLeft;
-                if (task.last_done) {
-                    const last = new Date(task.last_done);
-                    const daysSince = Math.round((today - last) / 86400000);
-                    daysLeft = interval - daysSince;
-                } else {
-                    daysLeft = -999; // Never done
-                }
-
-                if (daysLeft <= 14) {
-                    upcoming.push({ item, task, daysLeft });
-                    if (daysLeft <= 0) overdueCount++;
-                    totalPending++;
-                }
-            });
-        });
-
-        // Update quick stat
-        const qMaint = document.getElementById('qMaint');
-        const qMaintVal = document.getElementById('qMaintVal');
-        qMaint.classList.remove('loading');
-        if (overdueCount > 0) {
-            qMaintVal.textContent = overdueCount + ' depășite';
-            qMaint.classList.add('alert');
-        } else if (totalPending > 0) {
-            qMaintVal.textContent = totalPending + ' curând';
-        } else {
-            qMaintVal.textContent = 'OK';
-            qMaint.classList.add('done');
-        }
-
-        // Render upcoming section
-        if (upcoming.length) {
-            const sect = document.getElementById('upcomingMaintSection');
-            const list = document.getElementById('upcomingMaintList');
-            if (sect) sect.style.display = '';
-            if (list) {
-                upcoming.sort((a,b) => a.daysLeft - b.daysLeft);
-                list.innerHTML = upcoming.slice(0,6).map(({ item, task, daysLeft }) => {
-                    const cls = daysLeft < 0 ? 'overdue' : daysLeft <= 3 ? 'soon' : 'ok';
-                    const txt = daysLeft < 0 ? `${Math.abs(daysLeft)}z dep.` :
-                                daysLeft === 0 ? 'Azi!' :
-                                `${daysLeft}z`;
-                    return `<a href="/targets" class="home-maint-item ${cls}">
-                        <span class="hmi-emoji">${item.emoji || '🔧'}</span>
-                        <div class="hmi-body">
-                            <div class="hmi-name">${escHtml(item.name)}</div>
-                            <div class="hmi-task">${escHtml(task.name)} · la ${task.interval_days} zile</div>
-                        </div>
-                        <span class="hmi-countdown ${cls}">${txt}</span>
-                    </a>`;
-                }).join('');
+        (d.items || []).forEach(item => (item.tasks || []).forEach(task => {
+            const interval = task.interval_days || 30;
+            const daysLeft = task.last_done
+                ? interval - Math.round((today - new Date(task.last_done)) / 86400000)
+                : -999;
+            if (daysLeft <= 14) {
+                upcoming.push({ item, task, daysLeft });
+                if (daysLeft <= 0) overdue++;
             }
+        }));
+
+        const card = $id('pMaint'), val = $id('pMaintVal');
+        card.classList.remove('loading');
+        if (overdue > 0) { val.textContent = overdue + ' depășite'; card.classList.add('alert'); }
+        else if (upcoming.length) { val.textContent = upcoming.length + ' curând'; card.classList.add('warn'); }
+        else { val.textContent = 'OK'; card.classList.add('done'); }
+
+        if (upcoming.length) {
+            $id('upcomingMaintSection').hidden = false;
+            upcoming.sort((a, b) => a.daysLeft - b.daysLeft);
+            $id('upcomingMaintList').innerHTML = upcoming.slice(0, 6).map(({ item, task, daysLeft }) => {
+                const cls = daysLeft < 0 ? 'overdue' : daysLeft <= 3 ? 'soon' : '';
+                const txt = daysLeft < -900 ? 'niciodată'
+                    : daysLeft < 0 ? `${Math.abs(daysLeft)}z depășit`
+                    : daysLeft === 0 ? 'azi!' : `${daysLeft}z`;
+                return `<a href="/targets" class="mini-item ${cls}">
+                    <span class="mi-ico">${item.emoji || '🔧'}</span>
+                    <span class="mi-body">
+                        <span class="mi-t" style="display:block">${escHtml(item.name)}</span>
+                        <span class="mi-s" style="display:block">${escHtml(task.name)} · la ${task.interval_days} zile</span>
+                    </span>
+                    <span class="mi-tag">${txt}</span>
+                </a>`;
+            }).join('');
         }
-    } catch(e) { console.error('Maintenance error:', e); }
+    } catch (e) { console.error('maintenance', e); }
 }
 
-// ---- ELECTRONICS STAT ----
+/* ─────────── PULS: BANI ─────────── */
+async function loadFinance() {
+    try {
+        const d = await fetch('/api/finance/data').then(r => r.json());
+        const s = d.summary || {}, inv = d.inv_summary || {};
+
+        $id('pCash').classList.remove('loading');
+        $id('pCashVal').textContent = money(s.total) + ' RON';
+
+        const road = $id('pRoad');
+        road.classList.remove('loading');
+        $id('pRoadVal').textContent = inv.pending_total > 0 ? money(inv.pending_total) + ' RON' : '—';
+        if (inv.pending_total > 0) road.classList.add('warn');
+
+        brief.pending = inv.pending_total || 0;
+
+        const bits = [`${money(s.total)} RON lichid`];
+        if (inv.units_in_stock > 0) bits.push(`${inv.units_in_stock} buc. pe stoc`);
+        if (inv.pending_count > 0) bits.push(`${inv.pending_count} de încasat`);
+        $id('statFinance').textContent = bits.join(' · ');
+        renderLine();
+    } catch (e) {
+        $id('pCash')?.classList.remove('loading');
+        $id('pRoad')?.classList.remove('loading');
+    }
+}
+
+/* ─────────── STAT: ELECTRONICS ─────────── */
 async function loadElectronicsStat() {
     try {
-        const res  = await fetch('/api/electronics/data');
-        const data = await res.json();
-        const el = document.getElementById('statElec');
-        if (el) {
-            const comps = (data.components || []).length;
-            const projs = (data.projects  || []).length;
-            const active = (data.projects || []).filter(p => p.status === 'activ').length;
-            el.textContent = `${comps} comp. · ${active}/${projs} proiecte active`;
-        }
-    } catch(e) {}
+        const d = await fetch('/api/electronics/data').then(r => r.json());
+        const comps = (d.components || []).length;
+        const projs = (d.projects || []);
+        const active = projs.filter(p => p.status === 'activ').length;
+        $id('statElec').textContent = `${comps} componente · ${active}/${projs.length} proiecte active`;
+    } catch (e) { $id('statElec').textContent = '—'; }
 }
 
-// ================================================================
-//  SCENES SYSTEM
-// ================================================================
+/* ══════════════════════════════════════════════════════════════
+   SCENE
+   ══════════════════════════════════════════════════════════════ */
 
-// Color palettes per card index for visual variety
 const SCENE_PALETTES = [
-    { color: 'rgba(139,92,246,0.15)',   border: 'rgba(139,92,246,0.35)'   }, // purple
-    { color: 'rgba(236,72,153,0.14)',   border: 'rgba(236,72,153,0.35)'   }, // pink
-    { color: 'rgba(14,165,233,0.14)',   border: 'rgba(14,165,233,0.35)'   }, // sky
-    { color: 'rgba(34,197,94,0.12)',    border: 'rgba(34,197,94,0.3)'     }, // green
-    { color: 'rgba(245,158,11,0.14)',   border: 'rgba(245,158,11,0.35)'   }, // amber
-    { color: 'rgba(239,68,68,0.13)',    border: 'rgba(239,68,68,0.32)'    }, // red
-    { color: 'rgba(20,184,166,0.13)',   border: 'rgba(20,184,166,0.3)'    }, // teal
-    { color: 'rgba(249,115,22,0.14)',   border: 'rgba(249,115,22,0.33)'   }, // orange
+    { color: 'rgba(139,92,246,.15)', border: 'rgba(139,92,246,.35)' },
+    { color: 'rgba(236,72,153,.14)', border: 'rgba(236,72,153,.35)' },
+    { color: 'rgba(14,165,233,.14)', border: 'rgba(14,165,233,.35)' },
+    { color: 'rgba(34,197,94,.12)',  border: 'rgba(34,197,94,.30)'  },
+    { color: 'rgba(245,158,11,.14)', border: 'rgba(245,158,11,.35)' },
+    { color: 'rgba(239,68,68,.13)',  border: 'rgba(239,68,68,.32)'  },
+    { color: 'rgba(20,184,166,.13)', border: 'rgba(20,184,166,.30)' },
+    { color: 'rgba(249,115,22,.14)', border: 'rgba(249,115,22,.33)' },
 ];
 
-let _scenes = [];
-let _capturedLights = null;
-let _manualOpen = false;
-let _emojiOpen = false;
+let _scenes = [], _capturedLights = null, _manualOpen = false, _emojiOpen = false;
 
-// ── Load & render scenes
 async function loadScenes() {
     try {
-        const res = await fetch('/api/scenes');
-        const data = await res.json();
-        _scenes = data.scenes || [];
+        const d = await fetch('/api/scenes').then(r => r.json());
+        _scenes = d.scenes || [];
         renderScenes();
-    } catch(e) { console.error('Scenes error:', e); }
+        registerSceneActions();
+    } catch (e) { console.error('scenes', e); }
 }
 
 function renderScenes() {
-    const grid = document.getElementById('scenesGrid');
-    const empty = document.getElementById('scenesEmpty');
+    const grid = $id('scenesGrid'), empty = $id('scenesEmpty');
     if (!grid) return;
 
     if (!_scenes.length) {
@@ -303,243 +296,144 @@ function renderScenes() {
         if (empty) { empty.style.display = ''; grid.appendChild(empty); }
         return;
     }
-
     if (empty) empty.style.display = 'none';
 
-    grid.innerHTML = _scenes.map((scene, i) => {
-        const pal = SCENE_PALETTES[i % SCENE_PALETTES.length];
-        const hasLights = scene.lights && (scene.lights.main || scene.lights.floor);
-        const lightsLabel = hasLights ? '💡 Lumini setate' : '💡 Fără lumini';
-        const musicLabel = scene.music_prompt
-            ? escHtml(scene.music_prompt.slice(0, 45)) + (scene.music_prompt.length > 45 ? '…' : '')
-            : '<span style="opacity:0.4">Fără muzică</span>';
-        return `
-        <div class="scene-card" id="scene-card-${scene.id}"
-             style="--sc-color:${pal.color};--sc-border:${pal.border}">
-            <div class="scene-card-emoji">${scene.emoji || '🎬'}</div>
-            <div class="scene-card-name">${escHtml(scene.name)}</div>
-            <div class="scene-card-music">${musicLabel}</div>
-            <div class="scene-card-lights">${lightsLabel}</div>
+    grid.innerHTML = _scenes.map((s, i) => {
+        const p = SCENE_PALETTES[i % SCENE_PALETTES.length];
+        const hasLights = s.lights && (s.lights.main || s.lights.floor);
+        const music = s.music_prompt
+            ? escHtml(s.music_prompt.slice(0, 40)) + (s.music_prompt.length > 40 ? '…' : '')
+            : '<span style="opacity:.4">fără muzică</span>';
+        return `<div class="scene-card" style="--sc-color:${p.color};--sc-border:${p.border}">
+            <div class="scene-card-emoji">${s.emoji || '🎬'}</div>
+            <div class="scene-card-name">${escHtml(s.name)}</div>
+            <div class="scene-card-music">🎵 ${music}</div>
+            <div class="scene-card-lights">${hasLights ? '💡 lumini setate' : '💡 fără lumini'}</div>
             <div class="scene-card-actions">
-                <button class="scene-play-btn" id="scene-play-${scene.id}"
-                        onclick="activateScene('${scene.id}')" title="Activează scena">
-                    ▶ Activează
-                </button>
-                <button class="scene-icon-btn" onclick="openSceneModal('${scene.id}')" title="Editează">✏</button>
-                <button class="scene-icon-btn del" onclick="deleteScene('${scene.id}')" title="Șterge">🗑</button>
+                <button class="scene-play-btn" id="scene-play-${s.id}" onclick="activateScene('${s.id}')">▶ Activează</button>
+                <button class="scene-icon-btn" onclick="openSceneModal('${s.id}')" title="Editează">✏</button>
+                <button class="scene-icon-btn del" onclick="deleteScene('${s.id}')" title="Șterge">🗑</button>
             </div>
         </div>`;
     }).join('');
 }
 
-// ── Open modal (new or edit)
-function openSceneModal(sceneId) {
-    const overlay = document.getElementById('sceneModalOverlay');
-    const titleEl = document.getElementById('sceneModalTitle');
-    const editIdEl = document.getElementById('sceneEditId');
+/* Scenele devin comenzi în paleta Ctrl+K */
+function registerSceneActions() {
+    if (!window.Chronos) return;
+    window.Chronos.registerActions([
+        { icon: '✨', label: 'Scenă nouă', sub: 'acasă', run: () => openSceneModal() },
+        ..._scenes.map(s => ({
+            icon: s.emoji || '🎬',
+            label: `Activează „${s.name}”`,
+            sub: 'scenă',
+            run: () => activateScene(s.id)
+        }))
+    ]);
+}
 
-    // Reset state
-    _capturedLights = null;
-    _manualOpen = false;
-    _emojiOpen = false;
-    document.getElementById('sceneManualPanel').style.display = 'none';
-    document.getElementById('sceneManualToggle').classList.remove('active');
-    document.getElementById('sceneEmojiGrid').classList.remove('open');
-    document.getElementById('sceneLightsStatus').style.display = 'none';
-    document.getElementById('sceneLoadingOverlay').style.display = 'none';
+function openSceneModal(sceneId) {
+    const ov = $id('sceneModalOverlay');
+    _capturedLights = null; _manualOpen = false; _emojiOpen = false;
+    $id('sceneManualPanel').style.display = 'none';
+    $id('sceneManualToggle').classList.remove('active');
+    $id('sceneEmojiGrid').classList.remove('open');
+    $id('sceneLightsStatus').style.display = 'none';
+    $id('sceneLoadingOverlay').style.display = 'none';
 
     if (sceneId) {
-        const scene = _scenes.find(s => s.id === sceneId);
-        if (!scene) return;
-        titleEl.textContent = '✏ Editează Scena';
-        editIdEl.value = sceneId;
-        document.getElementById('sceneEmojiBtn').textContent = scene.emoji || '🎬';
-        document.getElementById('sceneNameInput').value = scene.name || '';
-        document.getElementById('sceneMusicPrompt').value = scene.music_prompt || '';
-
-        // Populate lights if available
-        if (scene.lights) {
-            _capturedLights = scene.lights;
-            showLightsStatus('ok', '✅ Configurație lumini salvată');
-            populateManualFromLights(scene.lights);
+        const s = _scenes.find(x => x.id === sceneId);
+        if (!s) return;
+        $id('sceneModalTitle').textContent = '✏ Editează scena';
+        $id('sceneEditId').value = sceneId;
+        $id('sceneEmojiBtn').textContent = s.emoji || '🎬';
+        $id('sceneNameInput').value = s.name || '';
+        $id('sceneMusicPrompt').value = s.music_prompt || '';
+        if (s.lights) {
+            _capturedLights = s.lights;
+            showLightsStatus('ok', '✅ Configurație de lumini salvată');
+            populateManualFromLights(s.lights);
         }
     } else {
-        titleEl.textContent = '✨ Scenă Nouă';
-        editIdEl.value = '';
-        document.getElementById('sceneEmojiBtn').textContent = '🎬';
-        document.getElementById('sceneNameInput').value = '';
-        document.getElementById('sceneMusicPrompt').value = '';
+        $id('sceneModalTitle').textContent = '✨ Scenă nouă';
+        $id('sceneEditId').value = '';
+        $id('sceneEmojiBtn').textContent = '🎬';
+        $id('sceneNameInput').value = '';
+        $id('sceneMusicPrompt').value = '';
         resetManualFields();
     }
 
-    overlay.classList.add('active');
-    setTimeout(() => document.getElementById('sceneNameInput').focus(), 100);
+    ov.classList.add('active');
+    setTimeout(() => $id('sceneNameInput').focus(), 110);
 }
 
-function closeSceneModal(event, force) {
-    if (!force && event && event.target !== document.getElementById('sceneModalOverlay')) return;
-    const overlay = document.getElementById('sceneModalOverlay');
-    overlay.classList.remove('active');
-    document.getElementById('sceneEmojiGrid').classList.remove('open');
+function closeSceneModal() {
+    $id('sceneModalOverlay').classList.remove('active');
+    $id('sceneEmojiGrid').classList.remove('open');
     _emojiOpen = false;
 }
 
-// ── Emoji picker
 function toggleEmojiPicker() {
     _emojiOpen = !_emojiOpen;
-    document.getElementById('sceneEmojiGrid').classList.toggle('open', _emojiOpen);
+    $id('sceneEmojiGrid').classList.toggle('open', _emojiOpen);
 }
 
-// Attach emoji grid click via event delegation
-document.addEventListener('DOMContentLoaded', () => {
-    const emojiGrid = document.getElementById('sceneEmojiGrid');
-    if (emojiGrid) {
-        emojiGrid.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-emoji]');
-            if (!btn) return;
-            pickEmoji(btn.dataset.emoji);
-        });
-    }
-
-    // Close emoji on outside click
-    document.addEventListener('click', (e) => {
-        if (_emojiOpen && !e.target.closest('.scene-emoji-picker')) {
-            _emojiOpen = false;
-            const grid = document.getElementById('sceneEmojiGrid');
-            if (grid) grid.classList.remove('open');
-        }
-    });
-
-    // Modal close button
-    const closeBtn = document.getElementById('sceneModalClose');
-    if (closeBtn) closeBtn.addEventListener('click', () => closeSceneModal(null, true));
-
-    // Cancel button
-    const cancelBtn = document.getElementById('sceneCancelBtn');
-    if (cancelBtn) cancelBtn.addEventListener('click', () => closeSceneModal(null, true));
-
-    // Save button
-    const saveBtn = document.getElementById('sceneSaveBtn');
-    if (saveBtn) saveBtn.addEventListener('click', saveScene);
-
-    // Capture button
-    const captureBtn = document.getElementById('sceneCaptureBtn');
-    if (captureBtn) captureBtn.addEventListener('click', captureFromWLED);
-
-    // Manual toggle button
-    const manualToggle = document.getElementById('sceneManualToggle');
-    if (manualToggle) manualToggle.addEventListener('click', toggleManualLights);
-
-    // Overlay click to close
-    const overlay = document.getElementById('sceneModalOverlay');
-    if (overlay) overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) closeSceneModal(null, true);
-    });
-
-    // Slider live update for manual fields
-    setupSliderSync('mainBri',  'mainBriVal');
-    setupSliderSync('mainSx',   'mainSxVal');
-    setupSliderSync('mainIx',   'mainIxVal');
-    setupSliderSync('floorBri', 'floorBriVal');
-    setupSliderSync('floorSx',  'floorSxVal');
-    setupSliderSync('floorIx',  'floorIxVal');
-
-    // Init
-    setGreeting();
-    setDate();
-    updateClock();
-    setInterval(updateClock, 30000);
-
-    loadAlerts();
-    loadDayStatus();
-    loadDailyTasks();
-    loadMaintenance();
-    loadElectronicsStat();
-    loadScenes();
-});
-
-function setupSliderSync(sliderId, valId) {
-    const slider = document.getElementById(sliderId);
-    const valEl  = document.getElementById(valId);
-    if (slider && valEl) {
-        slider.addEventListener('input', () => { valEl.textContent = slider.value; });
-    }
-}
-
-function pickEmoji(emoji) {
-    document.getElementById('sceneEmojiBtn').textContent = emoji;
+function pickEmoji(e) {
+    $id('sceneEmojiBtn').textContent = e;
     _emojiOpen = false;
-    document.getElementById('sceneEmojiGrid').classList.remove('open');
+    $id('sceneEmojiGrid').classList.remove('open');
 }
 
-// ── Toggle manual lights panel
 function toggleManualLights() {
     _manualOpen = !_manualOpen;
-    const panel  = document.getElementById('sceneManualPanel');
-    const toggle = document.getElementById('sceneManualToggle');
-    panel.style.display = _manualOpen ? '' : 'none';
-    toggle.classList.toggle('active', _manualOpen);
+    $id('sceneManualPanel').style.display = _manualOpen ? '' : 'none';
+    $id('sceneManualToggle').classList.toggle('active', _manualOpen);
 }
 
-// ── Capture from WLED
 async function captureFromWLED() {
-    const btn = document.getElementById('sceneCaptureBtn');
-    btn.classList.add('loading');
-    btn.innerHTML = '<span>⏳</span><span>Se capturează...</span>';
-
+    const btn = $id('sceneCaptureBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span>⏳</span><span>Se capturează…</span>';
     try {
-        const res = await fetch('/api/scenes/wled-snapshot');
-        const data = await res.json();
-
-        if (data.status === 'ok') {
-            _capturedLights = { main: data.main, floor: data.floor };
-
-            let parts = [];
-            if (data.main)  parts.push(`Main: bri ${data.main.bri ?? '?'}`);
-            if (data.floor) parts.push(`Floor: bri ${data.floor.bri ?? '?'}`);
+        const d = await fetch('/api/scenes/wled-snapshot').then(r => r.json());
+        if (d.status === 'ok') {
+            _capturedLights = { main: d.main, floor: d.floor };
+            const parts = [];
+            if (d.main) parts.push(`Main: bri ${d.main.bri ?? '?'}`);
+            if (d.floor) parts.push(`Floor: bri ${d.floor.bri ?? '?'}`);
             showLightsStatus('ok', `✅ Capturat! ${parts.join(' · ')}`);
-
-            // Also populate manual fields with captured data
             populateManualFromLights(_capturedLights);
         } else {
-            showLightsStatus('error', `❌ ${data.message || 'WLED offline'}`);
+            showLightsStatus('error', `❌ ${d.message || 'WLED offline'}`);
         }
-    } catch(e) {
-        showLightsStatus('error', '❌ Eroare la capturare');
-    }
-
-    btn.classList.remove('loading');
+    } catch (e) { showLightsStatus('error', '❌ Eroare la capturare'); }
+    btn.disabled = false;
     btn.innerHTML = '<span>📸</span><span>Capturează din WLED acum</span>';
 }
 
 function populateManualFromLights(lights) {
     if (!lights) return;
-    const populate = (prefix, zoneData) => {
-        if (!zoneData) return;
-        const onEl  = document.getElementById(prefix + 'On');
-        const briEl = document.getElementById(prefix + 'Bri');
-        const briVal= document.getElementById(prefix + 'BriVal');
-        if (onEl)  onEl.checked = zoneData.on !== false;
-        if (briEl) { briEl.value = zoneData.bri ?? 128; if (briVal) briVal.textContent = briEl.value; }
-
-        const seg = (zoneData.seg || [])[0] || {};
-        const fxEl  = document.getElementById(prefix + 'Fx');
-        const palEl = document.getElementById(prefix + 'Pal');
-        const sxEl  = document.getElementById(prefix + 'Sx');
-        const sxVal = document.getElementById(prefix + 'SxVal');
-        const ixEl  = document.getElementById(prefix + 'Ix');
-        const ixVal = document.getElementById(prefix + 'IxVal');
-        if (fxEl)  fxEl.value  = seg.fx  ?? 0;
-        if (palEl) palEl.value = seg.pal ?? 0;
-        if (sxEl)  { sxEl.value = seg.sx ?? 128; if (sxVal) sxVal.textContent = sxEl.value; }
-        if (ixEl)  { ixEl.value = seg.ix ?? 128; if (ixVal) ixVal.textContent = ixEl.value; }
+    const fill = (p, z) => {
+        if (!z) return;
+        const on = $id(p + 'On'), bri = $id(p + 'Bri'), briV = $id(p + 'BriVal');
+        if (on) on.checked = z.on !== false;
+        if (bri) { bri.value = z.bri ?? 128; if (briV) briV.textContent = bri.value; }
+        const seg = (z.seg || [])[0] || {};
+        const set = (id, v, valId) => {
+            const el = $id(id); if (!el) return;
+            el.value = v; const vEl = valId && $id(valId); if (vEl) vEl.textContent = v;
+        };
+        set(p + 'Fx', seg.fx ?? 0);
+        set(p + 'Pal', seg.pal ?? 0);
+        set(p + 'Sx', seg.sx ?? 128, p + 'SxVal');
+        set(p + 'Ix', seg.ix ?? 128, p + 'IxVal');
     };
-    populate('main',  lights.main);
-    populate('floor', lights.floor);
+    fill('main', lights.main);
+    fill('floor', lights.floor);
 }
 
 function showLightsStatus(type, msg) {
-    const el = document.getElementById('sceneLightsStatus');
+    const el = $id('sceneLightsStatus');
     if (!el) return;
     el.className = `scene-lights-status ${type}`;
     el.textContent = msg;
@@ -548,152 +442,152 @@ function showLightsStatus(type, msg) {
 
 function resetManualFields() {
     const defaults = {
-        mainOn: true, mainBri: 128, mainBriVal: '128',
-        mainFx: 0, mainPal: 0, mainSx: 128, mainSxVal: '128', mainIx: 128, mainIxVal: '128',
-        floorOn: true, floorBri: 180, floorBriVal: '180',
-        floorFx: 0, floorPal: 0, floorSx: 128, floorSxVal: '128', floorIx: 128, floorIxVal: '128',
+        mainOn: true, mainBri: 128, mainFx: 0, mainPal: 0, mainSx: 128, mainIx: 128,
+        floorOn: true, floorBri: 180, floorFx: 0, floorPal: 0, floorSx: 128, floorIx: 128
     };
-    for (const [id, val] of Object.entries(defaults)) {
-        const el = document.getElementById(id);
-        if (!el) continue;
-        if (el.type === 'checkbox') el.checked = val;
-        else el.value = typeof val === 'string' ? val : String(val);
-        // Also update textContent for val spans
-        if (typeof val === 'string') el.textContent = val;
+    for (const [id, v] of Object.entries(defaults)) {
+        const el = $id(id); if (!el) continue;
+        if (el.type === 'checkbox') el.checked = v; else el.value = String(v);
     }
+    ['mainBriVal', 'mainSxVal', 'mainIxVal', 'floorBriVal', 'floorSxVal', 'floorIxVal'].forEach(id => {
+        const src = $id(id.replace('Val', '')); const el = $id(id);
+        if (src && el) el.textContent = src.value;
+    });
 }
 
-// Build lights payload from manual form
 function buildLightsFromManual() {
-    const zone = (prefix) => ({
-        on:  document.getElementById(prefix + 'On')?.checked ?? true,
-        bri: parseInt(document.getElementById(prefix + 'Bri')?.value ?? '128'),
+    const zone = p => ({
+        on: $id(p + 'On')?.checked ?? true,
+        bri: parseInt($id(p + 'Bri')?.value ?? '128'),
         seg: [{
-            fx:  parseInt(document.getElementById(prefix + 'Fx')?.value  ?? '0'),
-            pal: parseInt(document.getElementById(prefix + 'Pal')?.value ?? '0'),
-            sx:  parseInt(document.getElementById(prefix + 'Sx')?.value  ?? '128'),
-            ix:  parseInt(document.getElementById(prefix + 'Ix')?.value  ?? '128'),
+            fx: parseInt($id(p + 'Fx')?.value ?? '0'),
+            pal: parseInt($id(p + 'Pal')?.value ?? '0'),
+            sx: parseInt($id(p + 'Sx')?.value ?? '128'),
+            ix: parseInt($id(p + 'Ix')?.value ?? '128')
         }]
     });
     return { main: zone('main'), floor: zone('floor') };
 }
 
-// ── Save scene
 async function saveScene() {
-    const name = (document.getElementById('sceneNameInput')?.value || '').trim();
-    if (!name) { showToast('⚠️ Introdu un nume pentru scenă', 'error'); return; }
+    const name = ($id('sceneNameInput')?.value || '').trim();
+    if (!name) { showToast('⚠️ Dă-i un nume scenei', 'error'); return; }
 
-    const emoji = document.getElementById('sceneEmojiBtn')?.textContent?.trim() || '🎬';
-    const musicPrompt = (document.getElementById('sceneMusicPrompt')?.value || '').trim();
-    const editId = document.getElementById('sceneEditId')?.value || '';
+    const payload = {
+        name,
+        emoji: $id('sceneEmojiBtn')?.textContent?.trim() || '🎬',
+        music_prompt: ($id('sceneMusicPrompt')?.value || '').trim(),
+        lights: _capturedLights || (_manualOpen ? buildLightsFromManual() : null)
+    };
+    const editId = $id('sceneEditId')?.value || '';
+    if (editId) payload.id = editId;
 
-    // Determine lights config
-    let lights = null;
-    if (_capturedLights) {
-        lights = _capturedLights;
-    } else if (_manualOpen) {
-        lights = buildLightsFromManual();
-    }
-
-    const overlay = document.getElementById('sceneLoadingOverlay');
-    const loadTxt = document.getElementById('sceneLoadingText');
-    if (overlay) overlay.style.display = '';
-    if (loadTxt) loadTxt.textContent = 'Se salvează...';
+    const ov = $id('sceneLoadingOverlay');
+    ov.style.display = '';
+    $id('sceneLoadingText').textContent = 'Se salvează…';
 
     try {
-        const payload = { name, emoji, music_prompt: musicPrompt, lights };
-        if (editId) payload.id = editId;
-
-        const res = await fetch('/api/scenes/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+        const d = await fetch('/api/scenes/save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-
-        if (data.status === 'success') {
+        }).then(r => r.json());
+        if (d.status === 'success') {
             await loadScenes();
-            closeSceneModal(null, true);
-            showToast(`✅ Scena "${name}" salvată!`, 'success');
-        } else {
-            showToast('❌ Eroare la salvare', 'error');
-        }
-    } catch(e) {
-        showToast('❌ Eroare la salvare', 'error');
-    }
+            closeSceneModal();
+            showToast(`✅ Scena „${name}” salvată`, 'success');
+        } else showToast('❌ Eroare la salvare', 'error');
+    } catch (e) { showToast('❌ Eroare la salvare', 'error'); }
 
-    if (overlay) overlay.style.display = 'none';
+    ov.style.display = 'none';
 }
 
-// ── Activate scene
-async function activateScene(sceneId) {
-    const playBtn = document.getElementById(`scene-play-${sceneId}`);
-    if (playBtn) {
-        playBtn.classList.add('playing');
-        playBtn.textContent = '⏳ Se activează...';
-        playBtn.disabled = true;
-    }
-
+async function activateScene(id) {
+    const btn = $id(`scene-play-${id}`);
+    if (btn) { btn.classList.add('playing'); btn.textContent = '⏳ Pornesc…'; btn.disabled = true; }
     try {
-        const res = await fetch('/api/scenes/activate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: sceneId })
-        });
-        const data = await res.json();
+        const d = await fetch('/api/scenes/activate', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id })
+        }).then(r => r.json());
 
-        if (data.status === 'success') {
-            const r = data.results || {};
-            const parts = [];
-            if (r.lights === 'ok') parts.push('💡 LED OK');
-            else if (r.lights) parts.push(`💡 ${r.lights}`);
-            if (r.music  === 'ok' || r.music === 'success') parts.push('🎵 Muzică OK');
-            else if (r.music) parts.push(`🎵 ${r.music}`);
-            showToast(`▶ ${escHtml(data.scene_name)} — ${parts.join(' · ')}`, 'success');
-        } else {
-            showToast('❌ Eroare la activare', 'error');
-        }
-    } catch(e) {
-        showToast('❌ Eroare de conexiune', 'error');
-    }
+        if (d.status === 'success') {
+            const r = d.results || {}, parts = [];
+            if (r.lights) parts.push(r.lights === 'ok' ? '💡 LED OK' : `💡 ${r.lights}`);
+            if (r.music) parts.push((r.music === 'ok' || r.music === 'success') ? '🎵 Muzică OK' : `🎵 ${r.music}`);
+            showToast(`▶ ${escHtml(d.scene_name)} — ${parts.join(' · ')}`, 'success');
+        } else showToast('❌ Eroare la activare', 'error');
+    } catch (e) { showToast('❌ Eroare de conexiune', 'error'); }
 
-    if (playBtn) {
-        setTimeout(() => {
-            playBtn.classList.remove('playing');
-            playBtn.textContent = '▶ Activează';
-            playBtn.disabled = false;
-        }, 2500);
-    }
+    if (btn) setTimeout(() => {
+        btn.classList.remove('playing'); btn.textContent = '▶ Activează'; btn.disabled = false;
+    }, 2200);
 }
 
-// ── Delete scene
-async function deleteScene(sceneId) {
-    const scene = _scenes.find(s => s.id === sceneId);
-    if (!confirm(`Ștergi scena "${scene?.name || ''}"?`)) return;
-
+async function deleteScene(id) {
+    const s = _scenes.find(x => x.id === id);
+    if (!confirm(`Ștergi scena „${s?.name || ''}”?`)) return;
     try {
         await fetch('/api/scenes/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: sceneId })
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id })
         });
         await loadScenes();
         showToast('🗑 Scenă ștearsă', 'success');
-    } catch(e) {
-        showToast('❌ Eroare la ștergere', 'error');
-    }
+    } catch (e) { showToast('❌ Eroare la ștergere', 'error'); }
 }
 
-// ── Toast
 function showToast(msg, type = 'success') {
-    const toast = document.getElementById('sceneToast');
-    if (!toast) return;
-    toast.textContent = msg;
-    toast.className = `scene-toast ${type}`;
-    toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 3500);
+    const t = $id('sceneToast');
+    if (!t) return;
+    t.textContent = msg;
+    t.className = `scene-toast ${type} show`;
+    clearTimeout(t._t);
+    t._t = setTimeout(() => t.classList.remove('show'), 3400);
 }
 
-function escHtml(s) {
-    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
+/* ══════════════════════════════════════════════════════════════
+   BOOT
+   ══════════════════════════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+    setGreeting();
+    startClock();
+
+    // Butoanele din hero
+    $id('heroAsk')?.addEventListener('click', () => window.Chronos?.openChronos());
+    $id('heroSearch')?.addEventListener('click', () => window.Chronos?.openPalette());
+
+    // Modalul de scenă
+    $id('sceneModalClose')?.addEventListener('click', closeSceneModal);
+    $id('sceneCancelBtn')?.addEventListener('click', closeSceneModal);
+    $id('sceneSaveBtn')?.addEventListener('click', saveScene);
+    $id('sceneCaptureBtn')?.addEventListener('click', captureFromWLED);
+    $id('sceneManualToggle')?.addEventListener('click', toggleManualLights);
+    $id('sceneModalOverlay')?.addEventListener('click', e => {
+        if (e.target === e.currentTarget) closeSceneModal();
+    });
+    $id('sceneEmojiGrid')?.addEventListener('click', e => {
+        const b = e.target.closest('[data-emoji]');
+        if (b) pickEmoji(b.dataset.emoji);
+    });
+    document.addEventListener('click', e => {
+        if (_emojiOpen && !e.target.closest('.scene-emoji-picker')) {
+            _emojiOpen = false;
+            $id('sceneEmojiGrid')?.classList.remove('open');
+        }
+    });
+    [['mainBri', 'mainBriVal'], ['mainSx', 'mainSxVal'], ['mainIx', 'mainIxVal'],
+     ['floorBri', 'floorBriVal'], ['floorSx', 'floorSxVal'], ['floorIx', 'floorIxVal']]
+        .forEach(([s, v]) => {
+            const sl = $id(s), val = $id(v);
+            if (sl && val) sl.addEventListener('input', () => { val.textContent = sl.value; });
+        });
+
+    // Datele — toate în paralel
+    loadAlerts();
+    loadTodayPulse();
+    loadDailyTasks();
+    loadMaintenance();
+    loadFinance();
+    loadElectronicsStat();
+    loadScenes();
+});
