@@ -1,20 +1,33 @@
 # Chronos — dependințe
-# Instalare:  pip install -r requirements.txt
 #
-# Pe Raspberry Pi, ÎNAINTE de asta trebuie librăriile de sistem — vezi INSTALL_PI.md.
-# Versiunile sunt minime (>=), nu fixate: pe Pi (ARM + Python 3.13) unele pachete
-# au nevoie de build-uri mai noi decât cele de pe Windows.
+# Instalare:
+#     pip install -r requirements.txt
+#     pip install --no-deps openwakeword        # OBLIGATORIU separat, vezi mai jos
+#
+# Pe Raspberry Pi, ÎNAINTE de pip trebuie librăriile de sistem — vezi INSTALL_PI.md.
+#
+# DE CE openwakeword SEPARAT:
+#   Declară `tflite-runtime` ca dependință OBLIGATORIE pe Linux, iar acesta nu
+#   are build-uri pentru Python 3.13 pe ARM64 (se oprește la 3.12). Instalarea
+#   normală eșuează cu „No matching distribution found for tflite-runtime".
+#   Cu --no-deps îl instalăm fără ea și rulează pe onnxruntime — codul detectează
+#   singur ce backend există (vezi core/audio_interface.py).
+#   Dependențele lui reale sunt listate mai jos, ca să nu lipsească nimic.
 
 # ── Gemini / AI ──
 google-genai>=2.10.0
 requests>=2.32.0
 python-dotenv>=1.0.0
 
-# ── Voce: captură, wake word, redare ──
+# ── Voce: captură și redare ──
 sounddevice>=0.5.0
 numpy>=1.26.0
-openwakeword>=0.6.0
-onnxruntime>=1.17.0          # backend pentru wake word (tflite nu există pe Pi)
+
+# ── Wake word (dependențele lui openwakeword, fără tflite-runtime) ──
+onnxruntime>=1.17.0
+scipy>=1.11.0
+scikit-learn>=1.3.0
+tqdm>=4.64.0
 
 # ── TTS ──
 edge-tts>=7.0.0

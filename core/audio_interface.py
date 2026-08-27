@@ -187,13 +187,24 @@ class AudioInterface:
             logger.error("❌ openwakeword lipsă! pip install openwakeword")
             return False
 
+        # Alegem backend-ul in functie de ce EXISTA, nu presupunem tflite.
+        # Pe Raspberry Pi cu Python 3.13, `tflite-runtime` nu are build-uri
+        # (se opreste la 3.12), deci acolo mergem pe onnxruntime — la fel de
+        # bun pentru wake word, doar putin mai lent la incarcare.
+        try:
+            import tflite_runtime          # noqa: F401
+            framework = "tflite"
+        except ImportError:
+            framework = "onnx"
+            logger.info("ℹ️ [OWW] tflite indisponibil → folosesc onnxruntime.")
+
         # Model custom
         custom = self._find_custom_model()
         if custom:
             try:
                 self._oww_model = OWWModel(
                     wakeword_models=[str(custom)],
-                    inference_framework="tflite"
+                    inference_framework=framework
                 )
                 self._model_name = custom.stem
                 logger.info(f"✅ [OWW] Model custom: {custom.name}")
@@ -204,7 +215,7 @@ class AudioInterface:
         # Modele pre-instalate
         logger.info("🔍 [OWW] Caut modele pre-instalate...")
         try:
-            self._oww_model = OWWModel(inference_framework="tflite")
+            self._oww_model = OWWModel(inference_framework=framework)
             names = list(self._oww_model.models.keys()) if self._oww_model.models else []
             if not names:
                 logger.error("❌ [OWW] Niciun model disponibil!")

@@ -41,12 +41,40 @@ pip install --upgrade pip
 
 ## 3. Pachetele Python
 
+**Doi pași, nu unul.** Al doilea e obligatoriu:
+
 ```bash
 pip install -r requirements.txt
+pip install --no-deps openwakeword
 ```
 
-Pe Pi durează câteva minute (unele se compilează). Dacă `chromadb` dă erori de
-compilare, instalează-l separat cu build-uri gata făcute:
+### De ce openwakeword separat
+
+`openwakeword` declară `tflite-runtime` ca dependință **obligatorie pe Linux**,
+iar acesta nu are build-uri pentru Python 3.13 pe ARM64 — se oprește la 3.12.
+Instalarea normală eșuează cu:
+
+```
+ERROR: No matching distribution found for tflite-runtime<3,>=2.8.0
+```
+
+Cu `--no-deps` îl instalăm fără ea. Rulează pe **onnxruntime**, care e la fel de
+bun pentru wake word (doar puțin mai lent la încărcarea modelului). Codul
+detectează singur ce backend există și îl alege pe cel potrivit — nu trebuie să
+configurezi nimic.
+
+Dependențele reale ale lui `openwakeword` (onnxruntime, scipy, scikit-learn,
+tqdm) sunt deja în `requirements.txt`, deci nu lipsește nimic.
+
+### Modelele de wake word
+
+Dacă e prima instalare, descarcă modelele (inclusiv variantele `.onnx`):
+
+```bash
+python -c "import openwakeword.utils as u; u.download_models()"
+```
+
+### Dacă chromadb dă erori de compilare
 
 ```bash
 pip install --only-binary=:all: chromadb
@@ -139,8 +167,15 @@ acum vine prin git. Dacă tot apare: `git pull` din nou.
 **`sounddevice lipsă` deși l-ai instalat**
 Lipsește PortAudio din sistem. Vezi pasul 1.
 
+**`No matching distribution found for tflite-runtime`**
+Nu instala `openwakeword` prin `requirements.txt`. Vezi pasul 3 — trebuie
+`pip install --no-deps openwakeword`.
+
 **`Tried to import the tflite runtime, but it was not found`**
-Normal pe Pi — trece automat pe onnxruntime. Nu e eroare.
+Normal pe Pi — codul trece pe onnxruntime. Nu e eroare.
+
+**`Niciun model disponibil!` la pornire**
+Lipsesc modelele de wake word. Rulează comanda `download_models()` din pasul 3.
 
 **Serviciul pornește dar n-aude nimic**
 Serviciul rulează ca alt utilizator, care poate n-are acces la placa audio.
