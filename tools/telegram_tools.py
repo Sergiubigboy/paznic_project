@@ -23,7 +23,12 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# Sesiune partajată — evită un handshake TLS complet la fiecare mesaj.
+_session = requests.Session()
+_session.mount("https://", requests.adapters.HTTPAdapter(pool_connections=1, pool_maxsize=2))
+
 _API = "https://api.telegram.org/bot{token}/sendMessage"
+_API_UPDATES = "https://api.telegram.org/bot{token}/getUpdates"
 _TIMEOUT = 10
 
 
@@ -61,7 +66,7 @@ def send_telegram(text: str) -> dict:
         }
 
     try:
-        resp = requests.post(
+        resp = _session.post(
             _API.format(token=token),
             json={"chat_id": chat_id, "text": text, "disable_notification": False},
             timeout=_TIMEOUT,
@@ -90,3 +95,45 @@ def notify(title: str, body: str = "") -> dict:
         return {"status": "skipped", "message": "Telegram neconfigurat."}
     mesaj = f"🤖 {title}" + (f"\n\n{body}" if body else "")
     return send_telegram(mesaj)
+
+
+# ─────────────────────────────────────────────────────────────
+# RECEPȚIE — Telegram ca telecomandă pentru programul zilei
+# ─────────────────────────────────────────────────────────────
+
+def get_updates(offset: int = 0, timeout: int = 25) -> list:
+    """
+    Citește mesajele noi (long polling — conexiunea stă deschisă până apare
+    ceva sau expiră timeout-ul, deci nu batem serverul degeaba).
+
+    Întoarce [{update_id, text, chat_id}], doar de la chat-ul configurat.
+    """
+    token, chat_id = _creds()
+    if not token or not chat_id:
+        return []
+
+    try:
+        resp = _session.get(
+            _API_UPDATES.format(token=token),
+            params={"offset": offset, "timeout": timeout,
+                    "allowed_updates": '["message"]'},
+            timeout=timeout + 10,
+        )
+        if resp.status_code != 200:
+            logger.debug(f"[Telegram] getUpdates HTTP {resp.status_code}")
+            return []
+        date = resp.json().get("result", [])
+    except requests.exceptions.Timeout:
+        return []          # normal la long polling
+    except Exception as e:
+        logger.debug(f"[Telegram] getUpdates: {e}")
+        return []
+
+    mesaje = []
+    for u in date:
+        msg = u.get("message") or {}
+        text = (msg.get("text") or "").strip()
+        cid = str((msg.get("chat") or {}).get("id", ""))
+        if text and cid == str(chat_id):
+            mesaje.append({"update_id": u.get("update_id"), "text": text, "chat_id": cid})
+    return mesaje

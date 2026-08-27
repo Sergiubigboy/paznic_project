@@ -5,21 +5,28 @@ Captură audio continuă + detectare wake word openWakeWord.
 
 Moduri de operare:
     WAKE_WORD_MODE (default):
-        Audio chunk → OWW model → detectează "hey_jarvis" → publică WAKE_WORD_DETECTED
+        chunk microfon → OWW → detectează "hey_jarvis" → publică WAKE_WORD_DETECTED
 
     LIVE_SESSION_MODE (activat de GeminiLiveSession):
-        Audio chunk → direct în live_queue → GeminiLiveSession consumă
-        (Wake word detection SUSPENDAT pe durata sesiunii live)
+        chunk microfon → direct în live_queue → GeminiLiveSession consumă
+        (detecția de wake word e suspendată, exceptând „focus mode")
 
 Cross-Platform: Windows 11 (sounddevice/PortAudio) + Raspberry Pi 5 (idem)
-Fallback: dacă microfon sau OWW lipsesc → Terminal-only mode (fără crash)
+Fallback: fără microfon sau fără OWW → Terminal-only mode (fără crash)
+
+Note de performanță (contează pe Pi):
+    - Callback-ul PortAudio face O SINGURĂ copie per frame, nimic altceva.
+      E un thread în timp real: orice alocare în plus se plătește în glitch-uri.
+    - Inferența TFLite NU rulează pe bucla asyncio, ci pe un thread dedicat.
+      Rula pe buclă înainte, blocând-o câteva ms la fiecare 80ms.
 """
 
 import asyncio
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 
@@ -28,29 +35,56 @@ try:
         SAMPLE_RATE,
         OWW_DETECTION_THRESHOLD as DETECTION_THRESHOLD,
         OWW_CONFIRMATION_FRAMES as CONFIRMATION_FRAMES,
-        OWW_DETECTION_COOLDOWN  as DETECTION_COOLDOWN,
+        OWW_DETECTION_COOLDOWN as DETECTION_COOLDOWN,
         WAKE_WORD_THRESHOLD_JARVIS as MIN_SCORE_FOR_JARVIS,
-        WAKE_WORD_THRESHOLD_OTHER  as MIN_SCORE_FOR_NON_JARVIS,
+        WAKE_WORD_THRESHOLD_OTHER as MIN_SCORE_FOR_NON_JARVIS,
     )
 except ImportError:
-    SAMPLE_RATE             = 16000
-    DETECTION_THRESHOLD     = 0.5
-    CONFIRMATION_FRAMES     = 2
-    DETECTION_COOLDOWN      = 3.0
-    MIN_SCORE_FOR_JARVIS    = 0.75
+    SAMPLE_RATE = 16000
+    DETECTION_THRESHOLD = 0.5
+    CONFIRMATION_FRAMES = 2
+    DETECTION_COOLDOWN = 3.0
+    MIN_SCORE_FOR_JARVIS = 0.75
     MIN_SCORE_FOR_NON_JARVIS = 0.90
+
+# ATENȚIE: aici era, înainte, o redefinire necondiționată a pragurilor
+# MIN_SCORE_FOR_JARVIS / MIN_SCORE_FOR_NON_JARVIS imediat după import. Efectul
+# era că valorile din personalization.py erau citite și apoi aruncate — ajustarea
+# pragurilor de acolo nu avea absolut niciun efect. Nu le redefini aici.
 
 logger = logging.getLogger(__name__)
 
-_MODELS_DIR  = Path(__file__).parent / "models"
+_MODELS_DIR = Path(__file__).parent / "models"
 FRAME_LENGTH = 1280   # 80ms @ 16kHz — recomandat OWW
-CHANNELS     = 1
-DTYPE        = "int16"
+CHANNELS = 1
+DTYPE = "int16"
 
-# Prag minim scor pentru a accepta wake word-uri non-jarvis
-# (evităm false positive-uri de la modele ca "weather", "timer")
-MIN_SCORE_FOR_NON_JARVIS = 0.90
-MIN_SCORE_FOR_JARVIS     = 0.75
+# Reconectare microfon: pe Pi, un mic USB scos/repus sau un xrun de driver
+# omorau definitiv captura, iar Chronos rămânea surd până la restart.
+_STREAM_RETRY_DELAY = 2.0
+_STREAM_RETRY_MAX_DELAY = 30.0
+
+
+def _enqueue_latest(queue: asyncio.Queue, item) -> None:
+    """Pune `item` în coadă; dacă e plină, aruncă cel mai vechi element.
+
+    Rulează PE BUCLA asyncio (programat cu call_soon_threadsafe), nu pe threadul
+    PortAudio. Varianta veche prindea `asyncio.QueueFull` în jurul apelului
+    `call_soon_threadsafe` — dar acolo nu se aruncă niciodată nimic: apelul doar
+    programează callback-ul, iar excepția apărea mai târziu, pe buclă, unde
+    ajungea direct la exception handler-ul default ca „Exception in callback".
+    """
+    try:
+        queue.put_nowait(item)
+    except asyncio.QueueFull:
+        try:
+            queue.get_nowait()          # audio vechi = audio inutil
+        except asyncio.QueueEmpty:
+            return
+        try:
+            queue.put_nowait(item)
+        except asyncio.QueueFull:
+            pass
 
 
 class AudioInterface:
@@ -58,35 +92,47 @@ class AudioInterface:
     Interfața audio asincronă a sistemului Chronos.
 
     Gestionează:
-        - Stream microfon continuu (sounddevice)
-        - Detectare wake word "hey_jarvis" (openWakeWord)
+        - Stream microfon continuu (sounddevice), cu reconectare
+        - Detectare wake word "hey_jarvis" (openWakeWord), off-loop
         - Live mode: redirect audio → GeminiLiveSession queue
     """
 
+    __slots__ = (
+        "bus", "EventType", "_oww_model", "_model_name", "_sd", "_enabled",
+        "_running", "_last_detect", "_ww_queue", "_live_mode", "_live_queue",
+        "_wake_interrupt_armed", "_infer_pool", "_loop",
+    )
+
     def __init__(self, event_bus):
-        from core.event_bus import EventBus, EventType
-        self.bus      = event_bus
+        from core.event_bus import EventType
+        self.bus = event_bus
         self.EventType = EventType
 
-        self._oww_model   = None
-        self._model_name  : str  = "N/A"
-        self._sd          = None
-        self._enabled     : bool = False
-        self._running     : bool = False
-        self._last_detect : float = 0.0
+        self._oww_model = None
+        self._model_name: str = "N/A"
+        self._sd = None
+        self._enabled: bool = False
+        self._running: bool = False
+        self._last_detect: float = 0.0
 
-        # Coada internă pentru WW detection
-        self._ww_queue : asyncio.Queue = asyncio.Queue(maxsize=100)
+        # Coada internă pentru detecția de wake word
+        self._ww_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
 
         # Live session mode
-        self._live_mode  : bool          = False
-        self._live_queue : Optional[asyncio.Queue] = None
+        self._live_mode: bool = False
+        self._live_queue: Optional[asyncio.Queue] = None
 
         # Wake-word-as-interrupt: în „focus mode" (Chronos livrează un răspuns
         # important) barge-in-ul pe voce e oprit, iar singura cale de a-l
         # întrerupe e să spui din nou wake word-ul. Când e armat, audio-ul e
         # rutat SIMULTAN către sesiunea live ȘI către detectorul OWW.
-        self._wake_interrupt_armed : bool = False
+        self._wake_interrupt_armed: bool = False
+
+        # Thread dedicat pentru inferența TFLite. Dedicat, nu pool-ul default:
+        # acolo se înghesuie deja Flask, dispatcher-ul și analiza de emoții, iar
+        # detecția wake word-ului nu are voie să aștepte după ele.
+        self._infer_pool: Optional[ThreadPoolExecutor] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     # ─────────────────────────────────────────────────────
     # INIȚIALIZARE
@@ -103,13 +149,18 @@ class AudioInterface:
             )
             return False
 
-        if not self._init_oww():
+        # Încărcarea modelului citește de pe disc și construiește interpretorul
+        # TFLite — sute de ms pe Pi. Pe buclă ar întârzia pornirea a tot restul.
+        if not await asyncio.to_thread(self._init_oww):
             await self.bus.publish_status(
                 "AudioInterface", "DISABLED",
                 "openWakeWord indisponibil → Terminal-only.", "WARNING"
             )
             return False
 
+        self._infer_pool = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="oww-infer"
+        )
         self._enabled = True
         logger.info(f"✅ [AudioInterface] Gata. Model: '{self._model_name}'")
         await self.bus.publish(self.EventType.SYSTEM_READY, {"component": "AudioInterface"})
@@ -183,11 +234,36 @@ class AudioInterface:
     # LOOP PRINCIPAL
     # ─────────────────────────────────────────────────────
 
+    def _make_callback(self, loop: asyncio.AbstractEventLoop):
+        """Construiește callback-ul PortAudio.
+
+        Rulează pe un thread în timp real: o singură copie, zero alocări în
+        plus, zero logging. `indata` e int16 mono (vezi DTYPE/CHANNELS), deci
+        `[:, 0].copy()` e exact copia necesară — varianta veche făcea
+        `.astype(np.int16).copy()`, adică două copii, din care una degeaba.
+        """
+        call_soon = loop.call_soon_threadsafe
+
+        def audio_callback(indata, frames, time_info, status):
+            chunk = indata[:, 0].copy()
+            try:
+                if self._live_mode and self._live_queue is not None:
+                    call_soon(_enqueue_latest, self._live_queue, chunk)
+                    if self._wake_interrupt_armed:
+                        call_soon(_enqueue_latest, self._ww_queue, chunk)
+                else:
+                    call_soon(_enqueue_latest, self._ww_queue, chunk)
+            except RuntimeError:
+                # Bucla s-a închis între timp (shutdown). Nu e nimic de făcut
+                # și nu avem voie să aruncăm dintr-un callback PortAudio.
+                pass
+
+        return audio_callback
+
     async def run(self) -> None:
-        """Loop principal: captura audio continua + routing."""
+        """Loop principal: captură audio continuă + routing, cu reconectare."""
         if not self._enabled:
             logger.warning("⚠️ [AudioInterface] Dezactivat → Terminal-only.")
-            # Asteaptam la infinit fara sa facem nimic (nu crash)
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
@@ -195,28 +271,9 @@ class AudioInterface:
             return
 
         self._running = True
-        loop = asyncio.get_running_loop()
-
-        def audio_callback(indata, frames, time_info, status):
-            chunk = indata[:, 0].astype(np.int16).copy()
-            if self._live_mode and self._live_queue is not None:
-                # LIVE MODE: trimitem direct la sesiunea Gemini
-                try:
-                    loop.call_soon_threadsafe(self._live_queue.put_nowait, chunk)
-                except asyncio.QueueFull:
-                    pass
-                # ...și în paralel la detector, dacă wake-interrupt e armat
-                if self._wake_interrupt_armed:
-                    try:
-                        loop.call_soon_threadsafe(self._ww_queue.put_nowait, chunk)
-                    except asyncio.QueueFull:
-                        pass
-            else:
-                # WAKE WORD MODE: trimitem la detector
-                try:
-                    loop.call_soon_threadsafe(self._ww_queue.put_nowait, chunk)
-                except asyncio.QueueFull:
-                    pass
+        self._loop = asyncio.get_running_loop()
+        callback = self._make_callback(self._loop)
+        delay = _STREAM_RETRY_DELAY
 
         logger.info(
             f"🚀 [AudioInterface] Ascult wake word '{self._model_name}'...\n"
@@ -224,107 +281,146 @@ class AudioInterface:
         )
 
         try:
-            with self._sd.InputStream(
-                samplerate=SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype=DTYPE,
-                blocksize=FRAME_LENGTH,
-                callback=audio_callback,
-            ):
-                logger.info("🎙️ [AudioInterface] Stream microfon deschis.")
-                await self._detection_loop()
-        except Exception as e:
-            logger.error(f"❌ [AudioInterface] Stream error: {e}", exc_info=True)
+            while self._running:
+                try:
+                    with self._sd.InputStream(
+                        samplerate=SAMPLE_RATE,
+                        channels=CHANNELS,
+                        dtype=DTYPE,
+                        blocksize=FRAME_LENGTH,
+                        callback=callback,
+                    ):
+                        logger.info("🎙️ [AudioInterface] Stream microfon deschis.")
+                        delay = _STREAM_RETRY_DELAY   # conexiune bună → reset backoff
+                        await self._detection_loop()
+                    # _detection_loop s-a întors normal → oprire cerută
+                    break
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    if not self._running:
+                        break
+                    logger.error(
+                        f"❌ [AudioInterface] Stream pierdut ({type(e).__name__}: {e}). "
+                        f"Reîncerc în {delay:.0f}s..."
+                    )
+                    await self.bus.publish_status(
+                        "AudioInterface", "RECONNECTING",
+                        f"Microfon indisponibil, reîncerc în {delay:.0f}s.", "WARNING"
+                    )
+                    try:
+                        await asyncio.sleep(delay)
+                    except asyncio.CancelledError:
+                        break
+                    delay = min(delay * 2, _STREAM_RETRY_MAX_DELAY)
         finally:
             self._running = False
+            self._shutdown_pool()
             logger.info("🛑 [AudioInterface] Stream oprit.")
 
     async def _detection_loop(self) -> None:
-        """Procesează frame-urile audio și detectează wake word."""
+        """Procesează frame-urile audio și detectează wake word.
+
+        Inferența pleacă pe threadul dedicat; bucla rămâne liberă să servească
+        restul sistemului (rețea, playback, event bus).
+        """
+        loop = asyncio.get_running_loop()
         confirmation = 0
-        audio_buffer = bytearray()
+        pending: List[np.ndarray] = []
+        pending_len = 0
 
         while self._running:
             try:
-                # În live mode nu facem wake word detection — EXCEPTÂND cazul
-                # în care wake-interrupt e armat (focus mode), când wake word-ul
-                # e singura cale de a-l întrerupe pe Chronos.
+                # În live mode nu facem detecție — exceptând „focus mode", când
+                # wake word-ul e singura cale de a-l întrerupe pe Chronos.
                 if self._live_mode and not self._wake_interrupt_armed:
                     await asyncio.sleep(0.1)
                     confirmation = 0
-                    audio_buffer.clear()
+                    if pending:
+                        pending.clear()
+                        pending_len = 0
                     continue
 
                 try:
-                    chunk_np = await asyncio.wait_for(self._ww_queue.get(), timeout=0.5)
+                    chunk = await asyncio.wait_for(self._ww_queue.get(), timeout=0.5)
                 except asyncio.TimeoutError:
                     continue
 
-                audio_buffer.extend(chunk_np.tobytes())
+                # Cazul normal (blocksize == FRAME_LENGTH): frame-ul e gata,
+                # fără concatenări și fără copii intermediare.
+                if not pending and chunk.shape[0] == FRAME_LENGTH:
+                    frame = chunk
+                else:
+                    pending.append(chunk)
+                    pending_len += chunk.shape[0]
+                    if pending_len < FRAME_LENGTH:
+                        continue
+                    joined = np.concatenate(pending) if len(pending) > 1 else pending[0]
+                    frame = joined[:FRAME_LENGTH]
+                    rest = joined[FRAME_LENGTH:]
+                    pending = [rest] if rest.size else []
+                    pending_len = rest.size
 
-                if len(audio_buffer) >= FRAME_LENGTH * 2:
-                    audio_np = np.frombuffer(
-                        bytes(audio_buffer[:FRAME_LENGTH * 2]), dtype=np.int16
+                prediction = await loop.run_in_executor(
+                    self._infer_pool, self._oww_model.predict, frame
+                )
+
+                best_name, best_score = "", 0.0
+                for mname, score in prediction.items():
+                    if score > best_score:
+                        best_score, best_name = score, mname
+
+                # Prag diferit pentru jarvis vs alte modele (evităm false positives)
+                threshold = (
+                    MIN_SCORE_FOR_JARVIS if "jarvis" in best_name.lower()
+                    else MIN_SCORE_FOR_NON_JARVIS
+                )
+
+                if best_score >= threshold:
+                    confirmation += 1
+                    logger.debug(
+                        f"🔍 [OWW] {best_name}: {best_score:.3f} "
+                        f"[{confirmation}/{CONFIRMATION_FRAMES}]"
                     )
-                    audio_buffer = bytearray(audio_buffer[FRAME_LENGTH * 2:])
+                else:
+                    confirmation = 0
+                    continue
 
-                    prediction = self._oww_model.predict(audio_np)
+                if confirmation < CONFIRMATION_FRAMES:
+                    continue
 
-                    best_score = 0.0
-                    best_name  = ""
-                    for mname, score in prediction.items():
-                        if score > best_score:
-                            best_score = score
-                            best_name  = mname
+                confirmation = 0
+                now = time.time()
+                if now - self._last_detect < DETECTION_COOLDOWN:
+                    continue
+                self._last_detect = now
 
-                    # Prag diferit pentru jarvis vs alte modele (evitam false positives)
-                    is_jarvis = "jarvis" in best_name.lower()
-                    threshold = MIN_SCORE_FOR_JARVIS if is_jarvis else MIN_SCORE_FOR_NON_JARVIS
+                payload = {
+                    "timestamp": now,
+                    "score": float(best_score),
+                    "model_name": best_name,
+                }
 
-                    if best_score >= threshold:
-                        confirmation += 1
-                        logger.debug(f"🔍 [OWW] {best_name}: {best_score:.3f} [{confirmation}/{CONFIRMATION_FRAMES}]")
-                    else:
-                        confirmation = 0
+                if self._live_mode:
+                    # Sesiune live activă → wake word-ul e ÎNTRERUPERE, nu
+                    # pornire de sesiune nouă (altfel am avea două sesiuni
+                    # Gemini simultan, vorbind una peste alta).
+                    logger.info(
+                        f"\n🖐️ [AudioInterface] WAKE WORD ca ÎNTRERUPERE! "
+                        f"'{best_name}' score={best_score:.3f}"
+                    )
+                    await self.bus.publish(self.EventType.WAKE_WORD_INTERRUPT, payload)
+                else:
+                    logger.info(
+                        f"\n🎯 [AudioInterface] WAKE WORD! '{best_name}' "
+                        f"score={best_score:.3f}"
+                    )
+                    await self.bus.publish(self.EventType.WAKE_WORD_DETECTED, payload)
 
-                    if confirmation >= CONFIRMATION_FRAMES:
-                        confirmation = 0
-                        now = time.time()
-                        if now - self._last_detect < DETECTION_COOLDOWN:
-                            continue
-                        self._last_detect = now
-
-                        payload = {
-                            "timestamp": now,
-                            "score": float(best_score),
-                            "model_name": best_name,
-                        }
-
-                        if self._live_mode:
-                            # Sesiune live activă → wake word-ul e ÎNTRERUPERE,
-                            # nu pornire de sesiune nouă (altfel am avea două
-                            # sesiuni Gemini simultan, vorbind una peste alta).
-                            logger.info(
-                                f"\n🖐️ [AudioInterface] WAKE WORD ca ÎNTRERUPERE! "
-                                f"'{best_name}' score={best_score:.3f}"
-                            )
-                            await self.bus.publish(
-                                self.EventType.WAKE_WORD_INTERRUPT, payload
-                            )
-                        else:
-                            logger.info(
-                                f"\n🎯 [AudioInterface] WAKE WORD! '{best_name}' "
-                                f"score={best_score:.3f}"
-                            )
-                            await self.bus.publish(
-                                self.EventType.WAKE_WORD_DETECTED, payload
-                            )
-                        self._oww_model.reset()
-
-                        # Golim coada
-                        while not self._ww_queue.empty():
-                            try: self._ww_queue.get_nowait()
-                            except asyncio.QueueEmpty: break
+                self._oww_model.reset()
+                pending.clear()
+                pending_len = 0
+                self._drain_ww_queue()
 
             except asyncio.CancelledError:
                 break
@@ -336,16 +432,30 @@ class AudioInterface:
     # LIVE MODE CONTROL
     # ─────────────────────────────────────────────────────
 
+    def _drain_ww_queue(self) -> None:
+        """Golește coada de detecție (frame-uri vechi = detecții false)."""
+        q = self._ww_queue
+        while True:
+            try:
+                q.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+
+    def _reset_detector(self) -> None:
+        self._drain_ww_queue()
+        if self._oww_model is not None:
+            try:
+                self._oww_model.reset()
+            except Exception as e:
+                logger.debug(f"[AudioInterface] OWW reset: {e}")
+
     def enable_live_mode(self, live_queue: asyncio.Queue) -> None:
         """
         Activează live mode: audio e redirecționat la live_queue.
-        Wake word detection e suspendat automat.
-
-        Args:
-            live_queue: Coada în care GeminiLiveSession primește audio.
+        Detecția de wake word e suspendată automat.
         """
         self._live_queue = live_queue
-        self._live_mode  = True
+        self._live_mode = True
         logger.info("🔴 [AudioInterface] LIVE MODE activ — audio → GeminiLive")
 
     def arm_wake_interrupt(self) -> None:
@@ -356,13 +466,9 @@ class AudioInterface:
         """
         if self._wake_interrupt_armed:
             return
-        # Pornim de la zero: frame-urile vechi din coadă sunt irelevante și ar
-        # putea produce o detecție falsă imediată.
-        while not self._ww_queue.empty():
-            try: self._ww_queue.get_nowait()
-            except asyncio.QueueEmpty: break
-        if self._oww_model:
-            self._oww_model.reset()
+        # Pornim de la zero: frame-urile vechi din coadă ar putea produce o
+        # detecție falsă imediată.
+        self._reset_detector()
         self._wake_interrupt_armed = True
         logger.info("🖐️ [AudioInterface] Wake-interrupt ARMAT (focus mode).")
 
@@ -371,31 +477,25 @@ class AudioInterface:
         if not self._wake_interrupt_armed:
             return
         self._wake_interrupt_armed = False
-        while not self._ww_queue.empty():
-            try: self._ww_queue.get_nowait()
-            except asyncio.QueueEmpty: break
-        if self._oww_model:
-            self._oww_model.reset()
+        self._reset_detector()
         logger.info("🟢 [AudioInterface] Wake-interrupt dezarmat.")
 
     def disable_live_mode(self) -> None:
-        """
-        Dezactivează live mode: revenim la wake word detection.
-        """
-        self._live_mode  = False
+        """Dezactivează live mode: revenim la detecția de wake word."""
+        self._live_mode = False
         self._live_queue = None
         self._wake_interrupt_armed = False
-        # Golim coada WW (frame-uri acumulate în live mode sunt irelevante)
-        while not self._ww_queue.empty():
-            try: self._ww_queue.get_nowait()
-            except asyncio.QueueEmpty: break
-        if self._oww_model:
-            self._oww_model.reset()
+        self._reset_detector()
         logger.info("🟢 [AudioInterface] WAKE WORD MODE restaurat.")
 
     # ─────────────────────────────────────────────────────
     # CLEANUP
     # ─────────────────────────────────────────────────────
+
+    def _shutdown_pool(self) -> None:
+        pool, self._infer_pool = self._infer_pool, None
+        if pool is not None:
+            pool.shutdown(wait=False)
 
     def stop(self) -> None:
         self._running = False

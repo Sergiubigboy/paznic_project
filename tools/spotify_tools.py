@@ -10,6 +10,14 @@ from config import HA_URL, HA_TOKEN
 
 logger = logging.getLogger(__name__)
 
+# Sesiune HTTP partajată: fără ea, fiecare comandă (pauză la începutul fiecărei
+# sesiuni vocale, resume la final) plătea un handshake TCP nou către Home
+# Assistant. Cu keep-alive, socketul rămâne cald între comenzi.
+_session = requests.Session()
+_session.mount("http://", requests.adapters.HTTPAdapter(pool_connections=2, pool_maxsize=4))
+_session.mount("https://", requests.adapters.HTTPAdapter(pool_connections=2, pool_maxsize=4))
+_session.headers["Connection"] = "keep-alive"
+
 SPEAKER_NAME = "Sergiu speaker"
 _was_playing_before_pause = False
 
@@ -30,7 +38,7 @@ def send_google_command(command_text: str) -> tuple[bool, str]:
 
     last_error = ""
     try:
-        resp = requests.post(HA_URL, headers=headers, json=payload, timeout=10)
+        resp = _session.post(HA_URL, headers=headers, json=payload, timeout=10)
         if resp.status_code == 200:
             logger.info(f"✅ [Spotify Tools] Trimis la Google: '{full_command}'")
             return True, "OK"
@@ -44,7 +52,7 @@ def send_google_command(command_text: str) -> tuple[bool, str]:
     # Încercarea 2: Fallback fără 'on SPEAKER_NAME'
     try:
         payload_simple = {"command": command_text}
-        resp2 = requests.post(HA_URL, headers=headers, json=payload_simple, timeout=10)
+        resp2 = _session.post(HA_URL, headers=headers, json=payload_simple, timeout=10)
         if resp2.status_code == 200:
             logger.info(f"✅ [Spotify Tools] Trimis la Google (fallback simplu): '{command_text}'")
             return True, "OK (fallback)"

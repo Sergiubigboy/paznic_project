@@ -27,9 +27,14 @@ Exemplu de utilizare:
 import asyncio
 import logging
 from enum import Enum, auto
-from typing import AsyncGenerator, Any, Dict, List
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
+
+# Sentinela de oprire. Obiect dedicat, nu None: None e un payload perfect
+# valid pentru un eveniment, iar folosirea lui ca semnal de shutdown ar fi
+# oprit abonații la primul publish fără date.
+_STOP = object()
 
 
 # =============================================================================
@@ -145,131 +150,197 @@ class EventType(Enum):
     """
 
 
+
+# =============================================================================
+# SUBSCRIPTION
+# =============================================================================
+
+class Subscription:
+    """
+    Un abonament activ la un tip de eveniment.
+
+    De ce e o clasă și nu un async generator (cum era înainte):
+        Corpul unui async generator NU rulează până la primul `__anext__`.
+        Adică `bus.subscribe(X)` nu înregistra nimic — înregistrarea se făcea
+        abia când task-ul consumator apuca să ruleze. Orice eveniment publicat
+        în fereastra aia se pierdea în tăcere. Exact așa dispărea SYSTEM_READY:
+        componentele îl publicau în timpul inițializării, iar handler-ul se
+        abona după, deci bannerul de pornire nu apărea niciodată.
+
+        Aici coada e înregistrată SINCRON, în `subscribe()`, înainte ca
+        apelantul să apuce să facă altceva.
+
+    Se folosește identic:
+        async for data in bus.subscribe(EventType.WAKE_WORD_DETECTED):
+            ...
+    """
+
+    __slots__ = ("_bus", "_event_type", "_queue", "_closed")
+
+    def __init__(self, bus: "EventBus", event_type: EventType, maxsize: int):
+        self._bus = bus
+        self._event_type = event_type
+        self._queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
+        self._closed = False
+        bus._register(event_type, self)
+
+    # -- Protocol async-iterator ------------------------------------------
+    def __aiter__(self) -> "Subscription":
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._closed:
+            raise StopAsyncIteration
+        try:
+            data = await self._queue.get()
+        except asyncio.CancelledError:
+            # Task-ul consumator a fost anulat -> nu lăsăm coada înregistrată
+            # în bus, altfel publish() ar continua să scrie într-o coadă pe
+            # care n-o mai citește nimeni (scurgere de memorie lentă).
+            self.close()
+            raise
+        if data is _STOP:
+            self.close()
+            raise StopAsyncIteration
+        return data
+
+    # -- Context manager (cleanup determinist) ----------------------------
+    async def __aenter__(self) -> "Subscription":
+        return self
+
+    async def __aexit__(self, *_exc) -> bool:
+        self.close()
+        return False
+
+    # -- Livrare ----------------------------------------------------------
+    def _deliver(self, data: Any) -> bool:
+        """Pune un eveniment în coadă. Când coada e plină aruncă cel mai VECHI
+        element, nu pe cel nou: un status vechi de acum zece secunde valorează
+        mai puțin decât cel curent, iar publisherul nu blochează niciodată."""
+        if self._closed:
+            return False
+        try:
+            self._queue.put_nowait(data)
+            return True
+        except asyncio.QueueFull:
+            try:
+                self._queue.get_nowait()          # scoatem cel mai vechi
+            except asyncio.QueueEmpty:
+                return False
+            try:
+                self._queue.put_nowait(data)
+                return True
+            except asyncio.QueueFull:
+                return False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._bus._unregister(self._event_type, self)
+
+    def __del__(self):
+        # Plasă de siguranță pentru abonamentele abandonate fără close().
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    @property
+    def pending(self) -> int:
+        return self._queue.qsize()
+
+
 # =============================================================================
 # CLASA EVENT BUS
 # =============================================================================
 
 class EventBus:
     """
-    Event Bus asincron, thread-safe, bazat pe asyncio.Queue.
+    Event Bus asincron pe asyncio.Queue, cu fan-out per subscriber.
 
     Caracteristici:
-        - Multiple subscriptions pe același EventType (fan-out)
-        - Publish non-blocant (nu așteaptă consumatorii)
-        - Fiecare subscriber are propria sa coadă izolată
-        - Suport pentru unsubscribe explicit (cleanup)
-        - Logging opțional per event type
+        - Multiple abonamente pe același EventType (fiecare cu coada lui)
+        - publish() non-blocant; la coadă plină cade cel mai vechi element
+        - Înregistrare SINCRONĂ la subscribe() (fără evenimente pierdute)
+        - Dezabonare automată la anulare/închidere
+
+    Model de fire de execuție: se folosește DOAR din bucla asyncio. Nu există
+    lock: publish/subscribe nu au puncte de await între ele, deci sunt atomice
+    față de restul buclei. (Un asyncio.Lock aici n-ar proteja de nimic real și
+    ar adăuga overhead pe fiecare publish.)
     """
+
+    __slots__ = ("_subscribers", "_maxsize", "_log_events", "_publish_count")
 
     def __init__(self, maxsize: int = 100, log_events: bool = False):
         """
         Args:
-            maxsize: Dimensiunea maximă a fiecărei cozi de subscriber.
-                     Dacă coada e plină și publisherul nu poate pune mesajul,
-                     cel mai vechi mesaj este abandonat (nu blochează).
-            log_events: Dacă True, loghează fiecare publish/consume (util pentru debug).
+            maxsize: Dimensiunea maximă a cozii fiecărui subscriber. La coadă
+                     plină se aruncă cel mai vechi eveniment.
+            log_events: Loghează fiecare publish/consume (debug).
         """
-        self._subscribers: Dict[EventType, List[asyncio.Queue]] = {}
+        self._subscribers: Dict[EventType, List[Subscription]] = {}
         self._maxsize = maxsize
         self._log_events = log_events
-        self._lock = asyncio.Lock()
         self._publish_count: Dict[EventType, int] = {}
 
-        logger.info("🚌 EventBus inițializat.")
+        logger.info("EventBus inițializat.")
 
-    async def subscribe(self, event_type: EventType) -> AsyncGenerator[Any, None]:
+    # -- Registru (apelat de Subscription) --------------------------------
+
+    def _register(self, event_type: EventType, sub: Subscription) -> None:
+        subs = self._subscribers.get(event_type)
+        if subs is None:
+            subs = self._subscribers[event_type] = []
+        subs.append(sub)
+        logger.debug(f"Nou subscriber [{event_type.name}]. Total: {len(subs)}")
+
+    def _unregister(self, event_type: EventType, sub: Subscription) -> None:
+        subs = self._subscribers.get(event_type)
+        if not subs:
+            return
+        try:
+            subs.remove(sub)
+            logger.debug(f"Subscriber [{event_type.name}] dezabonat.")
+        except ValueError:
+            pass
+
+    # -- API public -------------------------------------------------------
+
+    def subscribe(self, event_type: EventType) -> Subscription:
         """
-        Abonează un consumator la un tip de eveniment.
-
-        Returnează un AsyncGenerator care yield-uiește fiecare eveniment primit.
-        Folosit cu `async for`:
+        Abonează un consumator. Coada e înregistrată IMEDIAT, la apel, nu la
+        prima iterație, deci nu se pierd evenimente publicate între timp.
 
             async for data in bus.subscribe(EventType.WAKE_WORD_DETECTED):
-                await handle_wake_word(data)
-
-        Args:
-            event_type: Tipul de eveniment la care se abonează.
-
-        Yields:
-            data: Payload-ul evenimentului (dict sau orice alt tip).
+                await handle(data)
         """
-        queue: asyncio.Queue = asyncio.Queue(maxsize=self._maxsize)
-
-        async with self._lock:
-            if event_type not in self._subscribers:
-                self._subscribers[event_type] = []
-            self._subscribers[event_type].append(queue)
-            logger.debug(
-                f"🔔 Nou subscriber pentru [{event_type.name}]. "
-                f"Total: {len(self._subscribers[event_type])}"
-            )
-
-        try:
-            while True:
-                data = await queue.get()
-
-                # Sentinelul None => semnal de oprire pentru acest subscriber
-                if data is None:
-                    logger.debug(f"🛑 Subscriber [{event_type.name}] a primit semnal de oprire.")
-                    break
-
-                if self._log_events:
-                    logger.debug(f"📨 [{event_type.name}] consumat: {str(data)[:100]}")
-
-                yield data
-                queue.task_done()
-
-        finally:
-            # Cleanup: elimină coada din lista de subscribers
-            async with self._lock:
-                try:
-                    self._subscribers[event_type].remove(queue)
-                    logger.debug(f"🔕 Subscriber [{event_type.name}] dezabonat.")
-                except (ValueError, KeyError):
-                    pass  # Deja eliminat
+        return Subscription(self, event_type, self._maxsize)
 
     async def publish(self, event_type: EventType, data: Any = None) -> int:
         """
-        Publică un eveniment către toți subscriberii activi.
-
-        Non-blocant: dacă coada unui subscriber e plină, abandonează mesajul
-        pentru acel subscriber (nu blochează publisherul).
-
-        Args:
-            event_type: Tipul evenimentului de publicat.
-            data: Payload-ul evenimentului (de obicei un dict).
+        Publică un eveniment către toți abonații. Non-blocant.
 
         Returns:
-            Numărul de subscribers care au primit efectiv evenimentul.
+            Numărul de abonați care au primit efectiv evenimentul.
         """
-        delivered = 0
-
-        async with self._lock:
-            queues = list(self._subscribers.get(event_type, []))
-
-        if not queues:
-            if self._log_events:
-                logger.debug(f"📢 [{event_type.name}] publicat, dar nu există subscribers.")
-            return 0
-
-        for queue in queues:
-            try:
-                queue.put_nowait(data)
-                delivered += 1
-            except asyncio.QueueFull:
-                logger.warning(
-                    f"⚠️ [{event_type.name}] Coada unui subscriber e plină! "
-                    f"Mesaj abandonat pentru acest subscriber."
-                )
-
-        # Statistici
+        subs = self._subscribers.get(event_type)
         self._publish_count[event_type] = self._publish_count.get(event_type, 0) + 1
 
-        if self._log_events:
-            logger.debug(
-                f"📢 [{event_type.name}] publicat → {delivered}/{len(queues)} subscribers."
-            )
+        if not subs:
+            if self._log_events:
+                logger.debug(f"[{event_type.name}] publicat, fără subscribers.")
+            return 0
 
+        delivered = 0
+        # Copie defensivă: _deliver poate declanșa close() -> mutarea listei.
+        for sub in tuple(subs):
+            if sub._deliver(data):
+                delivered += 1
+
+        if self._log_events:
+            logger.debug(f"[{event_type.name}] -> {delivered}/{len(subs)} subscribers.")
         return delivered
 
     async def publish_status(
@@ -277,17 +348,9 @@ class EventBus:
         component: str,
         status: str,
         message: str,
-        level: str = "INFO"
+        level: str = "INFO",
     ) -> None:
-        """
-        Metodă helper pentru publicarea rapidă de evenimente SYSTEM_STATUS.
-
-        Args:
-            component: Numele componentei care publică (ex: "AudioInterface").
-            status: Starea curentă (ex: "READY", "ERROR", "LISTENING").
-            message: Mesajul descriptiv.
-            level: Nivelul de log ("INFO", "WARNING", "ERROR").
-        """
+        """Helper pentru evenimentele SYSTEM_STATUS."""
         await self.publish(EventType.SYSTEM_STATUS, {
             "component": component,
             "status": status,
@@ -296,40 +359,20 @@ class EventBus:
         })
 
     async def shutdown(self) -> None:
-        """
-        Trimite semnal de oprire (None) către toți subscriberii activi.
-        Apelat la shutdown-ul sistemului pentru cleanup curat.
-        """
-        logger.info("🛑 EventBus: trimit semnal de shutdown la toți subscriberii...")
-        async with self._lock:
-            all_queues = [
-                queue
-                for queues in self._subscribers.values()
-                for queue in queues
-            ]
-
-        for queue in all_queues:
-            try:
-                queue.put_nowait(None)  # Sentinelul de oprire
-            except asyncio.QueueFull:
-                pass  # Ignore — sistemul se oprește oricum
-
-        logger.info(f"✅ EventBus shutdown complet. {len(all_queues)} subscribers notificați.")
+        """Trimite sentinela de oprire tuturor abonaților activi."""
+        logger.info("EventBus: semnal de shutdown către toți subscriberii...")
+        all_subs = [s for subs in self._subscribers.values() for s in subs]
+        for sub in all_subs:
+            sub._deliver(_STOP)
+        logger.info(f"EventBus shutdown. {len(all_subs)} subscribers notificați.")
 
     def get_stats(self) -> Dict[str, Any]:
-        """
-        Returnează statistici despre Event Bus (util pentru debugging și dashboard).
-
-        Returns:
-            Dict cu numărul de subscribers per EventType și numărul de publish-uri.
-        """
+        """Statistici pentru debugging și dashboard."""
         return {
             "subscribers": {
-                et.name: len(queues)
-                for et, queues in self._subscribers.items()
+                et.name: len(subs) for et, subs in self._subscribers.items()
             },
             "publish_counts": {
-                et.name: count
-                for et, count in self._publish_count.items()
-            }
+                et.name: count for et, count in self._publish_count.items()
+            },
         }

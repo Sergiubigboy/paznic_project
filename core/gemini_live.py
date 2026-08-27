@@ -44,6 +44,7 @@ import json
 import logging
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -53,11 +54,15 @@ try:
         LIVE_MODEL, LIVE_VOICE,
         LIVE_SAMPLE_RATE_IN, LIVE_SAMPLE_RATE_OUT,
         LIVE_INACTIVITY_TIMEOUT, LIVE_START_DELAY_MS,
-        LIVE_PLAYBACK_CHUNK_BYTES, SYSTEM_PROMPT, GEMINI_API_KEY,
+        LIVE_PLAYBACK_CHUNK_BYTES, SYSTEM_PROMPT_VOICE, GEMINI_API_KEY,
         INTERRUPT_AMPLITUDE_THRESHOLD, INTERRUPT_MIN_DURATION,
         INTERRUPT_DECAY_RATE, INTERRUPT_ECHO_TAIL,
         INTERRUPT_CALIBRATION_MS, INTERRUPT_ECHO_MARGIN,
         VOICE_ACTIVITY_THRESHOLD,
+        PROACTIVE_AUDIO, AFFECTIVE_DIALOG, SESSION_RESUMPTION,
+        CONTEXT_COMPRESSION, CONTEXT_TRIGGER_TOKENS, CONTEXT_TARGET_TOKENS,
+        VAD_SILENCE_MS, VAD_PREFIX_PADDING_MS,
+        VAD_START_SENSITIVITY, VAD_END_SENSITIVITY,
     )
 except ImportError:
     LIVE_MODEL                    = "gemini-2.5-flash-native-audio-latest"
@@ -67,7 +72,7 @@ except ImportError:
     LIVE_INACTIVITY_TIMEOUT       = 8.0
     LIVE_START_DELAY_MS           = 300
     LIVE_PLAYBACK_CHUNK_BYTES     = 2048
-    SYSTEM_PROMPT                 = "Ești Chronos. Răspunzi în română."
+    SYSTEM_PROMPT_VOICE           = "Ești Chronos. Răspunzi în română."
     GEMINI_API_KEY                = ""
     INTERRUPT_AMPLITUDE_THRESHOLD = 1500
     INTERRUPT_MIN_DURATION        = 0.6
@@ -76,6 +81,34 @@ except ImportError:
     INTERRUPT_CALIBRATION_MS      = 500
     INTERRUPT_ECHO_MARGIN         = 2.2
     VOICE_ACTIVITY_THRESHOLD      = 900
+    PROACTIVE_AUDIO               = False
+    AFFECTIVE_DIALOG              = True
+    SESSION_RESUMPTION            = True
+    CONTEXT_COMPRESSION           = True
+    CONTEXT_TRIGGER_TOKENS        = 16000
+    CONTEXT_TARGET_TOKENS         = 8000
+    VAD_SILENCE_MS                = 700
+    VAD_PREFIX_PADDING_MS         = 300
+    VAD_START_SENSITIVITY         = "START_SENSITIVITY_LOW"
+    VAD_END_SENSITIVITY           = "END_SENSITIVITY_LOW"
+
+def _pcm_bytes(chunk, np) -> bytes:
+    """Chunk-ul de microfon ca bytes PCM 16-bit.
+
+    AudioInterface livrează deja int16, dar `astype("int16")` copia vectorul
+    din nou la FIECARE chunk (de ~12 ori pe secundă, cât ține sesiunea)
+    doar ca să ajungă la același dtype. Conversia rămâne ca plasă de
+    siguranță dacă vreodată sursa se schimbă.
+    """
+    if chunk.dtype != np.int16:
+        chunk = chunk.astype(np.int16)
+    return chunk.tobytes()
+
+
+def _rms(chunk, np) -> float:
+    """Amplitudinea RMS a unui chunk (0-32767)."""
+    return float(np.sqrt(np.mean(np.square(chunk, dtype=np.float32))))
+
 
 _FLUSH_SENTINEL = object()
 _END_SENTINEL   = object()
@@ -167,6 +200,12 @@ class GeminiLiveSession:
         #         e să spui din nou wake word-ul (vezi _handle_wake_interrupt).
         self._focus_mode = False
 
+        # Handle-ul de reluare a sesiunii, trimis periodic de server. Cu el,
+        # o reconectare continua EXACT de unde a ramas, cu tot contextul —
+        # spre deosebire de repovestirea manuala din _seed_after_reconnect.
+        # Valabil 2 ore de la ultima terminare a sesiunii.
+        self._resumption_handle = None
+
         # Reconectare: distingem „legătura a picat" de „sesiunea s-a încheiat
         # cum trebuie" (end_session / inactivitate / auto-close / stop).
         # Reluăm conexiunea doar în primul caz.
@@ -177,6 +216,26 @@ class GeminiLiveSession:
         self._audio_out_queue    = asyncio.Queue(maxsize=400)
         self._stop_playback      = threading.Event()
         self._close_after_turn   = False
+
+        # Thread dedicat scrierii către boxe. Nu pool-ul default: acolo stau
+        # Flask, agenții și analiza de emoții, iar redarea nu are voie să
+        # aștepte după ele (se aude ca sacadare în voce).
+        self._play_pool = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="live-play"
+        )
+
+        # Pool MĂRGINIT pentru tool-urile lansate „și gata" (DJ-ul, scenele).
+        # Înainte fiecare apel pornea un `threading.Thread` nou: la comenzi
+        # date în rafală, threadurile se acumulau nelimitat, fiecare cu un apel
+        # LLM în desfășurare, fără nimeni să le raporteze erorile.
+        self._tool_pool = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="live-tool"
+        )
+
+        # Referințe tari la task-urile de fundal. Fără ele, asyncio poate
+        # colecta un task în plină execuție — salvarea conversației sau
+        # actualizarea emoțiilor dispăreau în tăcere.
+        self._bg_tasks: set = set()
 
         self._ET = None
         try:
@@ -377,6 +436,114 @@ class GeminiLiveSession:
                 ),
 
                 types.FunctionDeclaration(
+                    name="home",
+                    description=(
+                        "Casa (Home Assistant). 'ac_on'/'ac_off' = aer conditionat. "
+                        "'cine_e_acasa' = cine e prezent. "
+                        "'vreme' = cum e ACUM afara; 'prognoza' = zilele urmatoare "
+                        "(`zile`, implicit 3, maxim 5). Amandoua vin din casa: "
+                        "instant si gratis, deci NU cauta vremea pe web."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string", "enum": [
+                                "ac_on", "ac_off", "cine_e_acasa", "vreme", "prognoza"]},
+                            "zile": {"type": "integer", "description": "Doar pentru prognoza."},
+                        },
+                        "required": ["action"],
+                    },
+                ),
+
+                types.FunctionDeclaration(
+                    name="timer",
+                    description=(
+                        "Timere si alarme. 'set' = timer relativ (da `hours`/`minutes`/"
+                        "`seconds`); 'alarm' = ora fixa (da `hour` si `minute`); "
+                        "'list' = ce e activ; 'cancel' = anuleaza (`label` sau gol pentru tot). "
+                        "`label` = pentru ce e ('paste', 'trezire')."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string", "enum": ["set", "alarm", "list", "cancel"]},
+                            "hours": {"type": "number"},
+                            "minutes": {"type": "number"},
+                            "seconds": {"type": "number"},
+                            "hour": {"type": "integer", "description": "Ora 0-23, pentru alarm."},
+                            "minute": {"type": "integer", "description": "Minutul 0-59."},
+                            "label": {"type": "string"},
+                        },
+                        "required": ["action"],
+                    },
+                ),
+
+                types.FunctionDeclaration(
+                    name="ziua",
+                    description=(
+                        "Planificarea zilei. 'plan' = construieste programul din ce vrea "
+                        "sa faca azi (da `iteme` si `intensitate`); 'azi' = ce are de facut "
+                        "si ce e bifat; 'gata' = bifeaza ceva terminat (da `text`); "
+                        "'amana' = muta ceva mai tarziu (`minute` SAU `ora`); "
+                        "'sari' = renunta azi la ceva; 'acum' = incepe ceva imediat; "
+                        "'replan' = reaseaza tot restul zilei; la toate astea `text` = "
+                        "despre ce e vorba (gol = blocul curent); "
+                        "'somn' = seteaza programul de somn (`trezire`, `culcare`, `mod`).\n"
+                        "INAINTE de 'plan' intreaba-l scurt ce intensitate vrea (relaxat/"
+                        "normal/full) si daca iese undeva. Estimeaza TU duratele; intreaba "
+                        "doar la lucruri complet noi. Pentru proiecte pune `proiect` (numele) "
+                        "si, daca e ceva nou, `pasi` — se creeaza automat in proiect."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string",
+                                       "enum": ["plan", "azi", "gata", "amana",
+                                                "sari", "acum", "replan", "somn"]},
+                            "intensitate": {"type": "string",
+                                            "enum": ["relaxat", "normal", "full"]},
+                            "iteme": {
+                                "type": "array",
+                                "description": "Ce vrea sa faca azi.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "titlu": {"type": "string"},
+                                        "minute": {"type": "integer"},
+                                        "proiect": {"type": "string",
+                                                    "description": "Daca tine de un proiect."},
+                                        "pasi": {"type": "array", "items": {"type": "string"},
+                                                 "description": "Subpasi noi de creat in proiect."},
+                                    },
+                                    "required": ["titlu"],
+                                },
+                            },
+                            "ocupat": {
+                                "type": "array",
+                                "description": "Intervale in care nu e liber.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "start": {"type": "string", "description": "HH:MM"},
+                                        "end": {"type": "string", "description": "HH:MM"},
+                                        "title": {"type": "string"},
+                                    },
+                                    "required": ["start", "end"],
+                                },
+                            },
+                            "text": {"type": "string",
+                                     "description": "La ce se refera (gata/amana/sari/acum). Gol = blocul curent."},
+                            "minute": {"type": "integer", "description": "Cu cate minute amana."},
+                            "ora": {"type": "string", "description": "HH:MM, daca cere o ora anume."},
+                            "trezire": {"type": "string", "description": "HH:MM"},
+                            "culcare": {"type": "string", "description": "HH:MM"},
+                            "mod": {"type": "string", "description": "vacanta / scoala"},
+                        },
+                        "required": ["action"],
+                    },
+                ),
+
+                types.FunctionDeclaration(
                     name="send_telegram",
                     description="Mesaj pe telefonul lui Sergiu. DOAR la cerere explicită.",
                     parameters={
@@ -542,7 +709,7 @@ class GeminiLiveSession:
             else:
                 logger.info(f"🔄 [GeminiLive] Dispatch cu planificare: {tool_name} → '{command}'")
                 work = asyncio.to_thread(self.dispatcher.process_text_command, command, "voice_live")
-            asyncio.create_task(work)
+            self._spawn(work, f"dispatch_{tool_name}")
 
             return {
                 "status": "success",
@@ -560,7 +727,8 @@ class GeminiLiveSession:
     # Tool-uri executate LOCAL: scriu/citesc direct din fișiere sau lovesc un
     # API (Spotify/Telegram/WLED). Niciunul nu implică un apel LLM — modelul
     # vocal a extras deja argumentele structurate prin function calling.
-    LOCAL_TOOLS = frozenset({"music", "scene", "save_data", "send_telegram"})
+    LOCAL_TOOLS = frozenset({"music", "scene", "save_data", "send_telegram",
+                             "home", "timer", "ziua"})
 
     def _run_local_tool(self, name: str, args: dict) -> dict:
         """Execuție sincronă a tool-urilor locale (rulată într-un thread)."""
@@ -576,8 +744,7 @@ class GeminiLiveSession:
                 # Selecție de piesă → DJ (singurul care mai face un apel LLM).
                 # Rulăm în fundal ca să nu blocăm confirmarea vocală.
                 query = args.get("query") or self._current_user_transcript.strip()
-                threading.Thread(target=agent.process_request,
-                                 args=(query,), daemon=True).start()
+                self._tool_pool.submit(agent.process_request, query)
                 return {"status": "ok", "message": "Am dat comanda la DJ."}
             return agent.control(action, args.get("value"))
 
@@ -592,8 +759,7 @@ class GeminiLiveSession:
             if prompt:
                 agent = getattr(self.dispatcher, "music_agent", None)
                 if agent:
-                    threading.Thread(target=agent.process_request,
-                                     args=(prompt,), daemon=True).start()
+                    self._tool_pool.submit(agent.process_request, prompt)
                     res["message"] += " Pornesc și muzica."
             return res
 
@@ -626,6 +792,62 @@ class GeminiLiveSession:
             if kind == "jurnal":
                 return W.quick_capture(text, "jurnal")
             return {"status": "error", "message": f"Tip necunoscut: {kind}"}
+
+        # ── CASA ──
+        if name == "home":
+            from tools import home_assistant as HA
+            a = args.get("action", "")
+            if a in ("ac_on", "ac_off"):
+                return HA.ac_control(a == "ac_on")
+            if a == "cine_e_acasa":
+                return HA.who_is_home()
+            if a == "vreme":
+                return HA.local_weather()
+            if a == "prognoza":
+                return HA.weather_forecast(args.get("zile") or HA.FORECAST_DAYS_DEFAULT)
+            return {"status": "error", "message": f"Actiune necunoscuta: {a}"}
+
+        # ── TIMERE / ALARME ──
+        if name == "timer":
+            from tools import timers as TM
+            a = args.get("action", "")
+            if a == "set":
+                return TM.set_timer(args.get("minutes") or 0, args.get("seconds") or 0,
+                                    args.get("hours") or 0, args.get("label", ""))
+            if a == "alarm":
+                return TM.set_alarm(args.get("hour"), args.get("minute") or 0,
+                                    args.get("label", ""))
+            if a == "list":
+                return TM.list_timers()
+            if a == "cancel":
+                return TM.cancel_timer(args.get("label", ""))
+            return {"status": "error", "message": f"Actiune necunoscuta: {a}"}
+
+        # ── ZIUA ──
+        if name == "ziua":
+            from tools import day_planner as DP
+            a = args.get("action", "")
+            if a == "plan":
+                return DP.plan_day(args.get("iteme") or [],
+                                   args.get("intensitate", "normal"),
+                                   args.get("ocupat") or [])
+            if a == "azi":
+                return DP.today_summary()
+            if a == "gata":
+                return DP.complete(args.get("text", ""))
+            if a in ("amana", "sari", "acum", "replan"):
+                # Acelasi motor ca pe Telegram — vocea nu e cu nimic mai saraca.
+                rez = DP.reschedule(a, args.get("text", ""),
+                                    int(args.get("minute") or 0),
+                                    args.get("ora", "") or "")
+                if rez.get("status") == "ok":
+                    rez["info"] = ("Spune-i pe scurt ce ai mutat si care urmeaza, "
+                                   "nu insira tot orarul.")
+                return rez
+            if a == "somn":
+                return DP.set_sleep(args.get("mod", ""), args.get("trezire", ""),
+                                    args.get("culcare", ""))
+            return {"status": "error", "message": f"Actiune necunoscuta: {a}"}
 
         if name == "send_telegram":
             from tools.telegram_tools import send_telegram
@@ -803,7 +1025,7 @@ class GeminiLiveSession:
         now  = datetime.now()
         zile = ["luni", "marți", "miercuri", "joi", "vineri", "sâmbătă", "duminică"]
         prompt = (
-            f"{SYSTEM_PROMPT}\n\n"
+            f"{SYSTEM_PROMPT_VOICE}\n\n"
             f"[ACUM] Este {zile[now.weekday()]}, {now.strftime('%d.%m.%Y, ora %H:%M')}. "
             f"Calculează „azi/mâine/weekend” raportat la data asta, nu ghici."
         )
@@ -871,13 +1093,14 @@ class GeminiLiveSession:
 
         logger_agent = getattr(self.dispatcher, "logger_agent", None) if self.dispatcher else None
         if logger_agent:
-            asyncio.create_task(
-                asyncio.to_thread(logger_agent.save_conversation_turn, user_text, ai_text)
+            self._spawn(
+                asyncio.to_thread(logger_agent.save_conversation_turn, user_text, ai_text),
+                "save_turn",
             )
 
         # Cum l-a afectat pe Chronos ce tocmai i-a zis Sergiu
         if user_text:
-            asyncio.create_task(self._update_emotions(user_text, ai_text))
+            self._spawn(self._update_emotions(user_text, ai_text), "update_emotions")
 
     async def _update_emotions(self, user_text: str, ai_text: str) -> None:
         """Analiză afectivă în fundal — nu blochează niciodată răspunsul vocal."""
@@ -916,12 +1139,13 @@ class GeminiLiveSession:
         self._turn_speech_start_ts = 0.0
         self._echo_calib_samples   = []
         self._echo_baseline_rms    = 0.0
+        self._resumption_handle    = None   # sesiune noua = fara istoric de reluat
         self._stop_playback.clear()
 
         # Flush audio vechi
         while not self._audio_out_queue.empty():
             try: self._audio_out_queue.get_nowait()
-            except: break
+            except asyncio.QueueEmpty: break
 
         # Delay wake word
         if LIVE_START_DELAY_MS > 0:
@@ -951,6 +1175,57 @@ class GeminiLiveSession:
         )
         if tools:
             cfg_kw["tools"] = tools
+
+        T = self._types
+
+        # ── PROACTIVE AUDIO ──
+        # Modelul decide singur sa NU raspunda cand ce aude nu i se adreseaza.
+        # Exact ce ne trebuie cand ecoul din boxe sau zgomotul ambiental trec
+        # de filtrele noastre: in loc sa balbaie un raspuns, tace.
+        if PROACTIVE_AUDIO and hasattr(T, "ProactivityConfig"):
+            cfg_kw["proactivity"] = T.ProactivityConfig(proactive_audio=True)
+
+        # ── AFFECTIVE DIALOG ──
+        # Modelul detecteaza tonul emotional al lui Sergiu si isi adapteaza
+        # raspunsul. Se leaga natural cu starea afectiva proprie (core/emotions).
+        if AFFECTIVE_DIALOG:
+            cfg_kw["enable_affective_dialog"] = True
+
+        # ── SESSION RESUMPTION ──
+        # Serverul reseteaza periodic WebSocket-ul (de aici erorile 1007 si
+        # taierile in mijlocul frazei). Cu un handle de reluare, reconectarea
+        # pastreaza CONTEXTUL, nu doar firul povestit inapoi modelului.
+        if SESSION_RESUMPTION and hasattr(T, "SessionResumptionConfig"):
+            cfg_kw["session_resumption"] = T.SessionResumptionConfig(
+                handle=self._resumption_handle          # None la prima conectare
+            )
+
+        # ── CONTEXT WINDOW COMPRESSION ──
+        # Fara ea, o sesiune audio moare la ~15 minute, iar tokenii audio se
+        # acumuleaza cu ~25/secunda. Cu ea, sesiunea poate tine oricat, iar
+        # contextul e taiat automat cand trece de prag.
+        if CONTEXT_COMPRESSION and hasattr(T, "ContextWindowCompressionConfig"):
+            cfg_kw["context_window_compression"] = T.ContextWindowCompressionConfig(
+                trigger_tokens=CONTEXT_TRIGGER_TOKENS,
+                sliding_window=T.SlidingWindow(target_tokens=CONTEXT_TARGET_TOKENS),
+            )
+
+        # ── VAD (detectia de vorbire, server-side) ──
+        # silence_duration_ms mai mare = nu mai taie turul la pauzele naturale
+        # dintre propozitii (una din cauzele pentru "sare propozitii").
+        if hasattr(T, "RealtimeInputConfig") and hasattr(T, "AutomaticActivityDetection"):
+            cfg_kw["realtime_input_config"] = T.RealtimeInputConfig(
+                automatic_activity_detection=T.AutomaticActivityDetection(
+                    silence_duration_ms=VAD_SILENCE_MS,
+                    prefix_padding_ms=VAD_PREFIX_PADDING_MS,
+                    start_of_speech_sensitivity=getattr(
+                        T.StartSensitivity, VAD_START_SENSITIVITY,
+                        T.StartSensitivity.START_SENSITIVITY_LOW),
+                    end_of_speech_sensitivity=getattr(
+                        T.EndSensitivity, VAD_END_SENSITIVITY,
+                        T.EndSensitivity.END_SENSITIVITY_LOW),
+                )
+            )
 
         config = self._types.LiveConnectConfig(**cfg_kw)
 
@@ -1011,9 +1286,13 @@ class GeminiLiveSession:
         ) as session:
             logger.info("🔗 [GeminiLive] Sesiune WebSocket deschisă.")
             if resumed:
-                # Seed de context: modelul reia firul fără să-i explice lui
-                # Sergiu nimic tehnic despre deconectare.
-                await self._seed_after_reconnect(session)
+                if self._resumption_handle:
+                    # Serverul a restaurat singur contextul din handle —
+                    # nu mai repovestim nimic, ar fi redundant si confuz.
+                    logger.info("🔄 [GeminiLive] Sesiune reluata cu context pastrat.")
+                else:
+                    # Fara handle: ii dam inapoi firul, ca sa nu para amnezic.
+                    await self._seed_after_reconnect(session)
             else:
                 print(
                     f"\n🎙️  Chronos ascultă!\n"
@@ -1127,13 +1406,6 @@ class GeminiLiveSession:
         # LIVE_INACTIVITY_TIMEOUT sesiunea se inchidea instant, cu 0 chunks.
         self._last_turn_end = time.time()
 
-        # Ceasul de inactivitate pornește ABIA ACUM, când chiar începem să
-        # ascultăm. Dacă l-am lăsa pornit de la wake word, tot ce se întâmplă
-        # între timp (pauză muzică, handshake WebSocket, construirea promptului)
-        # s-ar scădea din timpul lui Sergiu — iar la un setup mai lent decât
-        # LIVE_INACTIVITY_TIMEOUT sesiunea se închidea instantaneu, cu 0 chunks.
-        self._last_turn_end = time.time()
-
         while self._session_active:
             # ── VERIFICARE INACTIVITATE — rulează la FIECARE iterație ──
             # Bug vechi: verificarea stătea în ramura `except TimeoutError`, dar
@@ -1178,7 +1450,7 @@ class GeminiLiveSession:
                 if self._focus_mode:
                     continue
 
-                rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+                rms = _rms(chunk, np)
                 chunk_dur = len(chunk) / float(LIVE_SAMPLE_RATE_IN)
 
                 # ── CALIBRARE ECOU: primele INTERRUPT_CALIBRATION_MS ale turului ──
@@ -1265,7 +1537,7 @@ class GeminiLiveSession:
                     try:
                         await session.send_realtime_input(
                             audio=self._types.Blob(
-                                data=chunk.astype("int16").tobytes(),
+                                data=_pcm_bytes(chunk, np),
                                 mime_type=f"audio/pcm;rate={LIVE_SAMPLE_RATE_IN}"
                             )
                         )
@@ -1287,12 +1559,12 @@ class GeminiLiveSession:
             # chiar se aude cineva vorbind. Altfel liniștea din cameră ținea
             # sesiunea deschisă la nesfârșit, pentru că microfonul livrează
             # chunk-uri non-stop indiferent dacă vorbești sau nu.
-            rms_now = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+            rms_now = _rms(chunk, np)
 
             try:
                 await session.send_realtime_input(
                     audio=self._types.Blob(
-                        data=chunk.astype("int16").tobytes(),
+                        data=_pcm_bytes(chunk, np),
                         mime_type=f"audio/pcm;rate={LIVE_SAMPLE_RATE_IN}"
                     )
                 )
@@ -1330,6 +1602,14 @@ class GeminiLiveSession:
                         return
 
                     total += 1
+
+                    # Handle nou de reluare — il pastram pentru o eventuala
+                    # reconectare (nu il logam la fiecare update, vine des).
+                    sru = getattr(response, "session_resumption_update", None)
+                    if sru is not None and getattr(sru, "resumable", False):
+                        h = getattr(sru, "new_handle", None)
+                        if h:
+                            self._resumption_handle = h
 
                     sc = getattr(response, "server_content", None)
                     tc = getattr(response, "tool_call", None)
@@ -1440,6 +1720,11 @@ class GeminiLiveSession:
 
     async def _playback_loop(self) -> None:
         buffer = bytearray()
+        # Definit ÎNAINTE de try: dacă RawOutputStream aruncă, blocul `finally`
+        # atingea `stream` nedefinit și ridica UnboundLocalError peste eroarea
+        # reală, ascunzând-o complet.
+        stream = None
+        loop = asyncio.get_running_loop()
         try:
             stream = self._sd.RawOutputStream(
                 samplerate=LIVE_SAMPLE_RATE_OUT,
@@ -1456,7 +1741,13 @@ class GeminiLiveSession:
             async def _write(data_bytes: bytes) -> None:
                 # Marchează momentul scrierii REALE către boxe — folosit de
                 # _ai_audio_active() ca "echo guard" cât timp mai iese sunet.
-                await asyncio.to_thread(stream.write, data_bytes)
+                #
+                # Thread PROPRIU, nu asyncio.to_thread: `stream.write` blochează
+                # până când placa de sunet acceptă datele, iar pool-ul default e
+                # partajat cu Flask, cu apelurile agenților și cu analiza de
+                # emoții. Sub încărcare, redarea ajungea să aștepte un worker
+                # liber — adică exact întreruperi audibile în vocea lui Chronos.
+                await loop.run_in_executor(self._play_pool, stream.write, data_bytes)
                 self._last_audio_write_ts = time.time()
 
             while True:
@@ -1515,17 +1806,43 @@ class GeminiLiveSession:
         except Exception as e:
             logger.error(f"❌ [GeminiLive:play] {e}", exc_info=True)
         finally:
-            try:
-                stream.stop()
-                stream.close()
-            except Exception:
-                pass
+            if stream is not None:
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception as e:
+                    logger.debug(f"[GeminiLive:play] Închidere stream: {e}")
             self._ai_is_speaking = False
             logger.debug("[GeminiLive:play] Stream închis.")
 
     # ─────────────────────────────────────────────────────────
     # CONTROL PUBLIC
     # ─────────────────────────────────────────────────────────
+
+    def _spawn(self, coro, name: str = "") -> asyncio.Task:
+        """Lansează un task de fundal și îi păstrează referința.
+
+        `asyncio.create_task` păstrează doar o referință SLABĂ. Un task fără
+        referință tare poate fi colectat de GC în plină execuție — salvarea
+        turului în memorie sau comanda trimisă agenților dispăreau pur și
+        simplu, fără nicio urmă în loguri.
+        """
+        task = asyncio.create_task(coro, name=name or None)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+        return task
+
+    async def shutdown(self) -> None:
+        """Eliberează threadurile și task-urile deținute de sesiune."""
+        self.stop_session()
+        for task in tuple(self._bg_tasks):
+            if not task.done():
+                task.cancel()
+        if self._bg_tasks:
+            await asyncio.gather(*self._bg_tasks, return_exceptions=True)
+            self._bg_tasks.clear()
+        self._play_pool.shutdown(wait=False)
+        self._tool_pool.shutdown(wait=False)
 
     def interrupt(self) -> None:
         self._stop_playback.set()

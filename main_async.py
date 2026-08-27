@@ -1,25 +1,28 @@
 """
-main_async.py — Chronos Orchestrator (Pasul 2 — Complet)
-=========================================================
+main_async.py — Chronos Orchestrator
+=====================================
 Punctul de intrare al sistemului Chronos cu voce completă.
 
 Componente pornite:
     1. EventBus        — comunicare inter-componente
-    2. AudioInterface  — microfon + OWW wake word + STT + interrupt monitor
-    3. TTSEngine       — edge-tts cu suport întrerupere
-    4. LLMRouter       — Dispatcher + voice flow + TTS integration
-    5. Web Dashboard   — Flask în asyncio.to_thread()
+    2. AudioInterface  — microfon + OWW wake word
+    3. TTSEngine       — edge-tts, conductă cu streaming pe clauze
+    4. GeminiLive      — sesiune vocală native-audio
+    5. LLMRouter       — rutare + voice flow + TTS
+    6. Web Dashboard   — Flask pe thread propriu, oprit curat la shutdown
 
 Moduri de operare:
-    VOCE:     "Jarvis" → înregistrare → STT → Gemini → TTS → (întrerupere)
-    TERMINAL: text → Enter → Gemini → afișare consolă
+    VOCE:     "Jarvis" → sesiune Gemini Live (audio bidirecțional)
+    TERMINAL: text → Enter → răspuns streamat pe ecran (+ TTS opțional)
 
 Comenzi speciale terminal:
-    /audio  — simulează wake word
-    /stats  — statistici EventBus
-    /voice  — listează vocile TTS disponibile
-    /help   — ajutor
-    /exit   — oprire curată
+    /audio       — simulează wake word
+    /stats       — statistici EventBus
+    /voice       — listează vocile TTS disponibile
+    /setvoice X  — schimbă vocea TTS
+    /speak on|off— rostește (sau nu) răspunsurile din terminal
+    /help        — ajutor
+    /exit        — oprire curată
 
 Oprire: Ctrl+C
 """
@@ -30,10 +33,11 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
-# Fortare UTF-8 pe Windows (cp1252 nu suporta emoji/caractere speciale)
+# Forțare UTF-8 pe Windows (cp1252 nu suportă emoji/diacritice)
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -43,19 +47,10 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s",
     datefmt="%H:%M:%S",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-    ],
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("chromadb").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("werkzeug").setLevel(logging.WARNING)
-logging.getLogger("google").setLevel(logging.WARNING)
-
-# DEBUG pentru modulele Chronos care au probleme — vedem exact ce se întâmplă
-logging.getLogger("core.gemini_live").setLevel(logging.DEBUG)
-logging.getLogger("core.llm_router").setLevel(logging.DEBUG)
+for noisy in ("httpx", "chromadb", "urllib3", "werkzeug", "google", "asyncio"):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
 
 logger = logging.getLogger("chronos.main")
 
@@ -66,9 +61,6 @@ ROOT_DIR = Path(__file__).parent.resolve()
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-# ─────────────────────────────────────────────────────────────────────────────
-# BANNER
-# ─────────────────────────────────────────────────────────────────────────────
 BANNER = """
   CHRONOS — Async Event-Driven AI Assistant
   Voce Completa + Terminal
@@ -82,6 +74,72 @@ from core.audio_interface import AudioInterface
 from core.tts_engine import TTSEngine
 from core.llm_router import LLMRouter
 from core.gemini_live import GeminiLiveSession
+from core import day_runner
+
+WEB_HOST = "0.0.0.0"
+WEB_PORT = 5000
+
+
+# =============================================================================
+# WEB DASHBOARD
+# =============================================================================
+
+class WebDashboard:
+    """Flask pe un thread propriu, cu oprire curată.
+
+    De ce NU `asyncio.to_thread(app.run)`, ca înainte: `app.run()` nu se
+    întoarce niciodată, deci ținea ocupat permanent un worker din pool-ul
+    default — exact pool-ul folosit și de redarea audio, de dispatcher și de
+    analiza de emoții. Pe un Pi cu 4 nuclee pool-ul are 8 workeri, iar unul
+    pierdut definitiv se simte. În plus, `to_thread` nu poate fi anulat, deci
+    „oprirea" serverului era doar aparentă.
+
+    `make_server` ne dă un obiect cu `shutdown()` adevărat.
+    """
+
+    __slots__ = ("_server", "_thread")
+
+    def __init__(self):
+        self._server = None
+        self._thread = None
+
+    def start(self) -> bool:
+        try:
+            from werkzeug.serving import make_server
+            from web.web_dashboard import app
+        except ImportError as e:
+            logger.warning(f"⚠️ [Web] Nu am putut importa dashboard-ul: {e}")
+            return False
+
+        try:
+            self._server = make_server(WEB_HOST, WEB_PORT, app, threaded=True)
+        except OSError as e:
+            logger.error(f"❌ [Web] Nu pot deschide portul {WEB_PORT}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ [Web] Eroare la pornire: {e}", exc_info=True)
+            return False
+
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, name="web-dashboard", daemon=True
+        )
+        self._thread.start()
+        logger.info(f"✅ [Web] Pornit pe http://{WEB_HOST}:{WEB_PORT}")
+        return True
+
+    def stop(self) -> None:
+        if self._server is None:
+            return
+        try:
+            self._server.shutdown()
+            self._server.server_close()
+        except Exception as e:
+            logger.debug(f"[Web] Oprire: {e}")
+        if self._thread is not None:
+            self._thread.join(timeout=3.0)
+        self._server = None
+        self._thread = None
+        logger.info("🛑 [Web] Oprit.")
 
 
 # =============================================================================
@@ -89,19 +147,14 @@ from core.gemini_live import GeminiLiveSession
 # =============================================================================
 
 async def audio_task(audio: AudioInterface) -> None:
-    """Task 1: Loop microfon + wake word detection."""
+    """Loop microfon + wake word detection."""
     logger.info("🎙️  [Task] Audio loop pornit.")
     await audio.run()
     logger.info("🛑 [Task] Audio loop oprit.")
 
 
-async def terminal_task(bus: EventBus) -> None:
-    """
-    Task 2: Citire comenzi din terminal.
-
-    Comenzi speciale: /audio, /stats, /voice, /help, /exit
-    Orice altceva → TERMINAL_COMMAND_RECEIVED în EventBus
-    """
+async def terminal_task(bus: EventBus, router: LLMRouter, tts: TTSEngine) -> None:
+    """Citire comenzi din terminal."""
     if not sys.stdin.isatty():
         logger.info("ℹ️  [Terminal] Non-interactiv (non-tty). Loop terminal dezactivat.")
         return
@@ -110,28 +163,21 @@ async def terminal_task(bus: EventBus) -> None:
         "⌨️  [Task] Terminal activ.\n"
         "   Tastează o comandă + Enter. Comenzi speciale: /help"
     )
-
     loop = asyncio.get_running_loop()
 
     while True:
         try:
-            text = await loop.run_in_executor(
-                None,
-                lambda: input("\n⌨️  [Chronos] > ")
-            )
-            text = text.strip()
-
+            text = (await loop.run_in_executor(None, input, "\n⌨️  [Chronos] > ")).strip()
             if not text:
                 continue
 
-            # --- Comenzi speciale ---
             cmd = text.lower()
 
             if cmd in ("/exit", "/quit"):
                 await bus.publish(EventType.SYSTEM_SHUTDOWN, {"reason": "terminal_exit"})
                 break
 
-            elif cmd == "/stats":
+            if cmd == "/stats":
                 stats = bus.get_stats()
                 print("\n📊 EventBus Stats:")
                 for et, cnt in stats["subscribers"].items():
@@ -140,40 +186,45 @@ async def terminal_task(bus: EventBus) -> None:
                         print(f"   {et}: {cnt} subscribers | {pub} published")
                 continue
 
-            elif cmd == "/help":
+            if cmd == "/help":
                 _print_help()
                 continue
 
-            elif cmd == "/audio":
-                logger.info("🔧 [Terminal] Simulând WAKE_WORD_DETECTED...")
+            if cmd == "/audio":
+                logger.info("🔧 [Terminal] Simulez WAKE_WORD_DETECTED...")
                 await bus.publish(
                     EventType.WAKE_WORD_DETECTED,
-                    {"timestamp": time.time(), "score": 1.0, "model_name": "manual"}
+                    {"timestamp": time.time(), "score": 1.0, "model_name": "manual"},
                 )
                 continue
 
-            elif cmd == "/voice":
+            if cmd == "/voice":
                 print("🔊 Listez vocile române edge-tts...")
-                voices = await asyncio.to_thread(TTSEngine.list_romanian_voices)
+                voices = await TTSEngine.list_romanian_voices()
                 for v in voices:
                     print(f"   {v.get('ShortName')} — {v.get('Gender')}")
                 if not voices:
                     print("   Nu am putut prelua lista (necesită conexiune internet).")
                 continue
 
-            elif cmd.startswith("/setvoice "):
+            if cmd.startswith("/speak"):
+                arg = cmd[len("/speak"):].strip()
+                if arg in ("on", "off"):
+                    on = router.set_speak_terminal(arg == "on")
+                    print(f"🔊 Rostirea răspunsurilor din terminal: {'PORNITĂ' if on else 'OPRITĂ'}")
+                else:
+                    print("   Folosire: /speak on   sau   /speak off")
+                continue
+
+            if cmd.startswith("/setvoice "):
                 new_voice = text[len("/setvoice "):].strip()
-                await bus.publish(
-                    EventType.SYSTEM_STATUS,
-                    {"component": "TTS", "status": "VOICE_CHANGE", "message": new_voice}
-                )
+                tts.set_voice(new_voice)
                 print(f"🔊 Voce schimbată la: {new_voice}")
                 continue
 
-            # --- Comandă normală → EventBus ---
             await bus.publish(
                 EventType.TERMINAL_COMMAND_RECEIVED,
-                {"text": text, "timestamp": time.time(), "source": "terminal"}
+                {"text": text, "timestamp": time.time(), "source": "terminal"},
             )
 
         except EOFError:
@@ -186,76 +237,51 @@ async def terminal_task(bus: EventBus) -> None:
             await asyncio.sleep(0.5)
 
 
-async def web_server_task() -> None:
-    """Task 3: Flask Web Dashboard în asyncio.to_thread()."""
-    logger.info("🌐 [Task] Pornesc Web Dashboard pe portul 5000...")
-
-    def _start_flask():
-        try:
-            from web.web_dashboard import app
-            logger.info("✅ [Web] Pornesc pe http://0.0.0.0:5000")
-            app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False, threaded=True)
-        except ImportError as e:
-            logger.warning(f"⚠️ [Web] Nu am putut importa web_dashboard: {e}")
-        except OSError as e:
-            logger.error(f"❌ [Web] Portul 5000 ocupat: {e}")
-        except Exception as e:
-            logger.error(f"❌ [Web] Eroare Flask: {e}", exc_info=True)
-
-    try:
-        await asyncio.to_thread(_start_flask)
-    except asyncio.CancelledError:
-        logger.info("🛑 [Web] Task anulat.")
-
-
 # =============================================================================
 # HANDLER-E EVENT BUS
 # =============================================================================
 
-async def execute_tool_handler(bus: EventBus) -> None:
-    """Handler EXECUTE_TOOL — afișează tool-ul executat în consolă."""
-    logger.info("🔧 [Handler] execute_tool_handler pornit.")
+async def execute_tool_handler(sub) -> None:
+    """EXECUTE_TOOL — afișează tool-ul executat în consolă."""
     try:
-        async for data in bus.subscribe(EventType.EXECUTE_TOOL):
-            tool      = data.get("tool", "UNKNOWN")
-            args      = data.get("args", {})
-            source    = data.get("source", "?")
-            req_id    = data.get("request_id", "?")
-            reasoning = data.get("reasoning", "")[:60]
-
-            src_icon = "🎙️" if source == "voice" else "⌨️"
+        async for data in sub:
+            reasoning = (data.get("reasoning") or "")[:60]
+            src = data.get("source", "?")
             print(
                 f"\n{'─'*60}\n"
-                f"🔧 TOOL #{req_id} | {src_icon} {source.upper()}\n"
-                f"   📦 {tool}\n"
-                f"   📋 {args}\n"
+                f"🔧 TOOL #{data.get('request_id', '?')} | "
+                f"{'🎙️' if src == 'voice' else '⌨️'} {src.upper()}\n"
+                f"   📦 {data.get('tool', 'UNKNOWN')}\n"
+                f"   📋 {data.get('args', {})}\n"
                 + (f"   💭 {reasoning}...\n" if reasoning else "")
                 + f"{'─'*60}"
             )
     except asyncio.CancelledError:
-        logger.info("🛑 [Handler] execute_tool_handler anulat.")
+        pass
 
 
-async def system_status_handler(bus: EventBus) -> None:
-    """Handler SYSTEM_STATUS — loghează statusurile componentelor."""
+async def system_status_handler(sub) -> None:
+    """SYSTEM_STATUS — loghează statusurile componentelor."""
+    levels = {"DEBUG": logger.debug, "WARNING": logger.warning, "ERROR": logger.error}
     try:
-        async for data in bus.subscribe(EventType.SYSTEM_STATUS):
-            component = data.get("component", "?")
-            status    = data.get("status", "")
-            message   = data.get("message", "")
-            level     = data.get("level", "INFO").upper()
-            fn = {"DEBUG": logger.debug, "WARNING": logger.warning,
-                  "ERROR": logger.error}.get(level, logger.info)
-            fn(f"[{component}] {status}: {message}")
+        async for data in sub:
+            fn = levels.get(str(data.get("level", "INFO")).upper(), logger.info)
+            fn(f"[{data.get('component', '?')}] {data.get('status', '')}: {data.get('message', '')}")
     except asyncio.CancelledError:
         pass
 
 
-async def system_ready_handler(bus: EventBus, expected: set) -> None:
-    """Handler SYSTEM_READY — anunță când toate componentele sunt gata."""
+async def system_ready_handler(sub, expected: set) -> None:
+    """SYSTEM_READY — anunță când toate componentele sunt gata.
+
+    Funcționează abia acum: înainte, abonarea se făcea la prima iterație a
+    task-ului, adică DUPĂ ce componentele publicaseră deja SYSTEM_READY în
+    timpul inițializării. Bannerul nu apărea niciodată. Acum abonamentul e
+    creat înainte de pornirea componentelor (vezi main()).
+    """
     ready = set()
     try:
-        async for data in bus.subscribe(EventType.SYSTEM_READY):
+        async for data in sub:
             component = data.get("component", "")
             ready.add(component)
             logger.info(f"✅ [{component}] GATA.")
@@ -265,7 +291,7 @@ async def system_ready_handler(bus: EventBus, expected: set) -> None:
                     f"🚀 CHRONOS COMPLET INIȚIALIZAT\n"
                     f"   🎙️  Spune 'Jarvis' pentru activare vocală\n"
                     f"   ⌨️  Sau tastează direct o comandă în terminal\n"
-                    f"   🌐 Dashboard: http://localhost:5000\n"
+                    f"   🌐 Dashboard: http://localhost:{WEB_PORT}\n"
                     f"   💡 /help pentru comenzi speciale\n"
                     f"{'═'*60}\n"
                 )
@@ -274,32 +300,63 @@ async def system_ready_handler(bus: EventBus, expected: set) -> None:
         pass
 
 
+async def shutdown_watcher(sub, shutdown_event: asyncio.Event) -> None:
+    try:
+        async for _ in sub:
+            shutdown_event.set()
+            return
+    except asyncio.CancelledError:
+        pass
+
+
 # =============================================================================
 # SHUTDOWN
 # =============================================================================
 
-async def shutdown_all(bus, audio, router, tts, tasks) -> None:
-    """Oprire curată a tuturor componentelor."""
+async def shutdown_all(bus, audio, router, tts, live, web, tasks) -> None:
+    """Oprire curată a tuturor componentelor, în ordinea dependențelor."""
     logger.info("\n🛑 [Shutdown] Inițiez oprirea curată...")
 
     await bus.publish(EventType.SYSTEM_SHUTDOWN, {"reason": "shutdown"})
-    await asyncio.sleep(0.1)
 
-    # Oprire TTS dacă vorbește
-    if tts and tts.is_playing:
-        tts.interrupt()
+    # 1. Tăiem sunetul înainte de orice — altfel Chronos continuă să vorbească
+    #    peste procesul care se oprește.
+    if tts is not None:
+        try:
+            await tts.shutdown()
+        except Exception as e:
+            logger.debug(f"[Shutdown] TTS: {e}")
 
+    # 2. Oprim producătorii de evenimente.
     audio.stop()
     await router.shutdown()
-    await bus.shutdown()
+    if live is not None:
+        try:
+            await live.shutdown()
+        except Exception as e:
+            logger.debug(f"[Shutdown] GeminiLive: {e}")
+    web.stop()
 
+    # 3. Deblocăm abonații rămași, apoi anulăm task-urile.
+    await bus.shutdown()
     for task in tasks:
         if not task.done():
             task.cancel()
-            try:
-                await asyncio.wait_for(task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
+    pending = [t for t in tasks if not t.done()]
+    if pending:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True), timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ [Shutdown] Unele task-uri n-au răspuns la timp.")
+
+    # 4. Conexiunile HTTP păstrate deschise pentru keep-alive.
+    try:
+        from ai_core import close_session
+        close_session()
+    except Exception:
+        pass
 
     logger.info("✅ [Shutdown] Chronos oprit. La revedere!")
 
@@ -321,6 +378,7 @@ def _print_help() -> None:
         + "   /stats         — statistici EventBus\n"
         + "   /voice         — listează vocile TTS române\n"
         + "   /setvoice NAME — schimbă vocea TTS\n"
+        + "   /speak on|off  — rostește răspunsurile din terminal\n"
         + "   /help          — acest meniu\n"
         + "   /exit          — oprire Chronos\n"
         + "─" * 40
@@ -332,20 +390,26 @@ def _print_help() -> None:
 # =============================================================================
 
 async def main() -> None:
-    """Funcția principală asincronă."""
     print(BANNER)
 
-    # ── 1. EventBus ─────────────────────────────────────────────────────────
     bus = EventBus(maxsize=200, log_events=False)
     logger.info("✅ EventBus inițializat.")
 
-    # ── 2. TTSEngine ─────────────────────────────────────────────────────────
+    # ── Abonamentele se creează ÎNAINTE de pornirea componentelor ──
+    # Altfel, evenimentele emise în timpul inițializării (SYSTEM_READY,
+    # SYSTEM_STATUS) se publică într-un bus fără ascultători și se pierd.
+    ready_sub = bus.subscribe(EventType.SYSTEM_READY)
+    status_sub = bus.subscribe(EventType.SYSTEM_STATUS)
+    tool_sub = bus.subscribe(EventType.EXECUTE_TOOL)
+    shutdown_sub = bus.subscribe(EventType.SYSTEM_SHUTDOWN)
+
+    # ── 1. TTSEngine ─────────────────────────────────────────────────────
     tts = TTSEngine(event_bus=bus)
     tts_ok = await tts.initialize()
     if not tts_ok:
         logger.warning("⚠️  TTS indisponibil — răspunsurile vor fi doar text.")
 
-    # ── 3. AudioInterface ────────────────────────────────────────────────────
+    # ── 2. AudioInterface ────────────────────────────────────────────────
     audio = AudioInterface(bus)
     audio_ok = await audio.initialize()
     if not audio_ok:
@@ -354,87 +418,94 @@ async def main() -> None:
             "   Tastează '/audio' pentru a simula un wake word."
         )
 
-    # -- 4a. GeminiLiveSession --------------------------------------------------
+    # ── 3. GeminiLiveSession ─────────────────────────────────────────────
     live = GeminiLiveSession(event_bus=bus)
     live_ok = await live.initialize()
     if not live_ok:
         logger.warning(
-            "⚠️  GeminiLive indisponibil → vocea va fi dezactivata.\n"
-            "   Verifica internet + google-genai API key."
+            "⚠️  GeminiLive indisponibil → vocea va fi dezactivată.\n"
+            "   Verifică internet + google-genai API key."
         )
 
-    # ── 4b. LLMRouter -----------------------------------------------------------
+    # ── 4. LLMRouter ─────────────────────────────────────────────────────
     router = LLMRouter(
         event_bus=bus,
         audio_interface=audio if audio_ok else None,
         tts_engine=tts if tts_ok else None,
         gemini_live=live if live_ok else None,
     )
-    router_ok = await router.initialize()
-    if not router_ok:
-        logger.error("❌ LLMRouter nu a pornit! Verifică dispatcher.py și dependințele.")
+    if not await router.initialize():
+        logger.error("❌ LLMRouter nu a pornit! Verifică agents/ și dependințele.")
+        await bus.shutdown()
         return
 
-    # ── 5. Task-uri ──────────────────────────────────────────────────────────
+    # ── 5. Web Dashboard ─────────────────────────────────────────────────
+    web = WebDashboard()
+    web.start()
+
+    # ── 6. Task-uri ──────────────────────────────────────────────────────
     expected_components = {"LLMRouter"}
     if audio_ok:
         expected_components.add("AudioInterface")
 
-    all_tasks = [
-        asyncio.create_task(audio_task(audio),              name="audio_main"),
-        asyncio.create_task(terminal_task(bus),             name="terminal_main"),
-        asyncio.create_task(web_server_task(),              name="web_server"),
-        asyncio.create_task(execute_tool_handler(bus),      name="tool_handler"),
-        asyncio.create_task(system_status_handler(bus),     name="status_handler"),
-        asyncio.create_task(
-            system_ready_handler(bus, expected_components), name="ready_handler"
-        ),
-    ]
-
-    # ── 6. Shutdown handling ─────────────────────────────────────────────────
     shutdown_event = asyncio.Event()
 
-    def _on_signal():
+    all_tasks = [
+        asyncio.create_task(audio_task(audio), name="audio_main"),
+        asyncio.create_task(terminal_task(bus, router, tts), name="terminal_main"),
+        asyncio.create_task(execute_tool_handler(tool_sub), name="tool_handler"),
+        asyncio.create_task(system_status_handler(status_sub), name="status_handler"),
+        asyncio.create_task(
+            system_ready_handler(ready_sub, expected_components), name="ready_handler"
+        ),
+        asyncio.create_task(
+            shutdown_watcher(shutdown_sub, shutdown_event), name="shutdown_watcher"
+        ),
+        # Programul zilei pe Telegram: anunta fiecare bloc cand incepe si
+        # asculta raspunsurile tale ca sa reaseze restul zilei.
+        asyncio.create_task(day_runner.run(), name="day_telegram"),
+    ]
+
+    # Un task critic care moare cu excepție oprește sistemul — dar prin
+    # callback, nu prin scanarea listei de 2 ori pe secundă la nesfârșit.
+    # Pe Pi, „premium la vedere, aproape zero CPU" înseamnă inclusiv asta:
+    # procesul în repaus nu are de ce să se trezească.
+    critical = {"audio_main"}
+
+    def _on_done(task: asyncio.Task) -> None:
+        if task.cancelled() or task.get_name() not in critical:
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(f"Task critic '{task.get_name()}' a eșuat: {exc}", exc_info=exc)
+            shutdown_event.set()
+
+    for task in all_tasks:
+        task.add_done_callback(_on_done)
+
+    # ── 7. Semnale ───────────────────────────────────────────────────────
+    def _on_signal(*_args):
         if not shutdown_event.is_set():
-            logger.info("\n⚡ Semnal oprire primit (Ctrl+C).")
+            logger.info("\n⚡ Semnal de oprire primit (Ctrl+C).")
             shutdown_event.set()
 
     loop = asyncio.get_running_loop()
-    if sys.platform != "win32":
+    if sys.platform == "win32":
+        # Windows nu suportă loop.add_signal_handler; signal.signal rulează pe
+        # thread-ul principal, deci trecem prin loop ca să rămână thread-safe.
+        signal.signal(signal.SIGINT, lambda *_: loop.call_soon_threadsafe(_on_signal))
+    else:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, _on_signal)
 
-    # Watcher pentru SYSTEM_SHUTDOWN din EventBus (ex: /exit din terminal)
-    async def _watch_shutdown():
-        async for _ in bus.subscribe(EventType.SYSTEM_SHUTDOWN):
-            shutdown_event.set()
-            break
-
-    all_tasks.append(
-        asyncio.create_task(_watch_shutdown(), name="shutdown_watcher")
-    )
-
     logger.info(f"[{len(all_tasks)} task-uri pornite]. Chronos activ.")
 
-    critical = {"audio_main", "web_server"}
     try:
-        while not shutdown_event.is_set():
-            await asyncio.sleep(0.5)
-            for task in all_tasks:
-                if task.done() and not task.cancelled():
-                    tname = task.get_name()
-                    try:
-                        exc = task.exception()
-                    except Exception:
-                        exc = None
-                    if exc and tname in critical:
-                        logger.error(f"Task critic '{tname}' a esuat: {exc}", exc_info=exc)
-                        shutdown_event.set()
-    except KeyboardInterrupt:
-        logger.info("\nKeyboardInterrupt.")
+        await shutdown_event.wait()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.info("\nÎntrerupere.")
 
-    # ── 7. Shutdown curat ───────────────────────────────────────────────────
-    await shutdown_all(bus, audio, router, tts, all_tasks)
+    await shutdown_all(bus, audio, router, tts, live if live_ok else None, web, all_tasks)
 
 
 # =============================================================================
@@ -452,4 +523,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"💥 Eroare critică: {e}", exc_info=True)
         sys.exit(1)
-

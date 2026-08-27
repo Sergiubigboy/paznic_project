@@ -902,8 +902,11 @@ def terminal_command():
         
         # Apelează DISPECERUL CENTRAL (cel real, cu memorie)
         if shared_dispatcher:
-            shared_dispatcher.process_text_command(text, None)
-            res = getattr(shared_dispatcher, 'last_result', {})
+            # Rezultatul se ia din valoarea ÎNTOARSĂ, nu din `last_result`.
+            # Flask servește cererile pe fire paralele: două comenzi trimise
+            # aproape simultan își suprascriau reciproc câmpul comun, iar
+            # browserul primea răspunsul celeilalte comenzi.
+            res = shared_dispatcher.process_text_command(text, None) or {}
         else:
             return jsonify({"status": "error", "message": "Dispecerul central nu este conectat."}), 500
         
@@ -1015,8 +1018,8 @@ def chronos_chat():
             return jsonify({'status': 'error',
                             'message': 'Dispecerul central nu e conectat.'}), 500
 
-        shared_dispatcher.process_text_command(text, None)
-        res = getattr(shared_dispatcher, 'last_result', {}) or {}
+        # Valoarea întoarsă, nu `last_result` — vezi nota de la /api/command.
+        res = shared_dispatcher.process_text_command(text, None) or {}
 
         actions = []
         for a in res.get('actions', []):

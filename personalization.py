@@ -51,7 +51,7 @@ CHRONOS_NAME = "Chronos"  # Poți schimba la "Jarvis", "Max", orice
 # (vreme, evenimente astronomice, magazine, ore de răsărit/apus etc.)
 USER_LOCATION = "Târgu Mureș, județul Mureș, România"
 
-SYSTEM_PROMPT = f"""Ești {CHRONOS_NAME}, sistemul principal de management și asistență al lui Sergiu, care rulează pe hardware-ul lui (robotică, ESP32, Raspberry Pi, printare 3D Bambu Lab, programare). NU ești un om real și NU ai viață personală exterioară.
+SYSTEM_PROMPT_CORE = f"""Ești {CHRONOS_NAME}, sistemul principal de management și asistență al lui Sergiu, care rulează pe hardware-ul lui (robotică, ESP32, Raspberry Pi, printare 3D Bambu Lab, programare). NU ești un om real și NU ai viață personală exterioară.
 
 [Identitate și Rol]
 Ești pur și simplu un sistem cu o personalitate neutră-casual. Nu ești un majordom, nu ești un robot corporatist, dar nici nu te prefaci că ești om.
@@ -83,8 +83,12 @@ contextul chiar o cere.
 
 [Locație] Sergiu stă în {USER_LOCATION}. Localizează căutările când contează
 (vreme, cer, magazine, evenimente).
+"""
 
-REGULI DE FOLOSIRE A TOOL-URILOR
+# Regulile de mai jos privesc EXCLUSIV tool-urile sesiunii vocale
+# (control_lights, read_my_data, end_session...). Calea TEXT nu are tool-uri,
+# deci n-are de ce să le plătească la fiecare mesaj — vezi SYSTEM_PROMPT_TEXT.
+VOICE_TOOL_RULES = """REGULI DE FOLOSIRE A TOOL-URILOR
 (ce face fiecare scrie în declarația lui — aici sunt doar regulile de judecată)
 
 1. COMENZI LITERALE. La lumini/muzică/atmosferă NU alege tu piesa sau culoarea și
@@ -113,7 +117,20 @@ REGULI DE FOLOSIRE A TOOL-URILOR
    La „pa", „gata", „stop", „taci", „ieși" → `end_session` imediat, fără comentarii.
 
 6. ÎNTRERUPERI: dacă primești o notă [SISTEM] că te-a întrerupt, întreabă scurt
-   „Ai zis ceva?" și fă ce zice — dacă spune că nu, reia de unde ai rămas."""
+   „Ai zis ceva?" și fă ce zice — dacă spune că nu, reia de unde ai rămas.
+
+7. VREMEA DE ACUM o iei din `home` (senzorul casei) — e instant și gratis.
+   Căutarea pe net e doar pentru prognoză pe zilele următoare sau alte orașe."""
+
+# Sesiunea vocală: personalitate + reguli de tool-uri.
+SYSTEM_PROMPT_VOICE = SYSTEM_PROMPT_CORE + "\n\n" + VOICE_TOOL_RULES
+
+# Terminal/dashboard: doar personalitatea (nu există tool-uri acolo).
+SYSTEM_PROMPT_TEXT = SYSTEM_PROMPT_CORE
+
+# Nume păstrat pentru compatibilitate — înseamnă promptul COMPLET.
+SYSTEM_PROMPT = SYSTEM_PROMPT_VOICE
+
 
 # ============================================================
 # 3. WAKE WORD — openWakeWord
@@ -205,6 +222,12 @@ TTS_VOICE_FALLBACK = "ro-RO-EmilNeural"   # Masculin
 # Viteza de vorbire pentru edge-tts ("+0%" = normal, "+20%" = mai repede)
 TTS_RATE = "+0%"
 
+# Rostește cu voce tare și răspunsurile din TERMINAL, nu doar cele vocale.
+# Conducta de streaming e activă în ambele cazuri (textul apare pe ecran pe
+# măsură ce vine); flagul ăsta decide doar dacă se aude și prin boxe.
+# Se poate comuta și din mers cu `/speak on` / `/speak off`.
+TTS_SPEAK_TERMINAL_REPLIES = False
+
 # Timeout dispatcher (secunde) — cât așteptăm un răspuns AI în terminal
 DISPATCHER_TIMEOUT = 35.0
 
@@ -262,6 +285,50 @@ BOREDOM_PER_HOUR = 12
 
 # Limita maximă a unei singure modificări emoționale (anti-derapaj)
 EMOTION_MAX_DELTA = 30
+
+# ============================================================
+# 9b. ZIUA PE TELEGRAM
+# ============================================================
+# Când începe un bloc din programul zilei, primești un mesaj pe Telegram.
+# Îi răspunzi liber („nu pot acum", „mută peste o oră") și reașază restul zilei.
+# Fără TELEGRAM_BOT_TOKEN în .env, pur și simplu nu pornește.
+DAY_TELEGRAM_ENABLED = True
+
+# Cu câte minute înainte de bloc să anunțe (0 = fix la început).
+DAY_NOTIFY_LEAD_MIN = 0
+
+# ============================================================
+# 10. SETĂRI AVANSATE LIVE API
+# ============================================================
+# Modelul ar decide singur să NU răspundă când ce aude nu i se adresează —
+# ar fi plasă de siguranță pentru ecoul din boxe și zgomotul ambiental.
+# TESTAT PE 2026-08-19: serverul REFUZĂ câmpul pe
+# gemini-2.5-flash-native-audio-latest ("Unknown name 'proactivity' at 'setup'"),
+# deși SDK-ul îl expune. Lasă-l pe False; încearcă True după un update de model
+# sau de SDK — dacă e încă nesuportat, sesiunea nici nu pornește.
+PROACTIVE_AUDIO = False
+
+# Modelul detectează tonul emoțional al lui Sergiu și își adaptează răspunsul.
+AFFECTIVE_DIALOG = True
+
+# Reluarea sesiunii după o deconectare, CU contextul păstrat de server
+# (serverul resetează periodic WebSocket-ul — de aici erorile 1007).
+SESSION_RESUMPTION = True
+
+# Compresia contextului: fără ea, o sesiune audio moare la ~15 minute,
+# iar tokenii audio se acumulează cu ~25/secundă. Cu ea, sesiune nelimitată.
+CONTEXT_COMPRESSION = True
+CONTEXT_TRIGGER_TOKENS = 16000   # de la ce dimensiune începe compresia
+CONTEXT_TARGET_TOKENS  = 8000    # la cât se reduce
+
+# ── VAD server-side (segmentarea vorbirii) ──
+# silence_duration_ms prea mic taie turul la pauzele naturale dintre
+# propoziții. Documentația Google recomandă 500-800ms.
+VAD_SILENCE_MS        = 700
+VAD_PREFIX_PADDING_MS = 300      # audio păstrat ÎNAINTE de începutul vorbirii
+# LOW = mai greu de declanșat, deci mai puține false pozitive din zgomot.
+VAD_START_SENSITIVITY = "START_SENSITIVITY_LOW"
+VAD_END_SENSITIVITY   = "END_SENSITIVITY_LOW"
 
 # ============================================================
 # 9. PROFIL PE TERMEN LUNG
