@@ -1,0 +1,34 @@
+# Chronos — dependințe
+# Instalare:  pip install -r requirements.txt
+#
+# Pe Raspberry Pi, ÎNAINTE de asta trebuie librăriile de sistem — vezi INSTALL_PI.md.
+# Versiunile sunt minime (>=), nu fixate: pe Pi (ARM + Python 3.13) unele pachete
+# au nevoie de build-uri mai noi decât cele de pe Windows.
+
+# ── Gemini / AI ──
+google-genai>=2.10.0
+requests>=2.32.0
+python-dotenv>=1.0.0
+
+# ── Voce: captură, wake word, redare ──
+sounddevice>=0.5.0
+numpy>=1.26.0
+openwakeword>=0.6.0
+onnxruntime>=1.17.0          # backend pentru wake word (tflite nu există pe Pi)
+
+# ── TTS ──
+edge-tts>=7.0.0
+miniaudio>=1.60              # decodare MP3 fără ffmpeg
+
+# ── Memorie vectorială ──
+chromadb>=1.0.0
+
+# ── Muzică ──
+spotipy>=2.25.0
+
+# ── Dashboard web ──
+Flask>=3.0.0
+Werkzeug>=3.0.0
+
+# ── Jurnal (transcriere din fișier) ──
+SpeechRecognition>=3.10.0

@@ -7,8 +7,10 @@ env/
 __pycache__/
 *.pyc
 
-# FIȘIERE CU PAROLE ȘI CHEI API (CRITIC!)
-config.py
+# SECRETELE stau EXCLUSIV in .env (ignorat mai sus).
+# config.py NU mai contine chei — doar le citeste din os.environ si le
+# re-exporta. Trebuie sa fie in git, altfel Pi-ul ramane cu o versiune veche
+# si codul nou crapa la import (ex: SYSTEM_PROMPT lipsa).
 
 # DATE PERSONALE, JURNALE, VECTOR DB (CRITIC!)
 chronos_data/
