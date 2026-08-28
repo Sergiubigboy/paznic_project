@@ -169,16 +169,73 @@ class AudioInterface:
     def _init_sounddevice(self) -> bool:
         try:
             import sounddevice as sd
-            self._sd = sd
-            dev = sd.query_devices(sd.default.device[0], "input")
-            logger.info(f"🎙️ [AudioInterface] Microfon: '{dev['name']}' @ {SAMPLE_RATE}Hz")
-            return True
         except ImportError:
             logger.error("❌ sounddevice lipsă! pip install sounddevice")
             return False
+
+        self._sd = sd
+
+        # Dispozitiv fortat din .env (AUDIO_INPUT_DEVICE) — index sau bucata
+        # din nume. Util pe Pi, unde ordinea placilor se schimba la reboot.
+        try:
+            from config import AUDIO_INPUT_DEVICE
+        except ImportError:
+            AUDIO_INPUT_DEVICE = ""
+
+        try:
+            devices = sd.query_devices()
         except Exception as e:
-            logger.error(f"❌ sounddevice error: {e}")
+            logger.error(f"❌ Nu pot lista dispozitivele audio: {e}")
             return False
+
+        intrari = [(i, d) for i, d in enumerate(devices)
+                   if (d.get("max_input_channels") or 0) > 0]
+        if not intrari:
+            logger.error(
+                "❌ Niciun dispozitiv de INTRARE gasit. Microfonul e conectat?\n"
+                "   Verifica: arecord -l   (si `sudo usermod -aG audio $USER`)"
+            )
+            return False
+
+        ales = None
+        if AUDIO_INPUT_DEVICE:
+            tinta = str(AUDIO_INPUT_DEVICE).strip()
+            if tinta.isdigit():
+                ales = next((x for x in intrari if x[0] == int(tinta)), None)
+            else:
+                ales = next((x for x in intrari
+                             if tinta.lower() in (x[1].get("name") or "").lower()), None)
+            if ales is None:
+                logger.warning(f"⚠️ AUDIO_INPUT_DEVICE='{tinta}' nu se potriveste "
+                               f"cu niciun microfon; caut singur.")
+
+        # Dispozitivul implicit, DACA exista unul valid. Pe Pi e adesea -1
+        # (niciun implicit setat), caz in care luam primul microfon real —
+        # inainte, aici pica totul cu „Error querying device -1".
+        if ales is None:
+            try:
+                idx_implicit = sd.default.device[0]
+                if isinstance(idx_implicit, int) and idx_implicit >= 0:
+                    ales = next((x for x in intrari if x[0] == idx_implicit), None)
+            except Exception:
+                pass
+
+        if ales is None:
+            ales = intrari[0]
+            logger.info("ℹ️ [AudioInterface] Fara microfon implicit — il aleg pe primul.")
+
+        idx, dev = ales
+        sd.default.device = (idx, sd.default.device[1] if
+                             isinstance(sd.default.device, (list, tuple)) else None)
+        logger.info(f"🎙️ [AudioInterface] Microfon [{idx}]: '{dev.get('name')}' @ {SAMPLE_RATE}Hz")
+        altele = [x for x in intrari if x[0] != idx]
+        if altele:
+            # Doar primele cateva: pe Windows sunt zeci de dispozitive virtuale
+            # si logul devine ilizibil.
+            scurt = ", ".join(f"[{i}] {(d.get('name') or '')[:28]}" for i, d in altele[:4])
+            rest = f" (+{len(altele) - 4} altele)" if len(altele) > 4 else ""
+            logger.info(f"   Alte intrari: {scurt}{rest}")
+        return True
 
     def _init_oww(self) -> bool:
         try:
@@ -186,6 +243,15 @@ class AudioInterface:
         except ImportError:
             logger.error("❌ openwakeword lipsă! pip install openwakeword")
             return False
+
+        # onnxruntime scaneaza dupa GPU-uri la fiecare initializare si, pe Pi,
+        # umple logul cu „Failed to detect devices under /sys/class/drm/card0".
+        # Nu e o eroare — doar nu exista placa video. Taiem zgomotul.
+        try:
+            import onnxruntime
+            onnxruntime.set_default_logger_severity(3)   # doar erori reale
+        except Exception:
+            pass
 
         # Alegem backend-ul in functie de ce EXISTA, nu presupunem tflite.
         # Pe Raspberry Pi cu Python 3.13, `tflite-runtime` nu are build-uri

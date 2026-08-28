@@ -41,6 +41,10 @@ SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
 SPOTIFY_REDIRECT_URI  = os.environ.get("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
 SPOTIFY_DEVICE_NAME   = os.environ.get("SPOTIFY_DEVICE_NAME", "SystemVoice")
 
+# Microfon: index sau bucata din nume (ex: "USB", "2"). Gol = detectare
+# automata. Util pe Pi, unde ordinea placilor audio se poate schimba la reboot.
+AUDIO_INPUT_DEVICE = os.environ.get("AUDIO_INPUT_DEVICE", "")
+
 HA_URL   = os.environ.get("HA_URL", "")
 HA_TOKEN = os.environ.get("HA_TOKEN", "")
 

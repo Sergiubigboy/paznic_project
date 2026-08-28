@@ -108,13 +108,30 @@ TELEGRAM_CHAT_ID=...
 
 ## 5. Verifică microfonul
 
+Chronos caută singur un microfon: dacă nu există unul implicit (pe Pi e des
+cazul — `Error querying device -1`), îl ia pe primul cu intrare disponibilă.
+
+Ce vede sistemul de operare:
+
+```bash
+arecord -l
+```
+
+Ce vede Python:
+
 ```bash
 python -c "import sounddevice as sd; print(sd.query_devices())"
 ```
 
-Caută linia cu `<` (intrare implicită). Dacă microfonul USB nu e implicit,
-află indexul lui din listă și pune-l în `~/.asoundrc`, sau setează-l în cod cu
-`sd.default.device`.
+Dacă ai mai multe microfoane și vrei unul anume, pune-l în `.env` — index sau
+o bucată din nume:
+
+```bash
+AUDIO_INPUT_DEVICE=USB
+```
+
+Asta e mai sigur decât indexul pe Pi, unde ordinea plăcilor se poate schimba
+la reboot.
 
 Test rapid de înregistrare:
 
@@ -176,6 +193,11 @@ Normal pe Pi — codul trece pe onnxruntime. Nu e eroare.
 
 **`Niciun model disponibil!` la pornire**
 Lipsesc modelele de wake word. Rulează comanda `download_models()` din pasul 3.
+
+**`Error querying device -1`**
+Nu există microfon implicit. Rezolvat — codul caută acum singur primul
+dispozitiv de intrare. Dacă tot apare, microfonul chiar nu e văzut de sistem:
+verifică `arecord -l` și că userul e în grupul `audio`.
 
 **Serviciul pornește dar n-aude nimic**
 Serviciul rulează ca alt utilizator, care poate n-are acces la placa audio.
