@@ -1,0 +1,5 @@
+# Fisiere care ajung pe Linux si NU suporta CRLF.
+# Un unit systemd cu terminatii Windows include \r in valori, iar ExecStart
+# ajunge sa arate spre o cale inexistenta — esec tacut, greu de gasit.
+*.service text eol=lf
+*.sh      text eol=lf
