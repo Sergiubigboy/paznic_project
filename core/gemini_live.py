@@ -481,30 +481,35 @@ class GeminiLiveSession:
                 types.FunctionDeclaration(
                     name="ziua",
                     description=(
-                        "Planificarea zilei. 'plan' = construieste programul din ce vrea "
-                        "sa faca azi (da `iteme` si `intensitate`); 'azi' = ce are de facut "
-                        "si ce e bifat; 'gata' = bifeaza ceva terminat (da `text`); "
-                        "'amana' = muta ceva mai tarziu (`minute` SAU `ora`); "
-                        "'sari' = renunta azi la ceva; 'acum' = incepe ceva imediat; "
-                        "'replan' = reaseaza tot restul zilei; la toate astea `text` = "
-                        "despre ce e vorba (gol = blocul curent); "
-                        "'somn' = seteaza programul de somn (`trezire`, `culcare`, `mod`).\n"
-                        "INAINTE de 'plan' intreaba-l scurt ce intensitate vrea (relaxat/"
-                        "normal/full) si daca iese undeva. Estimeaza TU duratele; intreaba "
-                        "doar la lucruri complet noi. Pentru proiecte pune `proiect` (numele) "
-                        "si, daca e ceva nou, `pasi` — se creeaza automat in proiect."
+                        "Ce are Sergiu de facut azi.\n"
+                        "'plan' = noteaza ce vrea sa faca (da `iteme`). ASTA E MODUL "
+                        "NORMAL: notezi intentiile, NU faci orar, NU intrebi de "
+                        "intensitate, NU dai ore. Poti chema din nou peste zi ca sa "
+                        "adaugi lucruri — se adauga, nu se sterge ce era.\n"
+                        "'program' = ABIA CAND CERE EL EXPLICIT un orar pe ore. Doar "
+                        "atunci intreaba-l ce intensitate vrea (relaxat/normal/full) "
+                        "si daca iese undeva (`ocupat`).\n"
+                        "'azi' = ce mai are de facut; 'gata' = a terminat ceva (`text`); "
+                        "'sari' = renunta azi la ceva (`text`).\n"
+                        "Doar DUPA ce exista un orar: 'amana' (`minute` SAU `ora`), "
+                        "'acum', 'replan'. `text` gol = lucrul curent.\n"
+                        "'somn' = programul de somn (`trezire`, `culcare`, `mod`).\n"
+                        "Estimeaza TU duratele; intreaba doar la lucruri complet noi. "
+                        "Pentru proiecte pune `proiect` (numele) si, daca e ceva nou, "
+                        "`pasi` — se creeaza automat in proiect."
                     ),
                     parameters={
                         "type": "object",
                         "properties": {
                             "action": {"type": "string",
-                                       "enum": ["plan", "azi", "gata", "amana",
-                                                "sari", "acum", "replan", "somn"]},
+                                       "enum": ["plan", "program", "azi", "gata",
+                                                "sari", "amana", "acum", "replan",
+                                                "somn"]},
                             "intensitate": {"type": "string",
                                             "enum": ["relaxat", "normal", "full"]},
                             "iteme": {
                                 "type": "array",
-                                "description": "Ce vrea sa faca azi.",
+                                "description": "Ce vrea sa faca azi (pentru 'plan').",
                                 "items": {
                                     "type": "object",
                                     "properties": {
@@ -828,9 +833,14 @@ class GeminiLiveSession:
             from tools import day_planner as DP
             a = args.get("action", "")
             if a == "plan":
+                # Fara orar, decat daca a cerut-o el explicit in aceeasi fraza.
                 return DP.plan_day(args.get("iteme") or [],
                                    args.get("intensitate", "normal"),
-                                   args.get("ocupat") or [])
+                                   args.get("ocupat") or [],
+                                   cu_program=False)
+            if a == "program":
+                return DP.fa_program(args.get("intensitate", ""),
+                                     args.get("ocupat") or [])
             if a == "azi":
                 return DP.today_summary()
             if a == "gata":
@@ -841,8 +851,8 @@ class GeminiLiveSession:
                                     int(args.get("minute") or 0),
                                     args.get("ora", "") or "")
                 if rez.get("status") == "ok":
-                    rez["info"] = ("Spune-i pe scurt ce ai mutat si care urmeaza, "
-                                   "nu insira tot orarul.")
+                    rez["info"] = ("Spune-i pe scurt ce s-a schimbat si ce urmeaza, "
+                                   "nu insira toata lista.")
                 return rez
             if a == "somn":
                 return DP.set_sleep(args.get("mod", ""), args.get("trezire", ""),

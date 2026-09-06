@@ -297,6 +297,10 @@ DAY_TELEGRAM_ENABLED = True
 # Cu câte minute înainte de bloc să anunțe (0 = fix la început).
 DAY_NOTIFY_LEAD_MIN = 0
 
+# Cat de des iti aminteste ce ti-ai propus, cand NU ai cerut orar.
+# Prea des devine zgomot; 3 ore prind ritmul unei zile fara sa enerveze.
+DAY_REMINDER_HOURS       = 3.0
+
 # ============================================================
 # 10. SETĂRI AVANSATE LIVE API
 # ============================================================

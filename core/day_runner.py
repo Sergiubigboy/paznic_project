@@ -28,10 +28,11 @@ STATE_FILE = os.path.join(BASE_DIR, "chronos_data", "day_runner_state.json")
 
 try:
     from config import (DAY_TELEGRAM_ENABLED, DAY_NOTIFY_LEAD_MIN,
-                        GEMINI_MODEL_DEFAULT)
+                        DAY_REMINDER_HOURS, GEMINI_MODEL_DEFAULT)
 except ImportError:
     DAY_TELEGRAM_ENABLED = True
     DAY_NOTIFY_LEAD_MIN = 0
+    DAY_REMINDER_HOURS = 3.0
     GEMINI_MODEL_DEFAULT = "gemini-2.5-flash"
 
 # Scurtături: comenzi frecvente, rezolvate fără LLM
@@ -41,13 +42,15 @@ _SCURTATURI = {
     "sari": ("sari", ""), "skip": ("sari", ""),
     "replan": ("replan", ""), "reprogrameaza": ("replan", ""),
     "program": ("arata", ""), "ce am": ("arata", ""), "azi": ("arata", ""),
+    "fa program": ("orar", ""), "fa-mi program": ("orar", ""), "orar": ("orar", ""),
 }
 
 _SCHEMA = {
     "type": "OBJECT",
     "properties": {
         "actiune": {"type": "STRING",
-                    "enum": ["amana", "sari", "gata", "acum", "replan", "arata", "nimic"]},
+                    "enum": ["amana", "sari", "gata", "acum", "replan", "arata",
+                             "orar", "adauga", "nimic"]},
         "target": {"type": "STRING", "description": "La ce se referă, dacă zice. Gol = blocul curent."},
         "minute": {"type": "INTEGER", "description": "Cu câte minute amână."},
         "ora": {"type": "STRING", "description": "HH:MM dacă cere o oră anume."},
@@ -99,14 +102,53 @@ Acțiuni:
 - gata   → a terminat ceva ("am terminat X", "done")
 - acum   → vrea să înceapă imediat ceva
 - replan → vrea tot restul zilei rearanjat
-- arata  → vrea doar să vadă programul
-- nimic  → nu e o comandă despre program
+- arata  → vrea doar să vadă ce are de făcut
+- orar   → cere EXPLICIT un program pe ore („fă-mi un program", „împarte-mi ziua")
+- adauga → vrea să mai adauge ceva de făcut azi; pune-l în `target`
+- nimic  → nu e o comandă despre ziua lui
 
 `target` = la ce se referă, dacă spune. Gol dacă vorbește despre ce e acum."""
 
     rez = ask_gemini_json(prompt, schema=_SCHEMA, temperature=0.1,
                           model=GEMINI_MODEL_DEFAULT)
     return rez if isinstance(rez, dict) else {"actiune": "nimic"}
+
+
+async def _aminteste(st: dict, zi: dict) -> None:
+    """
+    Fara orar, nu exista blocuri de anuntat — dar Sergiu a cerut sa-i tot
+    amintesc ce si-a propus. Un mesaj la cateva ore, doar cat e treaz si doar
+    daca mai are ceva de facut.
+    """
+    from tools.day_planner import lista_text, sleep_window
+    from tools.telegram_tools import send_telegram
+
+    ramase = [i for i in zi.get("iteme", []) if not i.get("gata")]
+    if not ramase:
+        return
+
+    acum = datetime.now()
+    trezire, culcare = sleep_window()
+    if not (trezire <= acum <= culcare):
+        return                            # doarme, il lasam in pace
+
+    ultima = st.get("ultima_amintire")
+    if ultima:
+        try:
+            trecut = (acum - datetime.fromisoformat(ultima)).total_seconds() / 3600
+            if trecut < float(DAY_REMINDER_HOURS):
+                return
+        except Exception:
+            pass
+
+    await asyncio.to_thread(
+        send_telegram,
+        f"Ce ti-ai propus azi ({len(ramase)} ramase):\n{lista_text(zi)}\n\n"
+        f"Scrie-mi ce ai terminat."
+    )
+    st["ultima_amintire"] = acum.isoformat(timespec="seconds")
+    _save_state(st)
+    logger.info(f"[Zi/TG] Memento trimis ({len(ramase)} ramase).")
 
 
 async def _notifica_blocuri(st: dict) -> None:
@@ -120,7 +162,11 @@ async def _notifica_blocuri(st: dict) -> None:
 
     azi = date.today().isoformat()
     if st.get("zi") != azi:
-        st.update({"zi": azi, "notificate": []})
+        st.update({"zi": azi, "notificate": [], "ultima_amintire": None})
+
+    if not zi.get("cu_program"):
+        await _aminteste(st, zi)
+        return
 
     acum = datetime.now()
     gata_ids = {i["id"] for i in zi.get("iteme", []) if i.get("gata")}
@@ -174,7 +220,31 @@ async def _proceseaza_mesaje(st: dict) -> None:
             continue
 
         if act == "arata":
-            await asyncio.to_thread(send_telegram, "📋 Programul tău:\n" + program_text())
+            await asyncio.to_thread(send_telegram,
+                                    "Ce mai ai azi:\n" + program_text())
+            _save_state(st)
+            continue
+
+        if act == "orar":
+            # Cere explicit un program pe ore peste lista de azi.
+            from tools.day_planner import fa_program
+            rez = await asyncio.to_thread(fa_program)
+            raspuns = rez.get("message", "Gata.")
+            if rez.get("status") == "ok":
+                raspuns += "\n\n" + program_text()
+            await asyncio.to_thread(send_telegram, raspuns)
+            _save_state(st)
+            continue
+
+        if act == "adauga":
+            # Mai adauga ceva peste zi, fara sa atinga restul.
+            from tools.day_planner import plan_day
+            ce = (cmd.get("target") or "").strip()
+            if not ce:
+                _save_state(st)
+                continue
+            rez = await asyncio.to_thread(plan_day, [{"titlu": ce}])
+            await asyncio.to_thread(send_telegram, rez.get("message", "Am notat."))
             _save_state(st)
             continue
 
@@ -184,8 +254,7 @@ async def _proceseaza_mesaje(st: dict) -> None:
 
         raspuns = rez.get("message", "Gata.")
         if rez.get("status") == "ok":
-            raspuns += "\n\n📋 Programul actualizat:\n" + (
-                rez.get("program") or program_text())
+            raspuns += "\n\n" + (rez.get("program") or program_text())
         await asyncio.to_thread(send_telegram, raspuns)
         _save_state(st)
 

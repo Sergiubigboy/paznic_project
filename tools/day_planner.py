@@ -496,9 +496,19 @@ def build_schedule(iteme: list, intensitate: str = "normal",
 # ─────────────────────────────────────────────────────────────
 
 def plan_day(iteme: list, intensitate: str = "normal",
-             ocupat: Optional[list] = None) -> dict:
+             ocupat: Optional[list] = None, cu_program: bool = False) -> dict:
     """
-    Construiește ziua din itemele trimise de modelul vocal.
+    Inregistreaza ce vrea Sergiu sa faca azi.
+
+    IMPLICIT NU face orar. Doar preia intentiile, le leaga de proiectele si
+    reminderele existente si creeaza pasii care lipsesc. Peste zi el spune ce
+    a facut; nimic nu-l alearga dupa ceas.
+
+    `cu_program=True` construieste si orarul pe ore — dar numai daca a cerut-o
+    explicit. Se poate adauga si mai tarziu, cu fa_program().
+
+    Apelurile repetate din aceeasi zi ADAUGA la ce exista deja: daca la pranz
+    zice „vreau sa fac si X", X se adauga, nu sterge lista de dimineata.
 
     Fiecare item: {titlu, minute?, gen?: proiect|reminder|challenge,
                    proiect?: str, pasi?: [str]}
@@ -565,26 +575,102 @@ def plan_day(iteme: list, intensitate: str = "normal",
         item["gen"] = "challenge"
         construite.append(item)
 
-    program = build_schedule(construite, intensitate, ocupat, d)
-    zi = {"data": d.isoformat(), "intensitate": intensitate,
-          "iteme": construite, "program": program,
-          "creat_la": datetime.now().isoformat(timespec="seconds")}
+    # Adaugam la ziua existenta, nu o rescriem: peste zi mai apar lucruri.
+    zi = load_day(d)
+    existente = zi.get("iteme", [])
+    adaugate, sarite = [], []
+    for it in construite:
+        dublura = next((e for e in existente
+                        if _sim(it["titlu"], e.get("titlu", "")) >= 0.75), None)
+        if dublura:
+            sarite.append(dublura.get("titlu", it["titlu"]))
+            continue
+        existente.append(it)
+        adaugate.append(it)
+
+    zi.update({
+        "data": d.isoformat(),
+        "iteme": existente,
+        "creat_la": zi.get("creat_la") or datetime.now().isoformat(timespec="seconds"),
+    })
+    if cu_program:
+        zi["intensitate"] = intensitate
+        zi["program"] = build_schedule(existente, intensitate, ocupat, d)
+        zi["cu_program"] = True
+    else:
+        zi.setdefault("intensitate", intensitate)
+        zi.setdefault("program", [])
+        zi.setdefault("cu_program", False)
+    save_day(zi)
+
+    ramase = [i for i in existente if not i.get("gata")]
+    logger.info(f"📝 [Zi] +{len(adaugate)} lucruri (total {len(existente)}), "
+                f"program={'da' if zi.get('cu_program') else 'nu'}")
+
+    rez = {"status": "ok", "detalii": note, "adaugate": [i["titlu"] for i in adaugate],
+           "deja_erau": sarite, "cu_program": bool(zi.get("cu_program"))}
+
+    if zi.get("cu_program"):
+        trezire, culcare = sleep_window(d)
+        plasate = [i for i in existente if i.get("start")]
+        rez.update({
+            "intensitate": intensitate,
+            "fereastra": f"{_hm(trezire)}–{_hm(culcare)}",
+            "program": "; ".join(f"{i['start']} {i['titlu']}" for i in plasate)
+                       or "nimic plasat",
+            "neincapute": [i["titlu"] for i in existente if i.get("nota")],
+            "message": f"Gata, {len(plasate)} lucruri intre {_hm(trezire)} si {_hm(culcare)}.",
+        })
+    else:
+        bucati = []
+        if adaugate:
+            bucati.append("Am notat: " + ", ".join(i["titlu"] for i in adaugate) + ".")
+        if sarite:
+            bucati.append("Aveai deja: " + ", ".join(sarite) + ".")
+        bucati.append(f"In total {len(ramase)} lucruri de facut azi.")
+        rez["message"] = " ".join(bucati)
+        rez["info"] = ("Confirma scurt ce ai notat. NU insira ore si NU face orar — "
+                       "n-a cerut asa ceva. Peste zi iti spune el ce a terminat.")
+    return rez
+
+
+def fa_program(intensitate: str = "", ocupat: Optional[list] = None) -> dict:
+    """
+    Construieste orarul pe ore pentru lucrurile deja notate azi.
+
+    Se cheama doar cand Sergiu cere explicit un program. Restul timpului ziua
+    traieste ca simpla lista de intentii.
+    """
+    d = date.today()
+    zi = load_day(d)
+    iteme = zi.get("iteme", [])
+    if not iteme:
+        return {"status": "error",
+                "message": "Nu mi-ai spus inca ce vrei sa faci azi."}
+
+    intensitate = (intensitate or zi.get("intensitate") or "normal").lower()
+    if intensitate in ("full throttle", "full_throttle", "hardcore"):
+        intensitate = "full"
+
+    ramase = [i for i in iteme if not i.get("gata")]
+    zi["program"] = build_schedule(iteme, intensitate, ocupat, d)
+    zi["intensitate"] = intensitate
+    zi["cu_program"] = True
     save_day(zi)
 
     trezire, culcare = sleep_window(d)
-    plasate = [i for i in construite if i.get("start")]
-    logger.info(f"📅 [Zi] Program construit: {len(plasate)} iteme, intensitate {intensitate}")
-
-    rezumat = "; ".join(f"{i['start']} {i['titlu']}" for i in plasate) or "nimic plasat"
-    afara = [i["titlu"] for i in construite if i.get("nota")]
+    plasate = [i for i in iteme if i.get("start") and not i.get("gata")]
+    logger.info(f"📅 [Zi] Orar construit pentru {len(plasate)} lucruri "
+                f"(intensitate {intensitate}).")
     return {
         "status": "ok",
         "intensitate": intensitate,
         "fereastra": f"{_hm(trezire)}–{_hm(culcare)}",
-        "program": rezumat,
-        "detalii": note,
-        "neincapute": afara,
-        "message": f"Gata programul, {len(plasate)} lucruri între {_hm(trezire)} și {_hm(culcare)}.",
+        "program": "; ".join(f"{i['start']} {i['titlu']}" for i in plasate)
+                   or "nimic plasat",
+        "neincapute": [i["titlu"] for i in ramase if i.get("nota")],
+        "message": f"Ti-am facut programul: {len(plasate)} lucruri intre "
+                   f"{_hm(trezire)} si {_hm(culcare)}.",
     }
 
 
@@ -604,11 +690,23 @@ def today_summary() -> dict:
 
     gata = [i for i in iteme if i.get("gata")]
     ramase = [i for i in iteme if not i.get("gata")]
-    randuri = [f"{i.get('start','--:--')} {i['titlu']}" for i in ramase]
-    msg = f"Ai {len(ramase)} lucruri rămase din {len(iteme)}: " + "; ".join(randuri) + "."
+    cu_program = bool(zi.get("cu_program"))
+
+    if not ramase:
+        return {"status": "ok", "planificat": True, "cu_program": cu_program,
+                "message": f"Le-ai facut pe toate {len(iteme)}. Ziua e curata."}
+
+    # Cu orar spunem orele; fara orar e doar o lista — nu inventam ore.
+    if cu_program:
+        randuri = [f"{i.get('start', '--:--')} {i['titlu']}" for i in ramase]
+    else:
+        randuri = [i["titlu"] for i in ramase]
+
+    msg = f"Ai {len(ramase)} lucruri ramase din {len(iteme)}: " + "; ".join(randuri) + "."
     if gata:
         msg += f" Bifate: {', '.join(i['titlu'] for i in gata)}."
-    return {"status": "ok", "planificat": True, "intensitate": zi.get("intensitate"),
+    return {"status": "ok", "planificat": True, "cu_program": cu_program,
+            "intensitate": zi.get("intensitate"),
             "message": msg, "program": zi.get("program", [])}
 
 
@@ -729,6 +827,27 @@ def reschedule(action: str, target: str = "", minute: int = 0,
     if action == "gata":
         return complete(target)
 
+    # „sari" merge oricum: scoate ceva din ziua de azi, orar sau nu.
+    if action == "sari" and not zi.get("cu_program"):
+        it = _gaseste_item(zi, target)
+        if not it:
+            ramase = ", ".join(i["titlu"] for i in zi["iteme"]
+                               if not i.get("gata")) or "nimic"
+            return {"status": "error",
+                    "message": f"N-am gasit „{target}”. Ai ramase: {ramase}."}
+        it["sarit"] = True
+        it["gata"] = True
+        save_day(zi)
+        return {"status": "ok",
+                "message": f"Am scos „{it['titlu']}” din ziua de azi.",
+                "program": lista_text(zi)}
+
+    # Restul inseamna mutat in timp — n-are sens fara orar.
+    if not zi.get("cu_program"):
+        return {"status": "error", "fara_orar": True,
+                "message": "Nu ti-am facut orar pe azi, deci n-am ce muta. "
+                           "Spune-mi doar ce ai terminat, sau cere-mi un program."}
+
     if action == "replan":
         zi = _reaseaza_restul(zi)
         return {"status": "ok", "message": "Am reașezat restul zilei.",
@@ -787,9 +906,26 @@ def reschedule(action: str, target: str = "", minute: int = 0,
     return {"status": "error", "message": f"Nu știu acțiunea „{action}”."}
 
 
-def program_text(zi: Optional[dict] = None, doar_ramase: bool = True) -> str:
-    """Programul ca text scurt, pentru Telegram."""
+def lista_text(zi: Optional[dict] = None) -> str:
+    """Ce a ramas de facut, fara ore — modul implicit al zilei."""
     zi = zi or load_day()
+    ramase = [i for i in zi.get("iteme", []) if not i.get("gata")]
+    if not ramase:
+        return "Nimic ramas azi."
+    icon = {"proiect": "🔧", "reminder": "📌", "challenge": "🎯"}
+    return "\n".join(f"{icon.get(i.get('gen'), '▪️')} {i['titlu']}" for i in ramase)
+
+
+def program_text(zi: Optional[dict] = None, doar_ramase: bool = True) -> str:
+    """
+    Programul ca text scurt, pentru Telegram.
+
+    Fara orar construit, cade pe simpla lista de intentii — altfel ar returna
+    „Nimic ramas azi" desi are lucruri de facut, doar ca fara ore.
+    """
+    zi = zi or load_day()
+    if not zi.get("cu_program"):
+        return lista_text(zi)
     acum = datetime.now()
     gata = {i["id"] for i in zi.get("iteme", []) if i.get("gata")}
     randuri = []

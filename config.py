@@ -121,6 +121,7 @@ try:
         # Ziua pe Telegram
         DAY_TELEGRAM_ENABLED,
         DAY_NOTIFY_LEAD_MIN,
+        DAY_REMINDER_HOURS,
         # Live API avansat
         PROACTIVE_AUDIO,
         AFFECTIVE_DIALOG,
@@ -179,6 +180,7 @@ except ImportError as e:
     PROFILE_REFRESH_HOURS    = 24
     DAY_TELEGRAM_ENABLED     = True
     DAY_NOTIFY_LEAD_MIN      = 0
+    DAY_REMINDER_HOURS       = 3.0
     PROACTIVE_AUDIO          = False
     AFFECTIVE_DIALOG         = True
     SESSION_RESUMPTION       = True
