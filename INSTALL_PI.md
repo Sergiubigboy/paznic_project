@@ -160,7 +160,20 @@ chronos_data/.spotify_token_cache
 
 ## 7. Serviciul systemd
 
-Ai deja `chronos.service`. După orice `git pull`:
+Repo-ul conține `chronos.service` gata făcut. Instalează-l:
+
+```bash
+sudo cp chronos.service /etc/systemd/system/chronos.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now chronos.service
+```
+
+**Atenție dacă ai deja un serviciu mai vechi:** el pornea `main.py`, fișier
+care nu mai există — a fost înlocuit de `main_async.py` la refactorizare.
+Un serviciu rămas pe calea veche eșuează la fiecare pornire, tăcut. Comanda
+de copiere de mai sus îl corectează.
+
+După orice `git pull`:
 
 ```bash
 sudo systemctl restart chronos.service
@@ -198,6 +211,15 @@ Lipsesc modelele de wake word. Rulează comanda `download_models()` din pasul 3.
 Nu există microfon implicit. Rezolvat — codul caută acum singur primul
 dispozitiv de intrare. Dacă tot apare, microfonul chiar nu e văzut de sistem:
 verifică `arecord -l` și că userul e în grupul `audio`.
+
+**Serviciul pornește și moare imediat**
+Verifică ce fișier lansează: `grep ExecStart /etc/systemd/system/chronos.service`.
+Dacă spune `main.py`, e calea veche — fișierul a fost înlocuit de
+`main_async.py`. Copiază serviciul din repo (pasul 7).
+
+**Diagnosticul raportează zeci de pachete lipsă**
+Îți găsește singur venv-ul acum. Dacă tot le raportează, chiar lipsesc:
+vezi pasul 3.
 
 **Serviciul pornește dar n-aude nimic**
 Serviciul rulează ca alt utilizator, care poate n-are acces la placa audio.

@@ -21,6 +21,18 @@ try:
 except Exception:
     pass
 
+# Rulat cu Python-ul de sistem, dar proiectul are un venv? Repornim acolo.
+# Altfel raportam zeci de pachete „lipsa" care de fapt sunt instalate, doar
+# in alta parte — exact genul de diagnostic care trimite pe piste false.
+if sys.prefix == sys.base_prefix and os.environ.get("_CHRONOS_DIAG_REEXEC") != "1":
+    for candidat in (BASE / "venv" / "bin" / "python",
+                     BASE / "venv" / "Scripts" / "python.exe"):
+        if candidat.exists():
+            print(f"(nu esti in venv — repornesc cu {candidat})\n")
+            sys.stdout.flush()
+            os.environ["_CHRONOS_DIAG_REEXEC"] = "1"
+            os.execv(str(candidat), [str(candidat), str(Path(__file__).resolve())])
+
 OK, WARN, ERR = [], [], []
 DESCARCA_MODELE = 'python -c "import openwakeword.utils as u; u.download_models()"'
 
@@ -63,10 +75,13 @@ else:
     ok(f"Python {sys.version_info.major}.{sys.version_info.minor}")
 
 if sys.prefix != sys.base_prefix:
-    ok("Rulez intr-un mediu virtual.")
+    ok(f"Mediu virtual activ: {sys.prefix}")
+elif (BASE / "venv").exists():
+    err("NU esti in venv, desi proiectul are unul. Tot ce urmeaza e nesigur.",
+        "source venv/bin/activate")
 else:
-    warn("NU esti in venv — pachetele pot lipsi sau fi altele.",
-         "source venv/bin/activate")
+    warn("Nu exista venv in proiect — pachetele se cauta global.",
+         "python3 -m venv venv && source venv/bin/activate")
 
 # ── 2. PACHETE ─────────────────────────────────────────────────────────
 sectiune("2. PACHETE PYTHON")
@@ -335,10 +350,26 @@ elif svc.exists():
             m = re.search(rf"^{camp}=(.+)$", txt, re.M)
             if m:
                 print(f"           {camp}={m.group(1).strip()}")
-        m = re.search(r"^ExecStart=(\S+)", txt, re.M)
-        if m and not Path(m.group(1)).exists():
-            err(f"ExecStart arata spre un python inexistent: {m.group(1)}",
-                "Corecteaza calea in /etc/systemd/system/chronos.service")
+        m = re.search(r"^ExecStart=(.+)$", txt, re.M)
+        if m:
+            bucati = m.group(1).split()
+            if bucati and not Path(bucati[0]).exists():
+                err(f"ExecStart: interpretorul nu exista — {bucati[0]}",
+                    "Corecteaza calea in /etc/systemd/system/chronos.service")
+            # Scriptul lansat conteaza la fel de mult ca interpretorul:
+            # dupa refactorizare main.py a disparut, inlocuit de main_async.py,
+            # iar serviciul ramas pe vechea cale esueaza la fiecare pornire.
+            for arg in bucati[1:]:
+                if arg.endswith(".py"):
+                    if Path(arg).exists():
+                        ok(f"ExecStart lanseaza {Path(arg).name} — exista.")
+                    else:
+                        corect = BASE / "main_async.py"
+                        err(f"ExecStart lanseaza un fisier care NU EXISTA: {arg}",
+                            f"Schimba-l in {corect} "
+                            "(sudo nano /etc/systemd/system/chronos.service, "
+                            "apoi sudo systemctl daemon-reload)")
+                    break
         m = re.search(r"^User=(.+)$", txt, re.M)
         if m:
             user = m.group(1).strip()

@@ -1,0 +1,30 @@
+[Unit]
+Description=Chronos Voice Assistant
+# Vrem retea FUNCTIONALA, nu doar interfata ridicata: Chronos se conecteaza la
+# Gemini imediat la pornire, iar network.target nu garanteaza ca exista IP.
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sergiu
+Group=audio
+WorkingDirectory=/home/sergiu/projects/paznic_project
+ExecStart=/home/sergiu/projects/paznic_project/venv/bin/python /home/sergiu/projects/paznic_project/main_async.py
+
+# Python isi tine logurile in buffer cand iesirea nu e un terminal — fara asta,
+# journalctl arata gol minute intregi si pare ca serviciul a murit.
+Environment=PYTHONUNBUFFERED=1
+
+Restart=on-failure
+RestartSec=10
+# Trei incercari in doua minute; daca tot cade, e o problema reala si nu are
+# rost sa reporneasca la infinit consumand bateria si logurile.
+StartLimitBurst=3
+StartLimitIntervalSec=120
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
