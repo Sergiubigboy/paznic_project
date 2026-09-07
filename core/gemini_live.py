@@ -416,7 +416,7 @@ class GeminiLiveSession:
                         "reminder (`text`=ce); reminder_gata (`text`=ce a terminat — merge "
                         "și pentru mentenanță, ex 'am curățat imprimanta'); "
                         "target (`text`=obiectiv); target_progres (`text`=care, `value`=0-100); "
-                        "greutate (`value`=kg); proiect_pas (`text`=pasul terminat); "
+                        "greutate (`value`=kg); proiect_nou (`text`=numele, `extra`=descrierea); proiect_pas (`text`=pasul terminat); "
                         "proiect_devlog (`text`=titlu, `extra`=detalii); "
                         "obicei (`text`=care); jurnal (`text`=gândul)."
                     ),
@@ -770,33 +770,9 @@ class GeminiLiveSession:
 
         # ── SCRIERE DATE — un singur tool, rutat pe `kind` ──
         if name == "save_data":
-            kind = (args.get("kind") or "").strip()
-            text = args.get("text") or ""
-            val = args.get("value")
-            extra = args.get("extra") or ""
-
-            if kind in ("cheltuiala", "incasare"):
-                return W.add_transaction(val, "in" if kind == "incasare" else "out",
-                                         text, extra)
-            if kind == "reminder":
-                return W.add_reminder(text, extra or "Med")
-            if kind == "reminder_gata":
-                return W.complete_reminder(text)
-            if kind == "target":
-                return W.add_target(text, deadline=extra)
-            if kind == "target_progres":
-                return W.update_target_progress(text, val or 0)
-            if kind == "greutate":
-                return W.log_weight(val, text)
-            if kind == "proiect_pas":
-                return W.complete_project_step(text, extra)
-            if kind == "proiect_devlog":
-                return W.add_devlog(text, extra)
-            if kind == "obicei":
-                return W.check_habit(text)
-            if kind == "jurnal":
-                return W.quick_capture(text, "jurnal")
-            return {"status": "error", "message": f"Tip necunoscut: {kind}"}
+            # Acelasi dispecer ca la chatul din web — o singura implementare.
+            return W.dispatch(args.get("kind") or "", args.get("text") or "",
+                              args.get("value"), args.get("extra") or "")
 
         # ── CASA ──
         if name == "home":

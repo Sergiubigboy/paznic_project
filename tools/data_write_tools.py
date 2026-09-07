@@ -328,6 +328,87 @@ def complete_project_step(step: str, project: str = "") -> dict:
     return {"status": "error", "message": f"N-am găsit pasul '{step}'."}
 
 
+def create_project(name: str, description: str = "",
+                   technologies: str = "", steps: Optional[list] = None) -> dict:
+    """
+    Creeaza un proiect nou in electronics_data.json.
+
+    Lipsea cu totul: se puteau bifa pasi si adauga devlog-uri intr-un proiect
+    existent, dar nu se putea crea unul. Cererea „fa-mi un proiect nou" nu avea
+    nicio unealta in spate, iar modelul raspundea ca l-a creat.
+
+    Daca exista deja un proiect cu nume asemanator, NU face un duplicat —
+    intoarce ce a gasit si lasa decizia la om.
+    """
+    name = (name or "").strip()
+    if not name:
+        return {"status": "error", "message": "Nu mi-ai spus cum sa-l cheme."}
+
+    # Modelul indeasa uneori toata descrierea in nume („MOVIRIS: ochelari
+    # care..."). Un nume de proiect e scurt; ce vine dupa primul separator e
+    # descriere. Taiem doar cand e evident lung, ca sa nu stricam nume reale.
+    if len(name) > 45:
+        for sep in (":", " — ", " - "):
+            if sep in name:
+                cap, _, coada = name.partition(sep)
+                cap, coada = cap.strip(), coada.strip()
+                if cap and len(cap) <= 45:
+                    name = cap
+                    if not (description or "").strip():
+                        description = coada
+                break
+        else:
+            name = name[:45].rstrip()
+
+    data = _load(_ELECTRONICS_PATH, {})
+    proiecte = data.setdefault("projects", [])
+
+    existent = _best_match(name, proiecte, "name", threshold=0.75)
+    if existent:
+        return {"status": "error", "exista": existent.get("name"),
+                "message": f"Ai deja un proiect „{existent.get('name')}”. "
+                           "Vrei sa adaug in el, sau chiar unul nou?"}
+
+    acum = datetime.now().isoformat(timespec="seconds")
+    plan = []
+    for i, pas in enumerate(steps or []):
+        titlu = (pas or "").strip() if isinstance(pas, str) else str(pas).strip()
+        if not titlu:
+            continue
+        plan.append({
+            "id": _new_id("step"),
+            "title": titlu,
+            "status": "todo",
+            "priority": "Med",
+            "children": [],
+            "created_at": acum,
+        })
+
+    proiect = {
+        "id": _new_id("proj"),
+        "name": name,
+        "description": (description or "").strip(),
+        "status": "activ",
+        "technologies": [t.strip() for t in (technologies or "").split(",") if t.strip()],
+        "links": [],
+        "reservations": [],
+        "devlog": [],
+        "created_at": acum,
+        "updated_at": acum,
+        "plan": plan,
+    }
+    proiecte.append(proiect)
+
+    if not _save(_ELECTRONICS_PATH, data):
+        return {"status": "error",
+                "message": "N-am putut salva proiectul pe disc."}
+
+    logger.info(f"[Write] Proiect nou: {name} ({len(plan)} pasi)")
+    coada = f" cu {len(plan)} pasi" if plan else ""
+    return {"status": "ok", "id": proiect["id"], "nume": name, "pasi": len(plan),
+            "message": f"Am creat proiectul „{name}”{coada}."}
+
+
 def add_devlog(title: str, text: str = "", project: str = "") -> dict:
     """Adaugă o intrare în devlog-ul unui proiect."""
     title = (title or "").strip()
@@ -474,3 +555,54 @@ def quick_capture(text: str, kind: str = "nota") -> dict:
             return {"status": "error", "message": str(e)}
 
     return {"status": "error", "message": f"Nu știu unde să pun '{kind}'."}
+
+# ─────────────────────────────────────────────────────────────
+# DISPECER COMUN
+# ─────────────────────────────────────────────────────────────
+
+# Vocea si chatul din web ajungeau la functii diferite: vocea avea unelte de
+# scriere, textul nu avea niciuna. Cand ii cereai in scris sa creeze ceva,
+# modelul n-avea ce sa apeleze si raspundea ca a facut-o. Ambele cai trec
+# acum prin acelasi loc, deci nu mai pot diverge.
+
+KINDS = ("cheltuiala", "incasare", "reminder", "reminder_gata", "target",
+         "target_progres", "greutate", "proiect_nou", "proiect_pas",
+         "proiect_devlog", "obicei", "jurnal", "nota")
+
+
+def dispatch(kind: str, text: str = "", value=None, extra: str = "") -> dict:
+    """Executa o scriere dupa `kind`. Vezi KINDS pentru variantele acceptate."""
+    kind = (kind or "").strip().lower()
+    text = (text or "").strip()
+    extra = (extra or "").strip()
+
+    try:
+        if kind in ("cheltuiala", "incasare"):
+            return add_transaction(value, "in" if kind == "incasare" else "out",
+                                   text, extra)
+        if kind == "reminder":
+            return add_reminder(text, extra or "Med")
+        if kind == "reminder_gata":
+            return complete_reminder(text)
+        if kind == "target":
+            return add_target(text, deadline=extra)
+        if kind == "target_progres":
+            return update_target_progress(text, value or 0)
+        if kind == "greutate":
+            return log_weight(value, text)
+        if kind == "proiect_nou":
+            # `extra` = descrierea. Pasii vin separat, cand ii cere.
+            return create_project(text, extra)
+        if kind == "proiect_pas":
+            return complete_project_step(text, extra)
+        if kind == "proiect_devlog":
+            return add_devlog(text, extra)
+        if kind == "obicei":
+            return check_habit(text)
+        if kind in ("jurnal", "nota"):
+            return quick_capture(text, kind)
+    except Exception as e:
+        logger.error(f"[Write] '{kind}' a esuat: {e}", exc_info=True)
+        return {"status": "error", "message": f"N-am putut salva: {e}"}
+
+    return {"status": "error", "message": f"Tip necunoscut: {kind}"}

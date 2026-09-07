@@ -366,7 +366,7 @@ class LLMRouter:
             result = await asyncio.wait_for(
                 self._in_pool(
                     self._dispatcher.run_agents, agents, text, reasoning,
-                    data_cats, streaming, needs_web,
+                    data_cats, streaming, needs_web, plan.get("scriere"),
                 ),
                 timeout=DISPATCHER_TIMEOUT,
             )
@@ -382,7 +382,10 @@ class LLMRouter:
 
         reply = result.get("reply") or ""
         if streaming:
-            reply = await self._stream_chat(text, data_cats, needs_web)
+            # Raspunsul in flux trebuie sa stie ce s-a scris efectiv, altfel
+            # confirma actiuni care n-au avut loc.
+            reply = await self._stream_chat(text, data_cats, needs_web,
+                                            result.get("scriere"))
             result["reply"] = reply
         elif reply:
             print(f"\n🤖 Chronos: {reply}")
@@ -391,7 +394,8 @@ class LLMRouter:
         logger.info(f"⏱️  [LLMRouter] Total #{request_id}: {time.perf_counter() - start:.2f}s")
         await self._publish_reply(reply, result, request_id)
 
-    async def _stream_chat(self, text: str, data_cats, needs_web: bool = True) -> str:
+    async def _stream_chat(self, text: str, data_cats, needs_web: bool = True,
+                           scriere=None) -> str:
         """Consumă răspunsul token cu token: îl scrie pe ecran și, dacă e
         activat, îl trimite în conducta TTS în același timp."""
         collected: list = []
@@ -403,7 +407,8 @@ class LLMRouter:
             return piece
 
         source = _aiter_sync(
-            lambda: self._dispatcher.stream_chat_reply(text, data_cats, needs_web),
+            lambda: self._dispatcher.stream_chat_reply(text, data_cats, needs_web,
+                                                       scriere),
             self._agent_pool,
         )
         tapped = _amap(source, _tee)

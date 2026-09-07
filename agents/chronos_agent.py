@@ -106,6 +106,15 @@ class ChronosAgent:
         "proiect→proiecte; greutate→sport; tranzacții→tranzactii (doar explicit);\n"
         "vândut→vanzari (doar explicit). Gol la conversație obișnuită sau "
         "subiecte despre lume.\n\n"
+        "scriere = completeaz-o DOAR când îți cere să NOTEZE ceva în datele "
+        "lui (creează/adaugă/notează/bifează/am cheltuit/am terminat). "
+        "kind: cheltuiala|incasare (value=suma, text=pe ce); reminder; "
+        "reminder_gata; target; target_progres (value=0-100); greutate "
+        "(value=kg); proiect_nou (text = DOAR numele scurt, un cuvânt-două, "
+        "NIMIC din descriere; extra = TOATĂ descrierea pe care ți-o dă, "
+        "oricât de lungă); proiect_pas; proiect_devlog (text=titlu, "
+        "extra=detalii); obicei; jurnal; nota. LAS-O GOALĂ la întrebări "
+        "și la conversație — o scriere greșită strică date reale.\n\n"
         "needs_web = true DOAR dacă răspunsul cere informații actuale din lume "
         "(vreme, știri, prețuri, evenimente, program magazine). false la vorbă "
         "obișnuită, la datele lui personale și la comenzi de lumini/muzică.\n\n"
@@ -138,6 +147,23 @@ class ChronosAgent:
             # atașată la fiecare conversație, inclusiv la „ce mai zici?":
             # ~0.75s în plus și tokeni de grounding pentru nimic.
             "needs_web": {"type": "BOOLEAN"},
+            # Calea text nu putea SCRIE nimic — avea doar agenti de citire.
+            # Cand ii cereai in scris sa creeze ceva, modelul n-avea ce sa
+            # apeleze si raspundea ca a facut-o. Decizia se ia in acelasi apel
+            # de planificare, deci nu costa niciun request in plus.
+            "scriere": {
+                "type": "OBJECT",
+                "properties": {
+                    "kind": {"type": "STRING",
+                             "enum": ["cheltuiala", "incasare", "reminder",
+                                      "reminder_gata", "target", "target_progres",
+                                      "greutate", "proiect_nou", "proiect_pas",
+                                      "proiect_devlog", "obicei", "jurnal", "nota"]},
+                    "text": {"type": "STRING"},
+                    "value": {"type": "NUMBER"},
+                    "extra": {"type": "STRING"},
+                },
+            },
             "reasoning": {"type": "STRING"},
         },
         "required": ["agents", "reasoning"],
@@ -158,11 +184,12 @@ class ChronosAgent:
             # Fără plan nu știm dacă are nevoie de web → îl lăsăm pornit, ca să
             # nu pierdem capacitatea de a răspunde la ceva actual.
             return {"agents": ["general_chat"], "data_categories": [],
-                    "needs_web": True, "reasoning": ""}
+                    "needs_web": True, "reasoning": "", "scriere": None}
         result.setdefault("agents", ["general_chat"])
         result.setdefault("data_categories", [])
         result.setdefault("needs_web", False)
         result.setdefault("reasoning", "")
+        result.setdefault("scriere", None)
         return result
 
     # Păstrat sub numele vechi pentru orice apelant extern.
@@ -212,7 +239,7 @@ class ChronosAgent:
         plan = self.plan(text)
         return self.run_agents(
             plan["agents"], text, plan["reasoning"], plan["data_categories"],
-            needs_web=plan["needs_web"],
+            needs_web=plan["needs_web"], scriere=plan.get("scriere"),
         )
 
     def prepare(self, text: str) -> dict:
@@ -305,6 +332,7 @@ class ChronosAgent:
         data_cats: Optional[List[str]] = None,
         skip_chat: bool = False,
         needs_web: bool = True,
+        scriere: Optional[dict] = None,
     ) -> dict:
         """Rulează agenții ceruți și întoarce rezultatul.
 
@@ -314,6 +342,22 @@ class ChronosAgent:
         """
         actions_list: List[dict] = []
         reply_text: Optional[str] = None
+
+        # Scrierea intai: raspunsul trebuie sa stie ce s-a intamplat cu
+        # adevarat, altfel modelul confirma lucruri care n-au avut loc.
+        rezultat_scriere = None
+        if scriere and scriere.get("kind"):
+            from tools import data_write_tools as W
+            rezultat_scriere = W.dispatch(
+                scriere.get("kind", ""), scriere.get("text", "") or "",
+                scriere.get("value"), scriere.get("extra", "") or "")
+            reusit = rezultat_scriere.get("status") == "ok"
+            actions_list.append({
+                "text": ("💾 " if reusit else "❌ ") + rezultat_scriere.get("message", ""),
+                "status": "ok" if reusit else "error",
+            })
+            logger.info(f"💾 [Chronos Agent] Scriere '{scriere.get('kind')}': "
+                        f"{rezultat_scriere.get('status')}")
 
         for ag_name in agents_to_call:
             try:
@@ -340,7 +384,8 @@ class ChronosAgent:
                 elif ag_name == "general_chat":
                     if skip_chat:
                         continue
-                    reply_text = self.general_chat_reply(text, data_cats, needs_web)
+                    reply_text = self.general_chat_reply(
+                        text, data_cats, needs_web, scriere=rezultat_scriere)
                     actions_list.append({"text": "🧠 Răspuns generat.", "status": "ok"})
 
             except Exception as e:
@@ -352,6 +397,9 @@ class ChronosAgent:
             "reply": reply_text,
             "actions": actions_list,
             "reasoning": reasoning,
+            # Calea cu streaming genereaza raspunsul dupa ce iese de aici, deci
+            # are nevoie sa afle ce s-a scris ca sa nu inventeze confirmari.
+            "scriere": rezultat_scriere,
         }
         if reply_text:
             self._remember(f"Chronos: {reply_text}")
@@ -365,7 +413,8 @@ class ChronosAgent:
     # CONVERSAȚIE
     # ─────────────────────────────────────────────────────────────────────
 
-    def build_chat_prompt(self, text: str, data_cats: Optional[List[str]] = None) -> str:
+    def build_chat_prompt(self, text: str, data_cats: Optional[List[str]] = None,
+                          scriere: Optional[dict] = None) -> str:
         """Construiește promptul de conversație. Pur — niciun apel LLM.
 
         Separat de generare special ca stratul de voce să poată porni
@@ -407,6 +456,30 @@ class ChronosAgent:
             parts.append(f"\n[MEMORIE — folosește doar dacă e relevant]\n{memory}")
         if recent:
             parts.append(f"\n[ULTIMELE SCHIMBURI]\n{recent}")
+
+        # Ce s-a scris CU ADEVARAT in datele lui. Fara blocul asta, modelul
+        # confirma actiuni care nu s-au intamplat („am creat proiectul") si
+        # apoi insista ca e vina lui Sergiu.
+        if scriere:
+            reusit = scriere.get("status") == "ok"
+            parts.append(
+                "\n[CE AI FĂCUT ACUM ÎN DATELE LUI — singurul adevăr]\n"
+                + ("REUȘIT: " if reusit else "A EȘUAT: ")
+                + str(scriere.get("message", ""))
+                + ("\nConfirmă-i scurt și treci mai departe."
+                   if reusit else
+                   "\nSpune-i DIRECT că n-a mers și de ce. Nu pretinde că e gata.")
+            )
+
+        parts.append(
+            "\n[REGULĂ ABSOLUTĂ]\n"
+            "Nu spune NICIODATĂ că ai făcut, creat, salvat, adăugat sau bifat "
+            "ceva dacă nu apare explicit în [CE AI FĂCUT ACUM]. Dacă ți-a cerut "
+            "o acțiune și blocul ăla lipsește, acțiunea NU s-a executat: "
+            "spune-i sincer că n-ai făcut-o. Dacă insistă că ceva lipsește, "
+            "crede-l și verifică — nu-l contrazice."
+        )
+
         parts.append(
             f'\nSergiu îți scrie ACUM: "{text}"\n'
             "Răspunde-i direct, în română, scurt, în stilul tău. Text simplu, "
@@ -416,9 +489,10 @@ class ChronosAgent:
         return "\n".join(parts)
 
     def general_chat_reply(self, text: str, data_cats: Optional[List[str]] = None,
-                           needs_web: bool = True) -> str:
+                           needs_web: bool = True,
+                           scriere: Optional[dict] = None) -> str:
         """Răspuns de conversație, dintr-o bucată (calea sincronă)."""
-        prompt = self.build_chat_prompt(text, data_cats)
+        prompt = self.build_chat_prompt(text, data_cats, scriere)
         reply = ask_gemini_text(prompt, temperature=0.9, use_search=needs_web)
         if not reply:
             logger.warning("⚠️ [Chronos Agent] general_chat n-a generat răspuns.")
@@ -429,6 +503,7 @@ class ChronosAgent:
     def stream_chat_reply(
         self, text: str, data_cats: Optional[List[str]] = None,
         needs_web: bool = True,
+        scriere: Optional[dict] = None,
     ) -> Iterator[str]:
         """Răspuns de conversație în bucăți, pe măsură ce modelul îl produce.
 
@@ -436,7 +511,7 @@ class ChronosAgent:
         de aici vine faptul că Chronos începe să vorbească înainte de a fi
         terminat de gândit răspunsul.
         """
-        prompt = self.build_chat_prompt(text, data_cats)
+        prompt = self.build_chat_prompt(text, data_cats, scriere)
         collected: List[str] = []
         for piece in stream_gemini_text(prompt, temperature=0.9, use_search=needs_web):
             collected.append(piece)
