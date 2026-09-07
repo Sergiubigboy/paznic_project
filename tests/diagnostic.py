@@ -125,6 +125,14 @@ if lipsa_critice:
         "pip install -r requirements.txt && pip install --no-deps openwakeword")
 
 try:
+    # Scaneaza dupa placi video la fiecare import si, pe Pi, tipareste
+    # avertismente in mijlocul raportului. Nu e o eroare — doar n-are GPU.
+    import onnxruntime
+    onnxruntime.set_default_logger_severity(3)
+except Exception:
+    pass
+
+try:
     import tflite_runtime  # noqa: F401
     ok("tflite-runtime prezent.")
 except ImportError:
@@ -296,16 +304,27 @@ sectiune("8. RETEA")
 try:
     import requests
 
-    def verifica(nume, url, headers=None, timeout=6, critic=True, nota=""):
-        """critic=False -> doar avertisment; Chronos porneste si fara."""
+    def verifica(nume, url, headers=None, timeout=6, critic=True, nota="",
+                 astept=None):
+        """
+        critic=False -> doar avertisment; Chronos porneste si fara.
+        astept       -> codul asteptat. Daca il dam, orice altceva e semnalat:
+                        un serviciu care raspunde nu inseamna ca e serviciul
+                        potrivit (altceva poate asculta pe acelasi port).
+        """
         raporteaza = err if critic else warn
         try:
             r = requests.get(url, headers=headers or {}, timeout=timeout)
             if r.status_code in (401, 403):
                 raporteaza(f"{nume}: refuzat ({r.status_code}) — cheie gresita sau expirata.")
+            elif astept and r.status_code != astept:
+                raporteaza(
+                    f"{nume}: raspunde {r.status_code}, dar astept {astept}. "
+                    "Ceva e acolo, insa nu pare serviciul potrivit.",
+                    nota)
             else:
-                # Orice raspuns HTTP inseamna ca serverul e acolo. Un 404 pe
-                # radacina unui API e normal, nu o problema de retea.
+                # Fara `astept`, orice raspuns HTTP dovedeste ca serverul e
+                # acolo — un 404 pe radacina unui API e normal.
                 ok(f"{nume}: raspunde ({r.status_code}).")
         except Exception as e:
             raporteaza(f"{nume}: inaccesibil — {type(e).__name__}", nota)
@@ -324,9 +343,12 @@ try:
     # si doar tool-urile lor raporteaza esec. Nu blocheaza nimic.
     RETEA_LOCALA = "Esti pe alta retea? Nu blocheaza pornirea."
     if getattr(C, "HA_URL", "") and getattr(C, "HA_TOKEN", ""):
-        verifica("Home Assistant", C.HA_URL.rstrip("/") + "/api/",
+        # HA raspunde 200 pe /api/ cu un token valid. Orice altceva merita
+        # privit: alt serviciu pe acelasi port, sau HA inca porneste.
+        baza = C.HA_URL.split("/api/")[0].rstrip("/")
+        verifica("Home Assistant", baza + "/api/",
                  {"Authorization": f"Bearer {C.HA_TOKEN}"},
-                 critic=False, nota=RETEA_LOCALA)
+                 critic=False, nota=RETEA_LOCALA, astept=200)
     for nume, ip in (("WLED principal", getattr(C, "WLED_IP_MAIN", "")),
                      ("WLED podea", getattr(C, "WLED_IP_FLOOR", ""))):
         if ip:
