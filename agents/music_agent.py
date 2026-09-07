@@ -103,7 +103,8 @@ class MusicAgent:
         if success:
             return {"status": "success", "msg": f"Am transmis pe Spotify: {cmd}", "reason": reason}
         else:
-            return {"status": "error", "msg": f"Eroare la difuzor: {err_msg}", "reason": reason}
+            # err_msg e deja o propozitie, nu un traceback — vezi spotify_tools.
+            return {"status": "error", "msg": err_msg, "reason": reason}
 
     # ── CONTROL DIRECT — instant, ZERO apeluri LLM ──
     # process_request() (DJ-ul) face un apel Gemini ca să aleagă piesa.

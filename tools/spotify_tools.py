@@ -4,8 +4,10 @@ tools/spotify_tools.py — Spotify & Home Assistant Audio Tools
 Funcții directe pentru controlul redării pe difuzor / Spotify prin Home Assistant REST API.
 """
 
-import requests
 import logging
+import re
+
+import requests
 from config import HA_URL, HA_TOKEN
 
 logger = logging.getLogger(__name__)
@@ -22,47 +24,73 @@ SPEAKER_NAME = "Sergiu speaker"
 _was_playing_before_pause = False
 
 
+def _gazda(url: str) -> str:
+    """host:port din URL, pentru mesaje de eroare pe care le intelege un om."""
+    m = re.match(r"https?://([^/]+)", url or "")
+    return m.group(1) if m else (url or "necunoscut")
+
+
+# Cat asteptam dupa Home Assistant. Scurt intentionat: e in reteaua locala,
+# daca nu raspunde in cateva secunde nu e acolo, iar tu astepti in fata unui
+# microfon.
+_TIMEOUT = 4
+
+
 def send_google_command(command_text: str) -> tuple[bool, str]:
     """
-    Trimite o comandă vocală text către Google Assistant SDK prin Home Assistant.
-    Include retry fallback automat fără numele difuzorului dacă prima încercare returnează eroare.
+    Trimite o comanda vocala text catre Google Assistant SDK prin Home Assistant.
+
+    Daca prima incercare esueaza cu o eroare HTTP, reincearca fara numele
+    difuzorului — uneori Google nu recunoaste tinta. Daca insa esueaza
+    CONEXIUNEA, nu reincercam: acelasi host inaccesibil da acelasi rezultat,
+    doar dupa inca un timeout. (Inainte se reincerca oricum, deci asteptai
+    dublu ca sa primesti aceeasi eroare.)
     """
     headers = {
         "Authorization": f"Bearer {HA_TOKEN}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
+    gazda = _gazda(HA_URL)
 
-    # Încercarea 1: Cu nume difuzor
-    full_command = f"{command_text} on {SPEAKER_NAME}"
-    payload = {"command": full_command}
+    def _trimite(text: str) -> tuple[bool, str, bool]:
+        """(reusit, mesaj, a_fost_problema_de_retea)"""
+        try:
+            r = _session.post(HA_URL, headers=headers,
+                              json={"command": text}, timeout=_TIMEOUT)
+            if r.status_code == 200:
+                return True, "OK", False
+            if r.status_code in (401, 403):
+                return False, f"Home Assistant refuza tokenul ({r.status_code}).", False
+            return False, f"Home Assistant a raspuns {r.status_code}.", False
+        except requests.exceptions.Timeout:
+            return False, f"Home Assistant ({gazda}) nu raspunde.", True
+        except requests.exceptions.ConnectionError:
+            return False, f"Nu ajung la Home Assistant ({gazda}).", True
+        except Exception as e:
+            return False, f"Eroare la Home Assistant: {type(e).__name__}", True
 
-    last_error = ""
-    try:
-        resp = _session.post(HA_URL, headers=headers, json=payload, timeout=10)
-        if resp.status_code == 200:
-            logger.info(f"✅ [Spotify Tools] Trimis la Google: '{full_command}'")
-            return True, "OK"
-        else:
-            last_error = f"HTTP {resp.status_code}: {resp.text[:100]}"
-            logger.warning(f"⚠️ [Spotify Tools] Eroare cu nume difuzor ({last_error}). Încerc fără nume difuzor...")
-    except Exception as e:
-        last_error = str(e)
-        logger.warning(f"⚠️ [Spotify Tools] Conexiune eșuată ({last_error}). Încerc fără nume difuzor...")
+    # 1) cu numele difuzorului
+    intreg = f"{command_text} on {SPEAKER_NAME}"
+    reusit, mesaj, retea = _trimite(intreg)
+    if reusit:
+        logger.info(f"✅ [Spotify Tools] Trimis la Google: '{intreg}'")
+        return True, "OK"
 
-    # Încercarea 2: Fallback fără 'on SPEAKER_NAME'
-    try:
-        payload_simple = {"command": command_text}
-        resp2 = _session.post(HA_URL, headers=headers, json=payload_simple, timeout=10)
-        if resp2.status_code == 200:
-            logger.info(f"✅ [Spotify Tools] Trimis la Google (fallback simplu): '{command_text}'")
-            return True, "OK (fallback)"
-        else:
-            last_error = f"HTTP {resp2.status_code}: {resp2.text[:100]}"
-            logger.error(f"❌ [Spotify Tools] Eroare HA fallback: {last_error}")
-            return False, last_error
-    except Exception as e:
-        logger.error(f"❌ [Spotify Tools] Conexiune eșuată fallback: {e}")
-        return False, str(e)
+    if retea:
+        # Host mort — a doua incercare ar astepta degeaba inca un timeout.
+        logger.error(f"❌ [Spotify Tools] {mesaj}")
+        return False, mesaj
+
+    logger.warning(f"⚠️ [Spotify Tools] {mesaj} Incerc fara numele difuzorului...")
+
+    # 2) fara numele difuzorului
+    reusit, mesaj, _ = _trimite(command_text)
+    if reusit:
+        logger.info(f"✅ [Spotify Tools] Trimis la Google (fara difuzor): '{command_text}'")
+        return True, "OK (fallback)"
+
+    logger.error(f"❌ [Spotify Tools] {mesaj}")
+    return False, mesaj
 
 
 def pause_music() -> bool:
