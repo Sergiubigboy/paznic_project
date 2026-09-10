@@ -166,6 +166,83 @@ def _extract_text(data: dict) -> str:
 # API PUBLIC
 # ─────────────────────────────────────────────────────────────
 
+def _salveaza_json_taiat(raw: str) -> Optional[dict]:
+    """
+    Incearca sa recupereze un JSON retezat de `maxOutputTokens`.
+
+    Cand raspunsul se opreste in mijlocul unui sir, tot ce s-a primit pana
+    acolo e valid si de multe ori suficient — campurile importante sunt deja
+    complete, se pierde doar coada (de obicei `reasoning`). Inainte aruncam
+    tot si planul se pierdea complet.
+
+    Taiem la ultima virgula din afara unui sir, inchidem structurile ramase
+    deschise si reincercam. Daca nici asa nu iese, renuntam onest.
+    """
+    if not raw:
+        return None
+
+    in_sir = False
+    escape = False
+    stiva = []
+    ultima_taiere = -1
+
+    for i, c in enumerate(raw):
+        if escape:
+            escape = False
+            continue
+        if c == "\\":
+            escape = True
+            continue
+        if c == '"':
+            in_sir = not in_sir
+            continue
+        if in_sir:
+            continue
+        if c in "{[":
+            stiva.append(c)
+        elif c in "}]":
+            if stiva:
+                stiva.pop()
+            # Un element complet s-a inchis: de aici in sus e sigur.
+            ultima_taiere = i + 1
+        elif c == ",":
+            ultima_taiere = i
+
+    if ultima_taiere <= 0:
+        return None
+
+    bucata = raw[:ultima_taiere].rstrip().rstrip(",")
+
+    # Reconstituim inchiderile, in ordine inversa deschiderii.
+    adancime = 0
+    in_sir = False
+    escape = False
+    deschise = []
+    for c in bucata:
+        if escape:
+            escape = False
+            continue
+        if c == "\\":
+            escape = True
+            continue
+        if c == '"':
+            in_sir = not in_sir
+            continue
+        if in_sir:
+            continue
+        if c in "{[":
+            deschise.append(c)
+        elif c in "}]" and deschise:
+            deschise.pop()
+
+    coada = "".join("}" if d == "{" else "]" for d in reversed(deschise))
+    try:
+        val = json.loads(bucata + coada)
+        return val if isinstance(val, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
 def ask_gemini_json(
     system_prompt: str,
     schema: dict,
@@ -202,6 +279,13 @@ def ask_gemini_json(
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
+        salvat = _salveaza_json_taiat(raw)
+        if salvat is not None:
+            logger.warning(
+                f"⚠️ [AI Core] JSON taiat de maxOutputTokens ({model}) — "
+                f"recuperat {len(salvat)} campuri: {list(salvat)}"
+            )
+            return salvat
         logger.error(f"❌ [AI Core] JSON invalid ({model}): {e} | {raw[:200]}")
         return None
 

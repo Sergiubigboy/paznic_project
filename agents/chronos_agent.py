@@ -110,9 +110,9 @@ class ChronosAgent:
         "lui (creează/adaugă/notează/bifează/am cheltuit/am terminat). "
         "kind: cheltuiala|incasare (value=suma, text=pe ce); reminder; "
         "reminder_gata; target; target_progres (value=0-100); greutate "
-        "(value=kg); proiect_nou (text = DOAR numele scurt, un cuvânt-două, "
-        "NIMIC din descriere; extra = TOATĂ descrierea pe care ți-o dă, "
-        "oricât de lungă); proiect_pas; proiect_devlog (text=titlu, "
+        "(value=kg); proiect_nou (text = DOAR numele scurt, un cuvânt-două; "
+        "extra = LASĂ GOL, descrierea o ia sistemul din mesajul lui — NU o "
+        "copia, oricât de tentant); proiect_pas; proiect_devlog (text=titlu, "
         "extra=detalii); obicei; jurnal; nota. LAS-O GOALĂ la întrebări "
         "și la conversație — o scriere greșită strică date reale.\n\n"
         "needs_web = true DOAR dacă răspunsul cere informații actuale din lume "
@@ -348,9 +348,18 @@ class ChronosAgent:
         rezultat_scriere = None
         if scriere and scriere.get("kind"):
             from tools import data_write_tools as W
+            kind = scriere.get("kind", "")
+            extra = scriere.get("extra", "") or ""
+
+            # Descrierea unui proiect nou vine RAW din mesajul lui, nu copiata
+            # de model in JSON. Cerandu-i sa o repete, raspunsul depasea limita
+            # de output si se taia la jumatate — JSON invalid, plan pierdut,
+            # nicio scriere. Pe langa asta, textul original ajunge neatins.
+            if kind == "proiect_nou" and len(extra) < len(text) / 2:
+                extra = text.strip()
+
             rezultat_scriere = W.dispatch(
-                scriere.get("kind", ""), scriere.get("text", "") or "",
-                scriere.get("value"), scriere.get("extra", "") or "")
+                kind, scriere.get("text", "") or "", scriere.get("value"), extra)
             reusit = rezultat_scriere.get("status") == "ok"
             actions_list.append({
                 "text": ("💾 " if reusit else "❌ ") + rezultat_scriere.get("message", ""),
@@ -470,6 +479,15 @@ class ChronosAgent:
                    if reusit else
                    "\nSpune-i DIRECT că n-a mers și de ce. Nu pretinde că e gata.")
             )
+
+        parts.append(
+            "\n[CE POȚI FACE]\n"
+            "Poți scrie în datele lui: proiecte noi, remindere, obiective, "
+            "cheltuieli, greutate, pași bifați, devlog, jurnal. Când îți cere "
+            "așa ceva, se execută automat. NU refuza, nu spune că „nu e în fișa "
+            "postului” și NU-l trimite la alt AI — asta e exact treaba ta. "
+            "Dacă o acțiune n-a mers, spune ce s-a întâmplat, nu că n-o faci."
+        )
 
         parts.append(
             "\n[REGULĂ ABSOLUTĂ]\n"
