@@ -75,6 +75,7 @@ from core.tts_engine import TTSEngine
 from core.llm_router import LLMRouter
 from core.gemini_live import GeminiLiveSession
 from core import day_runner
+from core import automations
 
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 5000
@@ -464,6 +465,8 @@ async def main() -> None:
         # Programul zilei pe Telegram: anunta fiecare bloc cand incepe si
         # asculta raspunsurile tale ca sa reaseze restul zilei.
         asyncio.create_task(day_runner.run(), name="day_telegram"),
+        # Automatizările (ora fixă, răsărit/apus, alarmă, muzică, wake word).
+        asyncio.create_task(automations.get_engine().run(bus), name="automations"),
     ]
 
     # Un task critic care moare cu excepție oprește sistemul — dar prin

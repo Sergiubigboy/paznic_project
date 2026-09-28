@@ -103,6 +103,14 @@ class TimerStore:
         logger.info(f"⏰ [Timere] A SUNAT: {eticheta}")
         print(f"\n⏰ ══ {eticheta.upper()} ══\n")
         threading.Thread(target=self._ring, daemon=True).start()
+        # Automatizările „când sună alarma" (lumini, muzică...)
+        from core.automations import emit
+        emit("alarm", {"kind": item.get("kind"), "label": item.get("label", "")})
+
+    def ring(self) -> None:
+        """Sună o dată semnalul de alarmă (blocant, max RING_SECONDS). Folosit
+        de automatizări, care au propria alarmă programată."""
+        self._ring()
 
     def _ring(self) -> None:
         """Semnal sonor repetat, distinct de beep-ul de wake word."""

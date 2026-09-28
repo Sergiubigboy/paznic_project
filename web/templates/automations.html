@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% set active_page = "automations" %}
+{% set page_title = "Automatizări" %}
+{% set page_icon = "🪄" %}
+{% set page_eyebrow = "Sistem" %}
+{% set page_sub = "Când se întâmplă ceva, Chronos face o listă de lucruri — ca Shortcuts de pe iPhone." %}
+
+{% block title %}Chronos OS | Automatizări{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/automations.css') }}?v=1.0">
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-primary" id="autoNew" type="button">＋ Automatizare nouă</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="au-today" id="auToday">
+    <div class="au-today-item"><span class="au-today-ic">🌅</span><span>Răsărit <b id="auSunrise">—</b></span></div>
+    <div class="au-today-item"><span class="au-today-ic">🌇</span><span>Apus <b id="auSunset">—</b></span></div>
+    <div class="au-today-item au-today-next"><span class="au-today-ic">⏭</span><span id="auNext">Nimic programat</span></div>
+    <div class="au-today-item hidden" id="auEngineOff"><span class="au-today-ic">⚠️</span><span>Motorul nu rulează (dashboard pornit fără Chronos) — ▶ merge, programul nu.</span></div>
+</div>
+
+<div class="sec-label">Automatizările mele</div>
+<div class="au-grid" id="auGrid"></div>
+
+<div class="sec-label">Pornește de la un șablon</div>
+<div class="au-templates" id="auTemplates"></div>
+
+<!-- ═══════════ EDITOR ═══════════ -->
+<div class="modal-overlay" id="auModal">
+    <div class="modal modal-wide au-editor" role="dialog" aria-labelledby="auEdTitle">
+        <div class="au-ed-head">
+            <button class="au-icon-btn" id="auIcon" type="button" title="Schimbă iconița">⚡</button>
+            <input type="text" class="form-input au-name" id="auName" placeholder="Numele automatizării" maxlength="40">
+            <button class="cp-icon" id="auClose" type="button" aria-label="Închide">✕</button>
+        </div>
+        <div class="au-icon-grid hidden" id="auIconGrid"></div>
+
+        <!-- CÂND -->
+        <div class="au-step">
+            <div class="au-step-label"><span class="au-step-n">1</span>Când</div>
+            <div class="au-trig-grid" id="auTrigGrid"></div>
+            <div class="au-trig-opts" id="auTrigOpts"></div>
+
+            <div class="au-cond">
+                <div class="form-label">Zile</div>
+                <div class="au-days" id="auDays"></div>
+                <label class="au-check"><input type="checkbox" id="auBetweenOn"> Doar într-un interval orar</label>
+                <div class="au-between hidden" id="auBetween">
+                    între <input type="time" id="auBetweenA" value="22:00"> și <input type="time" id="auBetweenB" value="06:00">
+                </div>
+            </div>
+        </div>
+
+        <!-- FĂ ASTA -->
+        <div class="au-step">
+            <div class="au-step-label"><span class="au-step-n">2</span>Fă asta, în ordine</div>
+            <div class="au-actions" id="auActions"></div>
+            <div class="au-add">
+                <button class="btn" id="auAddBtn" type="button">＋ Adaugă acțiune</button>
+                <div class="au-add-menu hidden" id="auAddMenu"></div>
+            </div>
+        </div>
+
+        <div class="au-ed-foot">
+            <button class="btn btn-danger" id="auDelete" type="button">Șterge</button>
+            <label class="au-check au-enabled"><input type="checkbox" id="auEnabled" checked> Activă</label>
+            <button class="btn btn-primary" id="auSave" type="button">Salvează</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/automations.js') }}?v=1.0"></script>
+{% endblock %}

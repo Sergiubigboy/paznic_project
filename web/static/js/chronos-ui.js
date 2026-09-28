@@ -72,6 +72,7 @@ window.Chronos = (function () {
         { icon: '💪', label: 'Fitness',         sub: 'greutate & măsurători', href: '/gym' },
         { icon: '💰', label: 'Bani',            sub: 'conturi & investiții',  href: '/bani' },
         { icon: '⚡', label: 'Electronics Lab', sub: 'componente & proiecte', href: '/electronics' },
+        { icon: '🪄', label: 'Automatizări',    sub: 'lumini, muzică, alarme', href: '/automations' },
         { icon: '⌨️', label: 'Terminal',        sub: 'comenzi brute',         href: '/terminal' },
         { icon: '⚙️', label: 'Setări',          sub: 'fișiere & config',      href: '/settings' }
     ];

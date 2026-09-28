@@ -15,6 +15,7 @@ from tools.spotify_api import (
     now_playing, next_track, previous_track, set_volume, change_volume,
 )
 from tools.music_memory import get_memory
+from core.automations import emit as emit_automation
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ class MusicAgent:
             taste.record_play(track_saved, artist, genre)
 
         if success:
+            emit_automation("music_start", {"prompt": user_command, "track": track_saved or ""})
             return {"status": "success", "msg": f"Am transmis pe Spotify: {cmd}", "reason": reason}
         else:
             # err_msg e deja o propozitie, nu un traceback — vezi spotify_tools.
@@ -121,6 +123,8 @@ class MusicAgent:
             return {"status": "ok" if ok else "error", "msg": "Am pus pauză." if ok else "N-am putut opri."}
         if action in ("resume", "play"):
             ok = self.resume_playback()
+            if ok:
+                emit_automation("music_start", {"prompt": "", "track": ""})
             return {"status": "ok" if ok else "error", "msg": "Am dat drumul." if ok else "N-am putut porni."}
         if action == "next":
             # SEMNALUL CEL MAI VALOROS: ce rula și cât de departe era. O piesă

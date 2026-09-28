@@ -3102,6 +3102,69 @@ def wled_snapshot():
 
 
 # ==============================================================
+# AUTOMATIZĂRI — declanșator + acțiuni (vezi core/automations.py)
+# ==============================================================
+
+@app.route('/automations')
+@requires_auth
+def automations_page():
+    return render_template('automations.html', active_page='automations')
+
+
+@app.route('/api/automations', methods=['GET'])
+@requires_auth
+def automations_list():
+    from core import automations as auto
+    items = auto.load_all()
+    state = auto.load_state()
+    now = datetime.now()
+    for a in items:
+        nxt = auto.next_run(a, now)
+        a['next_run'] = nxt.isoformat(timespec='minutes') if nxt else None
+        a['trigger_text'] = auto.describe_trigger(a)
+        a['actions_text'] = [auto.describe_action(x) for x in a['actions']]
+        a['state'] = state.get(a['id'])
+    rise, sett = auto.sun_times(now.date())
+    return jsonify({
+        'automations': items,
+        'sun': {'sunrise': rise.strftime('%H:%M') if rise else None,
+                'sunset': sett.strftime('%H:%M') if sett else None},
+        'scenes': [s.get('name') for s in _load_scenes().get('scenes', []) if s.get('name')],
+        'engine': auto.get_engine().active,
+    })
+
+
+@app.route('/api/automations/save', methods=['POST'])
+@requires_auth
+def automations_save():
+    from core import automations as auto
+    r = auto.save(request.json or {})
+    return jsonify(r), (200 if r['status'] == 'ok' else 400)
+
+
+@app.route('/api/automations/delete', methods=['POST'])
+@requires_auth
+def automations_delete():
+    from core import automations as auto
+    return jsonify(auto.delete((request.json or {}).get('id', '')))
+
+
+@app.route('/api/automations/toggle', methods=['POST'])
+@requires_auth
+def automations_toggle():
+    from core import automations as auto
+    body = request.json or {}
+    return jsonify(auto.set_enabled(body.get('id', ''), bool(body.get('enabled'))))
+
+
+@app.route('/api/automations/run', methods=['POST'])
+@requires_auth
+def automations_run():
+    from core import automations as auto
+    return jsonify(auto.run_now((request.json or {}).get('id', '')))
+
+
+# ==============================================================
 # TEMA VIZUALĂ — culoarea de accent a interfeței
 # ==============================================================
 # Trei surse posibile pentru --primary (butoane, glow-uri, evidențieri):

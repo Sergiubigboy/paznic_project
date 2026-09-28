@@ -62,6 +62,10 @@ OBSIDIAN_VAULT_PATH = os.environ.get("OBSIDIAN_VAULT_PATH", "")
 # ─────────────────────────────────────────────────────────────
 WLED_IP_MAIN  = os.environ.get("WLED_IP_MAIN",  "192.168.68.101")
 WLED_IP_FLOOR = os.environ.get("WLED_IP_FLOOR", "192.168.68.102")
+
+# Unde e casa — pentru automatizările la răsărit/apus (calculate local).
+LOCATION_LAT = float(os.environ.get("LOCATION_LAT", "46.5425"))
+LOCATION_LON = float(os.environ.get("LOCATION_LON", "24.5575"))
 JBL_IP        = os.environ.get("JBL_IP",        "192.168.1.104")
 HTTP_PORT     = int(os.environ.get("HTTP_PORT",  "8000"))
 
