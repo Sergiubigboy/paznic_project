@@ -510,6 +510,27 @@ async def main() -> None:
 
     await shutdown_all(bus, audio, router, tts, live if live_ok else None, web, all_tasks)
 
+    # asyncio.run() așteaptă la final TOATE thread-urile din executorul implicit.
+    # Unul blocat într-un apel care nu se mai întoarce (s-a întâmplat: login-ul
+    # Spotify așteptând un browser) ținea procesul viu la nesfârșit, iar
+    # `systemctl restart` stătea agățat până îl omora systemd. Le dăm câteva
+    # secunde; dacă tot nu termină, ieșim oricum — curățenia e deja făcută.
+    # (Nu `wait_for(loop.shutdown_default_executor())`: acela face join blocant
+    # pe thread chiar și după timeout.)
+    executor = getattr(asyncio.get_running_loop(), "_default_executor", None)
+    if executor is not None:
+        executor.shutdown(wait=False)             # thread-urile libere ies singure
+        workers = list(getattr(executor, "_threads", ()))
+        capat = time.monotonic() + 3.0
+        while any(t.is_alive() for t in workers) and time.monotonic() < capat:
+            await asyncio.sleep(0.1)
+        blocate = [t.name for t in workers if t.is_alive()]
+        if blocate:
+            logger.warning(f"⚠️ [Shutdown] Thread-uri blocate ({', '.join(blocate)}) — ies forțat.")
+            logging.shutdown()
+            sys.stdout.flush()
+            os._exit(0)
+
 
 # =============================================================================
 # ENTRY POINT
