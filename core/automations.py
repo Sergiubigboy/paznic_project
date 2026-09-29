@@ -76,6 +76,11 @@ GRACE_S = 120
 MAX_SLEEP_S = 300
 # Un wake word spus de trei ori în zece secunde nu trebuie să ruleze de trei ori.
 EVENT_COOLDOWN_S = 20
+# O acțiune care nu termină în atât e abandonată: automatizarea merge mai
+# departe și nu rămâne „în lucru" la nesfârșit. (Se întâmplase: login-ul
+# Spotify a așteptat un browser o zi întreagă și Trezirea a fost sărită.)
+# Thread-ul blocat nu poate fi omorât din Python, dar nu mai ține nimic ocupat.
+ACTION_TIMEOUT_S = 90
 
 # Setat cât timp rulează acțiunile unei automatizări. `asyncio.to_thread`
 # copiază contextul în thread-ul de lucru, deci și MusicAgent îl vede: muzica
@@ -480,8 +485,14 @@ def _run_action_sync(action: dict) -> tuple:
             r = set_volume(action["percent"])
             if r.get("status") == "ok":
                 return True, f"volum {action['percent']}%"
+            if "indisponibil" in str(r.get("message", "")):
+                break                     # API-ul nu e autorizat — n-are rost să reîncercăm
             time.sleep(2.5)
-        return False, r.get("message", "volum eșuat")
+        # Plan B: aceeași cale prin care pornește și muzica (Google Assistant).
+        from tools.spotify_tools import send_google_command
+        ok, msg = send_google_command(f"set volume to {action['percent']} percent")
+        return (True, f"volum {action['percent']}% (Google)") if ok else \
+            (False, r.get("message") or msg or "volum eșuat")
 
     if kind == "ring":
         from tools.timers import get_store
@@ -554,7 +565,12 @@ class AutomationEngine:
                     await asyncio.sleep(action["seconds"])
                     continue
                 try:
-                    ok, msg = await asyncio.to_thread(_run_action_sync, action)
+                    ok, msg = await asyncio.wait_for(
+                        asyncio.to_thread(_run_action_sync, action), timeout=ACTION_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    logger.error(f"❌ [Automatizări] {action['type']} blocată peste "
+                                 f"{ACTION_TIMEOUT_S}s — trec mai departe.")
+                    ok, msg = False, f"{action['type']}: nu a răspuns în {ACTION_TIMEOUT_S}s"
                 except Exception as e:
                     logger.error(f"❌ [Automatizări] {action['type']}: {e}", exc_info=True)
                     ok, msg = False, f"{action['type']}: {type(e).__name__}"

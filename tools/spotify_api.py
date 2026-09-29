@@ -42,8 +42,47 @@ def playback_control_available() -> bool:
     return not _restricted_device
 
 
+def _build_oauth():
+    """SpotifyOAuth configurat din .env, sau None dacă lipsesc credențialele.
+
+    `open_browser=False` e obligatoriu: cu True, la primul apel fără token
+    spotipy deschide un browser și pornește un server local pe portul din
+    redirect_uri, apoi AȘTEAPTĂ LA NESFÂRȘIT redirectul. Pe Pi, într-un
+    serviciu systemd, asta a blocat o automatizare o zi întreagă și a deschis
+    pagina de login Spotify peste dashboard-ul de pe ecran."""
+    from spotipy.oauth2 import SpotifyOAuth
+    from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI
+
+    if not (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET and SPOTIFY_REDIRECT_URI):
+        return None
+    _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return SpotifyOAuth(
+        client_id=SPOTIFY_CLIENT_ID,
+        client_secret=SPOTIFY_CLIENT_SECRET,
+        redirect_uri=SPOTIFY_REDIRECT_URI,
+        scope=_SCOPE,
+        cache_path=str(_CACHE_PATH),
+        open_browser=False,
+    )
+
+
+def _has_token(auth_manager) -> bool:
+    """Există un token valid (sau reînnoibil) în cache? Nu cere NICIODATĂ login."""
+    try:
+        return bool(auth_manager.validate_token(auth_manager.cache_handler.get_cached_token()))
+    except Exception as e:
+        logger.debug(f"[Spotify API] Nu pot valida tokenul din cache: {e}")
+        return False
+
+
 def _get_client():
-    """Lazy singleton — inițializează clientul Spotify (+ OAuth) la prima utilizare."""
+    """Lazy singleton — clientul Spotify, DOAR dacă există deja un token.
+
+    Fără token nu încercăm autorizarea de aici (ar bloca în așteptarea unui
+    login); raportăm o dată și lăsăm fallback-ul pe Google Assistant.
+    Autorizarea se face o singură dată, din terminal:
+        python -m tools.spotify_api auth
+    """
     global _sp, _sp_init_failed
     if _sp is not None:
         return _sp
@@ -52,24 +91,18 @@ def _get_client():
 
     try:
         import spotipy
-        from spotipy.oauth2 import SpotifyOAuth
-        from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI
-
-        if not (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET and SPOTIFY_REDIRECT_URI):
+        auth_manager = _build_oauth()
+        if auth_manager is None:
             logger.warning("⚠️ [Spotify API] Credențiale lipsă în .env — control direct dezactivat.")
             _sp_init_failed = True
             return None
-
-        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        auth_manager = SpotifyOAuth(
-            client_id=SPOTIFY_CLIENT_ID,
-            client_secret=SPOTIFY_CLIENT_SECRET,
-            redirect_uri=SPOTIFY_REDIRECT_URI,
-            scope=_SCOPE,
-            cache_path=str(_CACHE_PATH),
-            open_browser=True,
-        )
-        _sp = spotipy.Spotify(auth_manager=auth_manager)
+        if not _has_token(auth_manager):
+            logger.warning("⚠️ [Spotify API] Neautorizat pe mașina asta — control direct "
+                           "dezactivat. Rulează o dată: python -m tools.spotify_api auth "
+                           "(apoi repornește Chronos).")
+            _sp_init_failed = True
+            return None
+        _sp = spotipy.Spotify(auth_manager=auth_manager, requests_timeout=6, retries=1)
         logger.info("✅ [Spotify API] Client inițializat.")
         return _sp
     except Exception as e:
@@ -241,3 +274,34 @@ def change_volume(delta: int) -> dict:
     if current is None:
         return {"status": "error", "message": "Nu pot citi volumul curent."}
     return set_volume(current + delta)
+
+
+# ─────────────────────────────────────────────────────────────
+# AUTORIZARE (o singură dată, din terminal)
+# ─────────────────────────────────────────────────────────────
+#     python -m tools.spotify_api auth    → autorizează și salvează tokenul
+#     python -m tools.spotify_api         → verifică dacă merge (ce cântă)
+#
+# Merge și pe Pi fără ecran: deschizi linkul afișat pe telefon/PC, aprobi,
+# browserul te duce pe o pagină 127.0.0.1 care NU se încarcă — e normal.
+# Copiezi adresa COMPLETĂ din bara browserului și o lipești în terminal.
+
+if __name__ == "__main__":
+    import sys
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if sys.argv[1:] == ["auth"]:
+        oauth = _build_oauth()
+        if oauth is None:
+            sys.exit("Lipsesc SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET în .env.")
+        if _has_token(oauth):
+            print(f"Ești deja autorizat (token în {_CACHE_PATH}).")
+        else:
+            print("Deschide linkul de mai jos, aprobă, apoi lipește aici adresa completă "
+                  "a paginii la care ai ajuns (chiar dacă nu se încarcă).\n")
+            print(oauth.get_authorize_url() + "\n")
+            url = input("Adresa: ").strip()
+            oauth.get_access_token(oauth.parse_response_code(url), as_dict=False)
+            print(f"✅ Autorizat. Token salvat în {_CACHE_PATH}. Repornește Chronos.")
+    else:
+        print(now_playing())
