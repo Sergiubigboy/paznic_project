@@ -195,6 +195,14 @@
 .au-trig-opts:empty { display: none; }
 .au-trig-opts .form-hint { width: 100%; margin: 0; }
 
+.au-time { display: inline-flex; align-items: center; gap: 4px; }
+.au-time-x {
+    width: 24px; height: 24px; border-radius: 7px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--text-muted); font-size: 11px; cursor: pointer;
+}
+.au-time-x:hover { color: var(--text); background: rgba(255,255,255,.06); }
+
 .au-cond { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .au-days { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
 .au-day {

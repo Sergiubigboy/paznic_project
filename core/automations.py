@@ -68,6 +68,7 @@ ACTIONS = ("lights", "scene", "music", "music_control", "volume",
 
 MAX_AUTOMATIONS = 50
 MAX_ACTIONS = 20
+MAX_TIMES = 12
 MAX_WAIT_S = 3600
 MAX_FADE_S = 6000          # WLED `tt` e în zecimi de secundă, plafon 65535
 # Dacă procesul pornește la 06:41 pentru o automatizare de 06:40, o mai rulăm.
@@ -228,10 +229,12 @@ def _normalize_trigger(t: dict) -> tuple:
     if kind not in TRIGGERS:
         return None, "Declanșator necunoscut."
     if kind == "time":
-        at = _hhmm(t.get("at"))
-        if not at:
+        # Mai multe ore pe aceeași automatizare (ex. mese la 10, 13, 16, 19).
+        raw = t.get("times") or [t.get("at")]
+        times = sorted({x for x in (_hhmm(v) for v in raw) if x})[:MAX_TIMES]
+        if not times:
             return None, "Ora trebuie să fie HH:MM."
-        return {"type": "time", "at": at}, None
+        return {"type": "time", "at": times[0], "times": times}, None
     if kind == "sun":
         ev = t.get("event") if t.get("event") in ("sunrise", "sunset") else "sunset"
         return {"type": "sun", "event": ev,
@@ -389,18 +392,21 @@ def conditions_ok(auto: dict, now: datetime) -> bool:
     return True
 
 
-def occurrence(auto: dict, day: date) -> Optional[datetime]:
-    """Momentul în care o automatizare programată ar rula în ziua dată
-    (fără să țină cont de condiții). None pentru declanșatoarele pe eveniment."""
+def occurrences(auto: dict, day: date) -> list:
+    """Momentele în care o automatizare programată ar rula în ziua dată, în
+    ordine (fără condiții). Gol pentru declanșatoarele pe eveniment."""
     t = auto.get("trigger") or {}
     if t.get("type") == "time":
-        h, m = t["at"].split(":")
-        return datetime.combine(day, datetime.min.time()).replace(hour=int(h), minute=int(m))
+        out = []
+        for hhmm in t.get("times") or [t["at"]]:
+            h, m = hhmm.split(":")
+            out.append(datetime.combine(day, datetime.min.time()).replace(hour=int(h), minute=int(m)))
+        return sorted(out)
     if t.get("type") == "sun":
         rise, sett = sun_times(day)
         base = rise if t.get("event") == "sunrise" else sett
-        return base + timedelta(minutes=t.get("offset_min", 0)) if base else None
-    return None
+        return [base + timedelta(minutes=t.get("offset_min", 0))] if base else []
+    return []
 
 
 def next_run(auto: dict, now: Optional[datetime] = None) -> Optional[datetime]:
@@ -409,9 +415,9 @@ def next_run(auto: dict, now: Optional[datetime] = None) -> Optional[datetime]:
         return None
     now = now or datetime.now()
     for offset in range(0, 9):
-        occ = occurrence(auto, now.date() + timedelta(days=offset))
-        if occ and occ > now and conditions_ok(auto, occ):
-            return occ
+        for occ in occurrences(auto, now.date() + timedelta(days=offset)):
+            if occ > now and conditions_ok(auto, occ):
+                return occ
     return None
 
 
@@ -430,8 +436,32 @@ def _dj():
     return _music_agent
 
 
+# WLED ține durata tranziției pe 16 biți, în milisecunde: peste ~65s se
+# trunchiază (600s deveneau ~10s, adică „fade-ul nu merge"). Până la limita asta
+# lăsăm WLED-ul să facă fade-ul singur; peste ea, îl face Chronos în pași,
+# fiecare pas netezit de o tranziție WLED scurtă.
+NATIVE_FADE_MAX_S = 60
+FADE_STEP_S = 10
+
+
+def _zone_ips(zone: str) -> list:
+    from config import WLED_IP_MAIN, WLED_IP_FLOOR
+    return [ip for z, ip in (("main", WLED_IP_MAIN), ("floor", WLED_IP_FLOOR))
+            if zone in ("all", z) and ip]
+
+
+def _wled_state(ip: str) -> Optional[dict]:
+    import requests
+    try:
+        r = requests.get(f"http://{ip}/json/state", timeout=2)
+        return r.json() if r.status_code == 200 else None
+    except Exception:
+        return None
+
+
 def _lights_payload(action: dict) -> dict:
-    tt = {"tt": action["fade_s"] * 10} if action.get("fade_s") else {}
+    fade = action.get("fade_s") or 0
+    tt = {"tt": fade * 10} if 0 < fade <= NATIVE_FADE_MAX_S else {}
     if action["mode"] == "off":
         return {"on": False, **tt}
     payload = {"on": True, "bri": round(action.get("brightness", 70) * 255 / 100), **tt}
@@ -446,14 +476,11 @@ def _run_action_sync(action: dict) -> tuple:
     kind = action["type"]
 
     if kind == "lights":
-        from config import WLED_IP_MAIN, WLED_IP_FLOOR
         from tools.scene_tools import snapshot_lights
         from tools.wled_tools import send_wled_payload
         snapshot_lights("starea de dinainte de automatizare")
         payload = _lights_payload(action)
-        zone = action.get("zone", "all")
-        ips = [ip for z, ip in (("main", WLED_IP_MAIN), ("floor", WLED_IP_FLOOR))
-               if zone in ("all", z)]
+        ips = _zone_ips(action.get("zone", "all"))
         ok = [send_wled_payload(ip, payload) for ip in ips]
         return any(ok), "lumini " + ("ok" if all(ok) else f"{sum(ok)}/{len(ok)} zone")
 
@@ -520,11 +547,15 @@ class AutomationEngine:
     """Rulează în bucla asyncio a lui main_async. Dashboard-ul (alt thread)
     vorbește cu el doar prin `notify_changed()` și `run_now()`."""
 
-    def __init__(self):
+    def __init__(self, ephemeral: bool = False):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._changed: Optional[asyncio.Event] = None
         self._running: set = set()
         self._last_event: dict = {}          # id -> monotonic, pentru cooldown
+        self._fades: dict = {}               # ip -> Task cu fade-ul lung în curs
+        # Un motor „efemer" (CLI, ▶ fără Chronos pornit) trăiește cât un
+        # asyncio.run(): trebuie să aștepte fade-urile, altfel le omoară la ieșire.
+        self._ephemeral = ephemeral
 
     @property
     def active(self) -> bool:
@@ -548,6 +579,73 @@ class AutomationEngine:
         asyncio.run_coroutine_threadsafe(self.run_automation(auto, reason), self._loop)
         return True
 
+    # ── Fade lung (făcut de Chronos) ──
+
+    def _cancel_fades(self, ips: list) -> None:
+        for ip in ips:
+            task = self._fades.pop(ip, None)
+            if task and not task.done():
+                task.cancel()
+
+    async def _fade_zone(self, ip: str, action: dict) -> None:
+        """Fade în pași pe o zonă. Curbă pătratică: la început urcă foarte încet
+        (ca un răsărit — ochiul e sensibil la lumină puțină), apoi mai repede.
+        Dacă între timp cineva schimbă luminile (chat, voce, aplicația WLED),
+        fade-ul se oprește și nu i le mai ia înapoi."""
+        from tools.wled_tools import send_wled_payload
+        send = lambda p: asyncio.to_thread(send_wled_payload, ip, p)
+        fade = action["fade_s"]
+        steps = max(2, round(fade / FADE_STEP_S))
+        step_s = fade / steps
+        tt = min(int(step_s * 10), NATIVE_FADE_MAX_S * 10)
+
+        if action["mode"] == "off":
+            st = await asyncio.to_thread(_wled_state, ip)
+            if not st or not st.get("on"):
+                return
+            start, target = st.get("bri", 128), 0
+        else:
+            start, target = 1, round(action.get("brightness", 70) * 255 / 100)
+            first = {k: v for k, v in _lights_payload(action).items() if k != "tt"}
+            if not await send({**first, "bri": 1, "tt": 0}):
+                return
+
+        last = start
+        try:
+            for i in range(1, steps + 1):
+                if i > 1:
+                    st = await asyncio.to_thread(_wled_state, ip)
+                    if st is not None and (not st.get("on") or abs(st.get("bri", last) - last) > 2):
+                        logger.info(f"✋ [Automatizări] Luminile de pe {ip} au fost schimbate "
+                                    f"între timp — opresc fade-ul.")
+                        return
+                p = i / steps
+                b = round(start + (target - start) * p * p) if target > start \
+                    else round(target + (start - target) * (1 - p) ** 2)
+                if i == steps and action["mode"] == "off":
+                    await send({"on": False, "tt": tt})
+                    return
+                last = max(1, b)
+                await send({"bri": last, "tt": tt})
+                await asyncio.sleep(step_s)
+        finally:
+            if self._fades.get(ip) is asyncio.current_task():
+                self._fades.pop(ip, None)
+
+    async def _start_lights(self, action: dict) -> tuple:
+        ips = _zone_ips(action.get("zone", "all"))
+        self._cancel_fades(ips)                  # o comandă nouă bate fade-ul vechi
+        if action.get("fade_s", 0) <= NATIVE_FADE_MAX_S:
+            return await asyncio.wait_for(asyncio.to_thread(_run_action_sync, action),
+                                          timeout=ACTION_TIMEOUT_S)
+        from tools.scene_tools import snapshot_lights
+        await asyncio.to_thread(snapshot_lights, "starea de dinainte de automatizare")
+        for ip in ips:
+            self._fades[ip] = asyncio.ensure_future(self._fade_zone(ip, action))
+        # Fade-ul merge în fundal: acțiunile următoare (muzică, alarmă) pornesc
+        # imediat. Pentru „după fade", pune un „Așteaptă" de aceeași durată.
+        return True, f"lumini: fade {_durata(action['fade_s'])} pornit"
+
     # ── Execuție ──
 
     async def run_automation(self, auto: dict, reason: str) -> tuple:
@@ -565,8 +663,11 @@ class AutomationEngine:
                     await asyncio.sleep(action["seconds"])
                     continue
                 try:
-                    ok, msg = await asyncio.wait_for(
-                        asyncio.to_thread(_run_action_sync, action), timeout=ACTION_TIMEOUT_S)
+                    if action["type"] == "lights":
+                        ok, msg = await self._start_lights(action)
+                    else:
+                        ok, msg = await asyncio.wait_for(
+                            asyncio.to_thread(_run_action_sync, action), timeout=ACTION_TIMEOUT_S)
                 except asyncio.TimeoutError:
                     logger.error(f"❌ [Automatizări] {action['type']} blocată peste "
                                  f"{ACTION_TIMEOUT_S}s — trec mai departe.")
@@ -582,6 +683,8 @@ class AutomationEngine:
         summary = "; ".join(results) or "gata"
         _record_run(aid, all_ok, summary, reason)
         logger.info(f"{'✅' if all_ok else '⚠️'} [Automatizări] '{auto['name']}': {summary}")
+        if self._ephemeral and self._fades:
+            await asyncio.gather(*self._fades.values(), return_exceptions=True)
         return all_ok, summary
 
     async def _on_event(self, kind: str, data: dict) -> None:
@@ -615,11 +718,10 @@ class AutomationEngine:
                 if not auto.get("enabled", True) or auto["trigger"]["type"] not in ("time", "sun"):
                     continue
                 # Și ieri: o automatizare de 23:59 are fereastra de grație după miezul nopții.
-                for day in (now.date(), now.date() - timedelta(days=1)):
-                    occ = occurrence(auto, day)
-                    if not (occ and occ <= now < occ + timedelta(seconds=GRACE_S)
-                            and conditions_ok(auto, occ)):
-                        continue
+                due = [occ for day in (now.date(), now.date() - timedelta(days=1))
+                       for occ in occurrences(auto, day)
+                       if occ <= now < occ + timedelta(seconds=GRACE_S) and conditions_ok(auto, occ)]
+                for occ in due[-1:]:
                     last = (state.get(auto["id"]) or {}).get("last_run", "")
                     if last < occ.isoformat(timespec="seconds"):
                         # Scris înainte de rulare: o automatizare lungă (cu
@@ -692,7 +794,7 @@ def run_now(auto_id: str) -> dict:
         return {"status": "error", "message": "Nu există."}
     if get_engine().submit(auto, "manual"):
         return {"status": "ok", "message": f"Am pornit „{auto['name']}”."}
-    threading.Thread(target=lambda: asyncio.run(AutomationEngine().run_automation(auto, "manual")),
+    threading.Thread(target=lambda: asyncio.run(AutomationEngine(ephemeral=True).run_automation(auto, "manual")),
                      daemon=True, name="automation-manual").start()
     return {"status": "ok", "message": f"Am pornit „{auto['name']}”."}
 
@@ -708,7 +810,7 @@ def describe_trigger(auto: dict) -> str:
     t = auto.get("trigger") or {}
     kind = t.get("type")
     if kind == "time":
-        s = f"la {t['at']}"
+        s = "la " + ", ".join(t.get("times") or [t["at"]])
     elif kind == "sun":
         ev = "răsărit" if t.get("event") == "sunrise" else "apus"
         off = t.get("offset_min", 0)
@@ -814,11 +916,12 @@ def main(argv=None) -> None:
         auto = find(args.query)
         if not auto:
             sys.exit(f"N-am găsit „{args.query}”.")
-        ok, msg = asyncio.run(AutomationEngine().run_automation(auto, "cli"))
+        ok, msg = asyncio.run(AutomationEngine(ephemeral=True).run_automation(auto, "cli"))
         print(("✅ " if ok else "⚠️ ") + msg)
     elif args.cmd == "fire":
         async def _fire():
             eng = get_engine()
+            eng._ephemeral = True
             eng._loop = asyncio.get_running_loop()
             eng._changed = asyncio.Event()
             await eng._on_event(args.kind, {"kind": "alarm", "label": args.label})

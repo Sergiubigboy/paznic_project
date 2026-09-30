@@ -22,11 +22,11 @@
         notify:        { icon: '📨', label: 'Mesaj Telegram',  make: () => ({ type: 'notify', text: '' }) },
     };
     const DAYS = ['Lu', 'Ma', 'Mi', 'Jo', 'Vi', 'Sâ', 'Du'];
-    const ICONS = ['⚡', '🌅', '🌇', '🌙', '☀️', '⏰', '🎵', '🎧', '💡', '🛏️', '☕', '🏋️', '📚', '🎮', '🍿', '🧘', '🚿', '🔥', '❄️', '🎙️'];
+    const ICONS = ['⚡', '🍗', '💊', '💧', '🌅', '🌇', '🌙', '☀️', '⏰', '🎵', '🎧', '💡', '🛏️', '☕', '🏋️', '📚', '🎮', '🍿', '🧘', '🚿', '🔥', '❄️', '🎙️'];
 
     const TEMPLATES = [
         { icon: '🌅', name: 'Trezire', sub: '06:40 L-V · lumină caldă în fade, alarmă, muzică',
-          trigger: { type: 'time', at: '06:40' }, days: [0, 1, 2, 3, 4],
+          trigger: { type: 'time', at: '06:40', times: ['06:40'] }, days: [0, 1, 2, 3, 4],
           actions: [
               { type: 'lights', mode: 'color', color: '#ffb46b', brightness: 80, fade_s: 600, zone: 'all' },
               { type: 'wait', seconds: 600 },
@@ -46,8 +46,11 @@
         { icon: '🌙', name: 'Jarvis noaptea', sub: 'Wake word între 23-06 → lumină slabă jos',
           trigger: { type: 'wake_word' }, between: ['23:00', '06:00'],
           actions: [{ type: 'lights', mode: 'color', color: '#ff7a3d', brightness: 8, fade_s: 1, zone: 'floor' }] },
+        { icon: '🍗', name: 'Mese bulk', sub: 'Mesaj pe Telegram la 9, 12, 15, 18, 21',
+          trigger: { type: 'time', at: '09:00', times: ['09:00', '12:00', '15:00', '18:00', '21:00'] },
+          actions: [{ type: 'notify', text: '🍗 Masa! Bulk-ul nu se face singur — mănâncă acum și bea apă.' }] },
         { icon: '🛏️', name: 'Noapte bună', sub: '00:30 · pauză muzică, stinge în 1 min',
-          trigger: { type: 'time', at: '00:30' },
+          trigger: { type: 'time', at: '00:30', times: ['00:30'] },
           actions: [{ type: 'music_control', action: 'pause' }, { type: 'lights', mode: 'off', fade_s: 60, zone: 'all' }] },
     ];
 
@@ -141,7 +144,7 @@
     // ─────────────── EDITOR ───────────────
 
     function blank() {
-        return { name: '', icon: '⚡', enabled: true, trigger: { type: 'time', at: '07:00' }, days: [], between: null, actions: [] };
+        return { name: '', icon: '⚡', enabled: true, trigger: { type: 'time', at: '07:00', times: ['07:00'] }, days: [], between: null, actions: [] };
     }
 
     function openEditor(auto) {
@@ -175,7 +178,12 @@
 
         const o = $('auTrigOpts');
         if (t.type === 'time') {
-            o.innerHTML = `La ora <input type="time" data-t="at" value="${esc(t.at || '07:00')}">`;
+            const times = t.times && t.times.length ? t.times : [t.at || '07:00'];
+            o.innerHTML = 'La ora ' + times.map((v, i) => `
+                <span class="au-time"><input type="time" data-t="time" value="${esc(v)}">${times.length > 1
+                    ? `<button type="button" class="au-time-x" data-time-del="${i}" title="Scoate ora">✕</button>` : ''}</span>`).join('') +
+                (times.length < 12 ? '<button type="button" class="btn btn-sm" data-time-add>＋ încă o oră</button>' : '') +
+                '<div class="form-hint">Poți pune mai multe ore — rulează la fiecare (ex. remindere de mese).</div>';
         } else if (t.type === 'sun') {
             const off = t.offset_min || 0;
             o.innerHTML = `
@@ -203,7 +211,11 @@
     function readTrigger() {
         const t = STATE.editing.trigger, o = $('auTrigOpts');
         const v = (k) => o.querySelector(`[data-t="${k}"]`)?.value;
-        if (t.type === 'time') t.at = v('at') || '07:00';
+        if (t.type === 'time') {
+            const times = [...o.querySelectorAll('[data-t="time"]')].map((x) => x.value).filter(Boolean);
+            t.times = times.length ? times : ['07:00'];
+            t.at = t.times[0];
+        }
         if (t.type === 'sun') t.offset_min = (parseInt(v('offset_abs'), 10) || 0) * parseInt(v('offset_dir') || '1', 10);
         if (t.type === 'alarm') t.label = (v('label') || '').trim();
     }
@@ -228,7 +240,8 @@
                     (a.mode === 'color' ? `<input type="color" data-a="${i}" data-k="color" value="${esc(a.color || '#ffb46b')}">` : '') +
                     (a.mode !== 'off' ? `<input type="range" min="1" max="100" data-a="${i}" data-k="brightness" value="${a.brightness || 70}"><span class="au-val" data-val="${i}">${a.brightness || 70}%</span>` : '') +
                     `<span>fade</span><input type="number" class="au-num" min="0" max="100" data-a="${i}" data-k="fade_min" value="${fadeMin}"> min
-                     <input type="number" class="au-num" min="0" max="59" data-a="${i}" data-k="fade_sec" value="${fadeSec}"> s`;
+                     <input type="number" class="au-num" min="0" max="59" data-a="${i}" data-k="fade_sec" value="${fadeSec}"> s
+                     <div class="form-hint" style="width:100%">Fade = pornesc/se sting treptat în timpul ăsta (0 = instant). Merge în fundal: pașii următori încep imediat — pentru „după fade”, pune un „Așteaptă” de aceeași durată.</div>`;
             }
             case 'scene':
                 return STATE.scenes.length
@@ -366,16 +379,25 @@
             readTrigger();
             const type = b.dataset.trig, prev = STATE.editing.trigger;
             if (prev.type === type) return;
-            STATE.editing.trigger = type === 'time' ? { type, at: prev.at || '07:00' }
+            STATE.editing.trigger = type === 'time' ? { type, at: prev.at || '07:00', times: prev.times || [prev.at || '07:00'] }
                 : type === 'sun' ? { type, event: 'sunset', offset_min: 0 }
                 : type === 'alarm' ? { type, label: '' } : { type };
             renderTriggers();
         });
         $('auTrigOpts').addEventListener('click', (e) => {
-            const b = e.target.closest('[data-sun]');
-            if (!b) return;
+            const t = STATE.editing.trigger;
+            const sun = e.target.closest('[data-sun]');
+            const add = e.target.closest('[data-time-add]');
+            const del = e.target.closest('[data-time-del]');
+            if (!sun && !add && !del) return;
             readTrigger();
-            STATE.editing.trigger.event = b.dataset.sun;
+            if (sun) t.event = sun.dataset.sun;
+            if (add) {
+                const last = t.times[t.times.length - 1] || '07:00';
+                const [h, m] = last.split(':').map(Number);
+                t.times.push(`${String((h + 3) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+            }
+            if (del) t.times.splice(+del.dataset.timeDel, 1);
             renderTriggers();
         });
 
