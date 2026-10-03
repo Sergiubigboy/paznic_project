@@ -23,6 +23,23 @@
 .journal-lock-sub { font-size: 13px; color: var(--text-muted); margin: 4px 0 16px; }
 .journal-lock-form { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; max-width: 420px; margin: 0 auto; }
 .journal-lock-form input { flex: 1 1 180px; }
+.jm-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.jm-head h3 { margin: 0 !important; }
+.jm-mode { margin-left: auto; display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 3px; background: rgba(255,255,255,.03); }
+.jm-mode-btn { border: none; background: transparent; color: var(--text-muted); font-size: 12.5px; font-weight: 700; padding: 6px 12px; border-radius: 999px; cursor: pointer; }
+.jm-mode-btn.active { background: var(--primary-soft); color: #fff; }
+.jm-range { display: flex; flex-direction: column; gap: 9px; margin-bottom: 10px; }
+.jm-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.jm-dates { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-muted); }
+.jm-dates label { display: inline-flex; align-items: center; gap: 7px; }
+.jm-dates input { width: auto !important; padding: 7px 10px !important; color-scheme: dark; }
+#jmText { min-height: 150px; }
+.jm-day { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 8px; background: rgba(255,255,255,.02); }
+.jm-day.empty { opacity: .6; border-style: dashed; }
+.jm-day-label { font-size: 12px; font-weight: 800; color: var(--text-soft); text-transform: capitalize; margin-bottom: 6px; display: flex; gap: 8px; }
+.jm-day-label .jm-state { margin-left: auto; font-weight: 600; color: var(--text-faint); text-transform: none; }
+.jm-day textarea { min-height: 64px; font-size: 14px; }
+.jm-judge { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-soft); margin-top: 6px; cursor: pointer; }
 .journal-lock-err { color: var(--red); font-size: 12.5px; min-height: 18px; margin-top: 8px; }
 </style>
 {% endblock %}
@@ -36,8 +53,45 @@
 
             <!-- Input Card -->
             <div class="journal-input-card">
-                <h3>✏️ Adaugă în Jurnal</h3>
+                <div class="jm-head">
+                    <h3>✏️ Adaugă în Jurnal</h3>
+                    <div class="jm-mode" role="tablist">
+                        <button type="button" class="jm-mode-btn active" data-jmode="single">O zi</button>
+                        <button type="button" class="jm-mode-btn" data-jmode="multi">Mai multe zile</button>
+                    </div>
+                </div>
 
+                <!-- ═══ MAI MULTE ZILE ═══ -->
+                <div class="jm-multi hidden" id="jmMulti">
+                    <div class="jm-range">
+                        <div class="jm-chips">
+                            <button type="button" class="date-quick-btn" data-jrange="thisweek">Săptămâna asta</button>
+                            <button type="button" class="date-quick-btn" data-jrange="lastweek">Săpt. trecută</button>
+                            <button type="button" class="date-quick-btn" data-jrange="last3">Ultimele 3 zile</button>
+                        </div>
+                        <div class="jm-dates">
+                            <label>de la <input type="date" id="jmFrom" class="form-input"></label>
+                            <label>până la <input type="date" id="jmTo" class="form-input"></label>
+                        </div>
+                    </div>
+                    <textarea id="jmText" placeholder="Scrie liber despre toată perioada — „luni am fost la sală, marți și miercuri…, toată săptămâna am dormit prost”. Chronos o împarte pe zile și îți arată înainte să salveze."></textarea>
+                    <div class="btn-row" style="margin-top:12px">
+                        <button type="button" class="btn btn-primary" id="jmSplitBtn">✨ Împarte pe zile</button>
+                    </div>
+
+                    <div class="jm-preview hidden" id="jmPreview">
+                        <div class="form-label" style="margin:16px 0 8px">Verifică fiecare zi (poți modifica sau lăsa gol)</div>
+                        <div id="jmDays"></div>
+                        <label class="jm-judge"><input type="checkbox" id="jmJudge" checked> Analizează zilele după salvare (scoruri, rezumat)</label>
+                        <div class="btn-row" style="margin-top:12px">
+                            <button type="button" class="btn btn-primary" id="jmSaveBtn">💾 Salvează</button>
+                            <button type="button" class="btn btn-ghost" id="jmBackBtn">Înapoi la text</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══ O ZI ═══ -->
+                <div id="jmSingle">
                 <textarea id="newEntryText" placeholder="Ce s-a întâmplat azi? Cum te simți? Scrie liber..."></textarea>
 
                 <!-- Date picker -->
@@ -83,6 +137,7 @@
                     <button id="rejudgeAfterSaveBtn" class="btn btn-teal" style="display:none">🔄 Re-judecă</button>
                 </div>
                 <div id="entryStatus" style="margin-top:8px;font-size:12px;color:var(--text-muted);display:none;"></div>
+                </div>
             </div>
 
             <!-- Încuietoare: citirea jurnalului cere parolă (scrisul nu) -->
@@ -178,6 +233,7 @@
 <!-- doar aici e consumat evenimentul dayStatusLoaded -->
 <script src="{{ url_for('static', filename='js/daily-status.js') }}?v=3.0"></script>
 <script src="{{ url_for('static', filename='js/journal-lock.js') }}?v=1.0"></script>
+<script src="{{ url_for('static', filename='js/journal-multi.js') }}?v=1.0"></script>
 <script src="{{ url_for('static', filename='js/script.js') }}?v=2.2"></script>
 <script>
 // Populate sidebar today status from day status data

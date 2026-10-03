@@ -93,6 +93,9 @@ sys.path.append(BASE_DIR)
 from logger_specialist import JournalCore
 from wled_specialist import WLEDStateManager, WLEDDispatcher
 
+import mimetypes
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max upload
 
@@ -1293,34 +1296,90 @@ def add_journal_entry():
     custom_date = data.get('date', '').strip()
 
     try:
-        dt_now = datetime.now()
-        if custom_date:
-            logical_date = custom_date
-            try:
-                day_dt = datetime.strptime(custom_date, "%Y-%m-%d")
-                timestamp_dt = day_dt.replace(hour=22, minute=0, second=0)
-                timestamp_str = timestamp_dt.isoformat()
-            except:
-                timestamp_str = dt_now.isoformat()
-        else:
-            shifted = dt_now - timedelta(hours=5)
-            logical_date = shifted.strftime("%Y-%m-%d")
-            timestamp_str = dt_now.isoformat()
-
-        entry = {
-            "timestamp": timestamp_str,
-            "type": "daily_entry",
-            "logical_date": logical_date,
-            "raw_text": text,
-            "source": "web"
-        }
-        log_file = _get_log_file_for_date(logical_date)
-        os.makedirs(LOGS_DIR, exist_ok=True)
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        logical_date = _append_journal_entry(text, custom_date)
         return jsonify({"status": "success", "logical_date": logical_date})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _append_journal_entry(text: str, custom_date: str = "", source: str = "web") -> str:
+    """Scrie o intrare în fișierul lunii. Întoarce data logică a intrării."""
+    dt_now = datetime.now()
+    if custom_date:
+        logical_date = custom_date
+        try:
+            day_dt = datetime.strptime(custom_date, "%Y-%m-%d")
+            timestamp_str = day_dt.replace(hour=22, minute=0, second=0).isoformat()
+        except ValueError:
+            timestamp_str = dt_now.isoformat()
+    else:
+        logical_date = (dt_now - timedelta(hours=5)).strftime("%Y-%m-%d")
+        timestamp_str = dt_now.isoformat()
+
+    entry = {
+        "timestamp": timestamp_str,
+        "type": "daily_entry",
+        "logical_date": logical_date,
+        "raw_text": text,
+        "source": source,
+    }
+    log_file = _get_log_file_for_date(logical_date)
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return logical_date
+
+
+# ============ JURNAL PE MAI MULTE ZILE ============
+# Scrii o dată despre o perioadă → AI-ul propune textul pe zile → îl corectezi
+# în pagină → se salvează toate. Nu cere deblocarea jurnalului: e textul pe
+# care tocmai l-ai scris, iar analiza zilelor rulează în fundal fără să
+# întoarcă nimic din jurnal.
+
+@app.route('/api/journal/split', methods=['POST'])
+@requires_auth
+def journal_split():
+    from tools.journal_split import split
+    body = request.json or {}
+    try:
+        start = datetime.strptime(body.get('from', ''), '%Y-%m-%d').date()
+        end = datetime.strptime(body.get('to', ''), '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({"status": "error", "message": "Alege intervalul de zile."}), 400
+    r = split(body.get('text', ''), start, end)
+    return jsonify(r), (200 if r["status"] == "ok" else 400)
+
+
+@app.route('/api/journal/bulk', methods=['POST'])
+@requires_auth
+def journal_bulk():
+    import threading
+    body = request.json or {}
+    days = []
+    for d in (body.get('days') or [])[:31]:
+        text = str((d or {}).get('text') or '').strip()
+        try:
+            day = datetime.strptime(str((d or {}).get('date') or ''), '%Y-%m-%d').date()
+        except ValueError:
+            continue
+        if text and day <= datetime.now().date():
+            days.append((day.isoformat(), text))
+    if not days:
+        return jsonify({"status": "error", "message": "Nicio zi cu text."}), 400
+    for day, text in days:
+        _append_journal_entry(text, day, source="web_multi")
+
+    if body.get('judge', True):
+        def _judge_all(dates):
+            journal = get_journal()
+            for day in dates:
+                try:
+                    journal.rejudge_day(day)
+                except Exception as e:
+                    print(f"[Jurnal] Analiza {day} a eșuat: {e}")
+        threading.Thread(target=_judge_all, args=([d for d, _ in days],),
+                         daemon=True, name="journal-judge").start()
+    return jsonify({"status": "success", "saved": len(days)})
 
 @app.route('/api/journal/rejudge', methods=['POST'])
 @requires_auth

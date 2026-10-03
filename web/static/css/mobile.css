@@ -1,0 +1,187 @@
+/* ═══════════════════════════════════════════════════════════════════
+   mobile.css — Chronos pe telefon (inclusiv ca aplicație pe ecranul principal)
+   ───────────────────────────────────────────────────────────────────
+   Se încarcă ULTIMUL (după chronos.css și CSS-ul paginilor), deci are
+   ultimul cuvânt. Desktopul nu e atins: totul e sub @media (max-width: 900px).
+
+   Principii:
+   1. Câmpurile au minim 16px — sub atât, Safari pe iPhone face zoom automat
+      la atingere și pagina rămâne mărită („ba prea mare, ba prea mic").
+   2. Modalele devin foi care urcă de jos, cu înălțime pe ecranul REAL
+      (dvh, nu vh — vh pe iOS include bara ascunsă de Safari).
+   3. Fără antet de pagină dublat: titlul e deja în bara de sus.
+   4. Mai puțin padding imbricat, ținte de atingere de minim 40px.
+   5. Zonele sigure (notch, bara de jos) respectate în modul aplicație.
+   ═══════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 900px) {
+
+    /* ── 1. Fără zoom automat pe iPhone ── */
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+    select, textarea {
+        font-size: 16px !important;
+    }
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    body { overscroll-behavior-y: none; }
+
+    /* ── 2. Bara de sus: și sub notch în modul aplicație ── */
+    .topbar {
+        height: calc(var(--nav-h) + env(safe-area-inset-top));
+        padding-top: env(safe-area-inset-top);
+        padding-left: calc(14px + env(safe-area-inset-left));
+        padding-right: calc(14px + env(safe-area-inset-right));
+    }
+
+    /* ── 3. Antetul paginii: titlul e deja sus; rămân doar butoanele ── */
+    .page-head { padding: 12px 14px 0; }
+    .page-head-inner { padding-bottom: 0; border-bottom: none; gap: 0; }
+    .page-head-inner > div:first-child { display: none; }
+    .page-head-actions { margin: 0; width: 100%; gap: 8px; }
+    .page-head-actions:empty, .page-head:not(:has(.page-head-actions > *)) { display: none; }
+    .page-head-actions > .btn, .page-head-actions > button { flex: 1 1 auto; }
+
+    /* ── 4. Corpul paginii: un singur nivel de margine ── */
+    .page-body {
+        padding: 14px calc(12px + env(safe-area-inset-right))
+                 calc(var(--bottombar-h) + 28px + env(safe-area-inset-bottom))
+                 calc(12px + env(safe-area-inset-left));
+    }
+    .container, .container-wide { padding: 0 !important; }
+    .card, .sidebar-card, .surface-card { padding: 14px; border-radius: 14px; }
+    .sec-label { margin: 20px 0 10px; font-size: 10.5px; }
+    .layout-split { gap: 14px; }
+
+    /* ── 5. Butoane și ținte de atingere ── */
+    .btn { min-height: 40px; }
+    .btn-sm { min-height: 36px; padding: 7px 12px; }
+    .icon-btn { width: 40px; height: 40px; }
+    .btn-row { gap: 8px; }
+
+    /* ── 6. Taburi: se derulează orizontal, cu margine estompată ── */
+    .seg-tabs, .page-tab-bar, .fin-tabs, .elab-tabs {
+        overflow-x: auto;
+        scroll-snap-type: x proximity;
+        -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent);
+                mask-image: linear-gradient(90deg, #000 85%, transparent);
+        scrollbar-width: none;
+    }
+    .seg-tabs.at-end, .page-tab-bar.at-end, .fin-tabs.at-end, .elab-tabs.at-end {
+        -webkit-mask-image: none; mask-image: none;
+    }
+    .seg-tab, .page-tab, .fin-tab, .elab-tab { scroll-snap-align: center; flex: 0 0 auto; min-height: 38px; }
+
+    /* ── 7. Modale → foi care urcă de jos ── */
+    .modal-overlay, .scene-modal-overlay {
+        align-items: flex-end;
+        padding: 0;
+        overflow: hidden;
+    }
+    .modal, .scene-modal, .modal.modal-wide {
+        width: 100% !important;
+        max-width: none !important;
+        max-height: 92dvh;
+        margin: 0 !important;
+        border-radius: 22px 22px 0 0 !important;
+        border-bottom: none;
+        padding: 10px 16px calc(18px + env(safe-area-inset-bottom)) !important;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+        transform: translateY(100%);
+        transition: transform .28s cubic-bezier(.2,.8,.2,1);
+    }
+    .modal-overlay.open .modal,
+    .scene-modal-overlay.active .scene-modal,
+    .scene-modal-overlay.open .scene-modal { transform: none; }
+    .modal::before, .scene-modal::before {
+        content: '';
+        display: block;
+        width: 40px; height: 4px; border-radius: 2px;
+        background: rgba(255,255,255,.2);
+        margin: 0 auto 14px;
+    }
+    .modal h2, .modal-title { font-size: 18px; margin-bottom: 14px; }
+    /* Butoanele de jos ale modalului rămân lipite de margine cât derulezi */
+    .modal .modal-actions, .modal .hl-modal-foot, .modal .au-ed-foot {
+        position: sticky; bottom: calc(-18px - env(safe-area-inset-bottom));
+        background: var(--raise-solid);
+        padding: 12px 0 calc(6px + env(safe-area-inset-bottom));
+        margin-bottom: calc(-18px - env(safe-area-inset-bottom));
+        z-index: 2;
+    }
+    html.modal-open, html.modal-open body { overflow: hidden; }
+
+    /* ── 8. Bulina Chronos: mai mică și ascunsă cât scrii ── */
+    .chronos-dock { width: 48px; height: 48px; right: 14px; }
+    html.kb-open .chronos-dock, html.modal-open .chronos-dock { display: none; }
+    .chronos-panel { height: 88dvh; padding-bottom: env(safe-area-inset-bottom); }
+
+    /* ── 9. Bara de jos ── */
+    .bb-link { min-height: 48px; }
+
+    /* ═══════════════ PAGINI ═══════════════ */
+
+    /* Acasă */
+    .hero { padding: 18px 16px !important; gap: 10px !important; }
+    .hero-greet { font-size: 26px !important; }
+    .hero-line { font-size: 13.5px !important; }
+    .hero-cta { gap: 8px !important; }
+    .hero-cta #heroSearch { display: none; }
+    .hero-clock { display: none !important; }
+    .pulse-grid { grid-template-columns: repeat(3, 1fr) !important; gap: 8px !important; }
+    .pulse { padding: 11px 10px !important; min-height: 0 !important; border-radius: 13px !important; }
+    .pulse-val { font-size: 15px !important; }
+    .pulse-lbl, .pulse .pulse-label { font-size: 9.5px !important; letter-spacing: .6px !important; }
+    .menu-grid { grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
+    .menu-card { padding: 12px !important; gap: 10px !important; min-height: 0 !important; }
+    .menu-card .mc-desc, .menu-card .mc-go { display: none !important; }
+    .menu-card .mc-ico { width: 36px !important; height: 36px !important; font-size: 18px !important; }
+    .menu-card .mc-title { font-size: 13.5px !important; }
+    .menu-card .mc-stat { font-size: 11px !important; }
+    .scenes { grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
+
+    /* Jurnal */
+    .journal-input-card { padding: 14px !important; border-radius: 16px !important; }
+    #newEntryText, #jmText { min-height: 130px !important; }
+    .jm-day textarea { min-height: 60px !important; }
+    .jm-mode { margin-left: 0; width: 100%; }
+    .jm-mode-btn { flex: 1; padding: 8px 12px; }
+    .journal-photo-slot { width: 72px !important; height: 72px !important; }
+
+    /* Health / Fitness */
+    .gym-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
+    .gym-card { padding: 14px !important; }
+    .phase-banner { padding: 12px 14px !important; }
+
+    /* Bani */
+    .fin-hero, .fin-total { padding: 16px !important; }
+    .stat-row { grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
+    .stat-row > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+    .stat-card { padding: 12px !important; }
+    .acc-grid { grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
+    .fin-acc-card { padding: 12px !important; min-height: 158px; display: flex; flex-direction: column; }
+    .acc-balance { font-size: 19px !important; letter-spacing: -.6px !important; margin: auto 0 10px !important; }
+    .acc-actions { gap: 6px !important; }
+    .acc-btn { padding: 9px 4px !important; font-size: 11.5px !important; }
+    .acc-overlay { padding: 10px !important; gap: 6px !important; }
+    .acc-add { min-height: 158px; }
+    .sec-action { padding: 7px 13px; }
+
+    /* Setări: editorul de fișiere pe toată lățimea */
+    .settings-layout { grid-template-columns: 1fr !important; }
+}
+
+/* Telefoane mici */
+@media (max-width: 380px) {
+    .pulse-grid { grid-template-columns: 1fr 1fr !important; }
+    .menu-grid { grid-template-columns: 1fr !important; }
+}
+
+/* Modul aplicație (pornit din ecranul principal): fără efecte de hover lipicioase */
+@media (display-mode: standalone) {
+    body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    input, textarea, [contenteditable], .selectable, p, .log-text { -webkit-user-select: text; user-select: text; }
+}
+@media (hover: none) {
+    .card:hover, .surface-card:hover, .btn:hover { transform: none; }
+}

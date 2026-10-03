@@ -854,6 +854,23 @@ html[data-fx="lite"] .chronos-dock::after { animation: none; opacity: .4; }
 .sec-label::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--border), transparent); }
 .sec-label:first-child { margin-top: 0; }
 
+/* Buton mic de acțiune în dreapta unei etichete de secțiune (global: îl
+   folosesc și Acasă, și Bani — înainte era definit doar pe Acasă) */
+.sec-action {
+    margin-left: auto;
+    order: 3;
+    background: rgba(255,255,255,.05);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 11.5px; font-weight: 700;
+    padding: 5px 13px;
+    cursor: pointer;
+    letter-spacing: 0; text-transform: none;
+    transition: all var(--t-fast);
+}
+.sec-action:hover { color: #fff; border-color: var(--border-glow); background: var(--primary-dim); }
+
 /* --- Butoane --- */
 .btn {
     display: inline-flex; align-items: center; justify-content: center;

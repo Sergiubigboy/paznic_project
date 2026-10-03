@@ -1,0 +1,22 @@
+{
+  "name": "Chronos",
+  "short_name": "Chronos",
+  "description": "Chronos OS — casa, ziua și sănătatea, într-un singur loc.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#06060e",
+  "theme_color": "#06060e",
+  "lang": "ro",
+  "icons": [
+    { "src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Jurnal", "url": "/journal" },
+    { "name": "Health", "url": "/health" },
+    { "name": "Bani", "url": "/bani" }
+  ]
+}
