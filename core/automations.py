@@ -605,10 +605,19 @@ class AutomationEngine:
                 return
             start, target = st.get("bri", 128), 0
         else:
-            start, target = 1, round(action.get("brightness", 70) * 255 / 100)
-            first = {k: v for k, v in _lights_payload(action).items() if k != "tt"}
-            if not await send({**first, "bri": 1, "tt": 0}):
-                return
+            target = round(action.get("brightness", 70) * 255 / 100)
+            first = {k: v for k, v in _lights_payload(action).items() if k not in ("tt", "bri")}
+            st = await asyncio.to_thread(_wled_state, ip)
+            if st and st.get("on") and st.get("bri"):
+                # Deja aprinse (ex. pasul 2 al unui răsărit: portocaliu → alb):
+                # pornim de unde sunt, iar culoarea trece lin în primul pas.
+                start = st["bri"]
+                if not await send({**first, "tt": tt}):
+                    return
+            else:
+                start = 1
+                if not await send({**first, "bri": 1, "tt": 0}):
+                    return
 
         last = start
         try:

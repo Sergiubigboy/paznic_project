@@ -46,9 +46,13 @@ def is_configured() -> bool:
     return bool(token and chat_id)
 
 
-def send_telegram(text: str) -> dict:
+def send_telegram(text: str, token: str = None, markdown: bool = False) -> dict:
     """
     Trimite un mesaj pe Telegram. Apelat DOAR când Sergiu cere explicit.
+
+    `token` = alt bot decât cel principal (ex. botul Health); chat-ul privat
+    are același id cu orice bot. `markdown` = *bold* etc.; dacă Telegram
+    refuză formatarea, mesajul pleacă oricum ca text simplu.
 
     Returnează un dict cu status, ca modelul să poată confirma sau explica
     de ce n-a mers.
@@ -57,7 +61,8 @@ def send_telegram(text: str) -> dict:
     if not text:
         return {"status": "error", "message": "N-ai zis ce mesaj să trimit."}
 
-    token, chat_id = _creds()
+    main_token, chat_id = _creds()
+    token = token or main_token
     if not token or not chat_id:
         logger.warning("⚠️ [Telegram] Neconfigurat (lipsesc TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID).")
         return {
@@ -66,11 +71,13 @@ def send_telegram(text: str) -> dict:
         }
 
     try:
-        resp = _session.post(
-            _API.format(token=token),
-            json={"chat_id": chat_id, "text": text, "disable_notification": False},
-            timeout=_TIMEOUT,
-        )
+        payload = {"chat_id": chat_id, "text": text, "disable_notification": False}
+        if markdown:
+            payload["parse_mode"] = "Markdown"
+        resp = _session.post(_API.format(token=token), json=payload, timeout=_TIMEOUT)
+        if resp.status_code == 400 and markdown:
+            payload.pop("parse_mode")          # formatare stricată → text simplu
+            resp = _session.post(_API.format(token=token), json=payload, timeout=_TIMEOUT)
         if resp.status_code == 200:
             logger.info(f"📨 [Telegram] Trimis: '{text[:60]}'")
             return {"status": "ok", "message": "Ți-am trimis pe Telegram."}
@@ -101,14 +108,16 @@ def notify(title: str, body: str = "") -> dict:
 # RECEPȚIE — Telegram ca telecomandă pentru programul zilei
 # ─────────────────────────────────────────────────────────────
 
-def get_updates(offset: int = 0, timeout: int = 25) -> list:
+def get_updates(offset: int = 0, timeout: int = 25, token: str = None) -> list:
     """
     Citește mesajele noi (long polling — conexiunea stă deschisă până apare
     ceva sau expiră timeout-ul, deci nu batem serverul degeaba).
 
     Întoarce [{update_id, text, chat_id}], doar de la chat-ul configurat.
+    `token` = alt bot decât cel principal (fiecare bot are coada lui).
     """
-    token, chat_id = _creds()
+    main_token, chat_id = _creds()
+    token = token or main_token
     if not token or not chat_id:
         return []
 

@@ -1,14 +1,15 @@
 {% extends "base.html" %}
-{% set active_page = "gym" %}
-{% set page_title = "Fitness" %}
-{% set page_icon = "💪" %}
-{% set page_eyebrow = "Corp" %}
-{% set page_sub = "Greutate, măsurători, faze și progres în timp." %}
+{% set active_page = "health" %}
+{% set page_title = "Health" %}
+{% set page_icon = "🫀" %}
+{% set page_eyebrow = "Corp & rutină" %}
+{% set page_sub = "Mese, suplimente și sală — cu remindere pe Telegram. Tăcerea înseamnă „făcut”." %}
 
-{% block title %}Chronos OS | Fitness{% endblock %}
+{% block title %}Chronos OS | Health{% endblock %}
 
 {% block head_extra %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/health.css') }}?v=1.0">
 <style>
 .gym-section-label {
     font-size: 9px; font-weight: 800; text-transform: uppercase;
@@ -52,6 +53,58 @@
 {% endblock %}
 
 {% block content %}
+
+<!-- ═══════════ CONSECVENȚĂ (28 zile) ═══════════ -->
+<div class="hl-consistency" id="hlConsistency"></div>
+
+<div class="seg-tabs" role="tablist" id="hlTabs">
+    <button class="seg-tab active" data-tab="today" type="button">📋 Azi</button>
+    <button class="seg-tab" data-tab="plan" type="button">🗓️ Program</button>
+    <button class="seg-tab" data-tab="ideas" type="button">💡 Idei mese</button>
+    <button class="seg-tab" data-tab="body" type="button">⚖️ Corp</button>
+</div>
+
+<!-- ═══════════ AZI ═══════════ -->
+<section class="hl-panel active" id="hlPanel-today">
+    <div class="hl-today-head">
+        <div>
+            <div class="hl-today-date" id="hlTodayDate">—</div>
+            <div class="hl-today-sub" id="hlTodaySub">Atinge un item ca să-l marchezi „n-am făcut”.</div>
+        </div>
+        <label class="hl-vac" title="În vacanță nu primești remindere">
+            <span>🏖️ Vacanță</span>
+            <span class="hl-switch"><input type="checkbox" id="hlVacation"><span></span></span>
+        </label>
+    </div>
+    <div class="hl-bot-warn hidden" id="hlBotWarn">
+        ⚠️ Botul Health nu e configurat — pune <code>HEALTH_BOT_TOKEN</code> în <code>.env</code> și repornește Chronos. Până atunci nu primești remindere.
+    </div>
+    <div class="hl-timeline" id="hlTimeline"></div>
+</section>
+
+<!-- ═══════════ PROGRAM ═══════════ -->
+<section class="hl-panel" id="hlPanel-plan">
+    <div class="hl-plan-top">
+        <label class="hl-recap">🌙 Recap seara la <input type="time" id="hlRecapTime"></label>
+        <button class="btn btn-primary btn-sm" id="hlAddItem" type="button">＋ Item nou</button>
+    </div>
+    <div id="hlPlanList"></div>
+</section>
+
+<!-- ═══════════ IDEI ═══════════ -->
+<section class="hl-panel" id="hlPanel-ideas">
+    <div class="hl-plan-top">
+        <div class="hl-today-sub">Apar câte două în mesajul fiecărei mese, prin rotație.</div>
+        <div class="btn-row">
+            <button class="btn btn-sm" id="hlAddGroup" type="button">＋ Grup</button>
+            <button class="btn btn-primary btn-sm" id="hlSaveIdeas" type="button">Salvează ideile</button>
+        </div>
+    </div>
+    <div class="hl-ideas" id="hlIdeas"></div>
+</section>
+
+<!-- ═══════════ CORP (fosta pagină Fitness) ═══════════ -->
+<section class="hl-panel" id="hlPanel-body">
 <div class="container-wide">
 
     <!-- PHASE BANNER -->
@@ -309,6 +362,8 @@
 </div>
 
 <!-- PHASE MODAL -->
+</section>
+
 <div id="phaseModal" class="modal-overlay">
     <div class="modal">
         <h2>🏋️ Schimbă Faza</h2>
@@ -378,7 +433,55 @@
 {% endblock %}
 
 {% block scripts %}
+<!-- ═══════════ EDITOR ITEM ═══════════ -->
+<div class="modal-overlay" id="hlItemModal">
+    <div class="modal" role="dialog" aria-labelledby="hlItemTitle">
+        <div class="modal-title" id="hlItemTitle">Item</div>
+        <div class="form-group">
+            <label class="form-label">Nume</label>
+            <input type="text" class="form-input" id="hlItName" maxlength="60" placeholder="ex: Creatină 5 g">
+        </div>
+        <div class="hl-form-row">
+            <div class="form-group">
+                <label class="form-label">Tip</label>
+                <select id="hlItKind"></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Ora L-V</label>
+                <input type="time" id="hlItWeekday">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Ora weekend</label>
+                <input type="time" id="hlItWeekend">
+            </div>
+        </div>
+        <div class="form-hint" style="margin:-8px 0 12px">Lasă o oră goală dacă nu se aplică (ex. sandvișurile doar în zilele de școală).</div>
+        <div class="form-group">
+            <label class="form-label">Detalii în mesaj</label>
+            <textarea class="form-input" id="hlItDetails" rows="2" placeholder="Doză, reguli (ex: fără lactate la masa asta)…"></textarea>
+        </div>
+        <div class="hl-form-row">
+            <div class="form-group">
+                <label class="form-label">Idei de mâncare din grupul</label>
+                <select id="hlItIdeas"></select>
+            </div>
+            <div class="form-group" style="flex:2">
+                <label class="form-label">Cuvinte după care îl recunoaște botul</label>
+                <input type="text" class="form-input" id="hlItKeywords" placeholder="ex: creatina, creatin">
+            </div>
+        </div>
+        <label class="hl-check"><input type="checkbox" id="hlItEnabled" checked> Activ</label>
+        <div class="hl-modal-foot">
+            <button class="btn btn-danger" id="hlItDelete" type="button">Șterge</button>
+            <span style="flex:1"></span>
+            <button class="btn btn-ghost" id="hlItCancel" type="button">Renunță</button>
+            <button class="btn btn-primary" id="hlItSave" type="button">Salvează</button>
+        </div>
+    </div>
+</div>
+
 <script src="{{ url_for('static', filename='js/daily-status.js') }}?v=3.0"></script>
+<script src="{{ url_for('static', filename='js/health.js') }}?v=1.0"></script>
 <script src="{{ url_for('static', filename='js/gym.js') }}"></script>
 <script>
 // Show mood sparkline from journal data

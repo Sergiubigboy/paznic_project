@@ -76,6 +76,7 @@ from core.llm_router import LLMRouter
 from core.gemini_live import GeminiLiveSession
 from core import day_runner
 from core import automations
+from core import health_runner
 
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 5000
@@ -467,6 +468,8 @@ async def main() -> None:
         asyncio.create_task(day_runner.run(), name="day_telegram"),
         # Automatizările (ora fixă, răsărit/apus, alarmă, muzică, wake word).
         asyncio.create_task(automations.get_engine().run(bus), name="automations"),
+        # Health: remindere de mese/suplimente/sală pe botul Telegram separat.
+        asyncio.create_task(health_runner.run(), name="health"),
     ]
 
     # Un task critic care moare cu excepție oprește sistemul — dar prin

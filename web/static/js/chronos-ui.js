@@ -69,7 +69,7 @@ window.Chronos = (function () {
         { icon: '🏠', label: 'Acasă',           sub: 'panoul principal',      href: '/' },
         { icon: '📘', label: 'Jurnal',          sub: 'intrări zilnice',       href: '/journal' },
         { icon: '🎯', label: 'Taskuri',         sub: 'targeturi & remindere', href: '/targets' },
-        { icon: '💪', label: 'Fitness',         sub: 'greutate & măsurători', href: '/gym' },
+        { icon: '🫀', label: 'Health',          sub: 'mese, suplimente, sală', href: '/health' },
         { icon: '💰', label: 'Bani',            sub: 'conturi & investiții',  href: '/bani' },
         { icon: '⚡', label: 'Electronics Lab', sub: 'componente & proiecte', href: '/electronics' },
         { icon: '🪄', label: 'Automatizări',    sub: 'lumini, muzică, alarme', href: '/automations' },

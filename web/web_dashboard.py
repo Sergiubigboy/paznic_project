@@ -259,7 +259,13 @@ def targets():
 @app.route('/gym')
 @requires_auth
 def gym():
-    return render_template('gym.html', active_page='gym')
+    # Fitness a devenit Health; linkurile vechi (și #measurements) merg în continuare.
+    return redirect('/health', code=301)
+
+@app.route('/health')
+@requires_auth
+def health_page():
+    return render_template('health.html', active_page='health')
 
 @app.route('/terminal')
 @requires_auth
@@ -3099,6 +3105,98 @@ def wled_snapshot():
         return jsonify({'status': 'ok', 'main': main_state, 'floor': floor_state})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+# ==============================================================
+# HEALTH — program zilnic + remindere (vezi tools/health.py)
+# ==============================================================
+
+def _health_today_payload():
+    from tools import health as H
+    now = datetime.now()
+    d = H.logical_day(now)
+    log = H.load_log()
+    items = []
+    for hhmm, it in H.day_items(d):
+        at = datetime.combine(d, datetime.min.time()).replace(hour=int(hhmm[:2]), minute=int(hhmm[3:]))
+        items.append({**it, 'time': hhmm, 'status': H.status_of(d, it['id'], log), 'passed': at <= now})
+    return {'date': d.isoformat(), 'weekend': H.is_weekend(d), 'items': items}
+
+
+@app.route('/api/health', methods=['GET'])
+@requires_auth
+def health_get():
+    from tools import health as H
+    plan = H.load_plan()
+    return jsonify({
+        'plan': plan,
+        'ideas': H.load_ideas(),
+        'today': _health_today_payload(),
+        'stats': H.stats(28),
+        'vacation_now': H.is_vacation(datetime.now().date(), plan),
+        'bot': bool(H.bot_token()),
+        'kinds': {k: {'icon': H.KIND_ICON[k], 'label': H.KIND_LABEL[k]} for k in H.KINDS},
+    })
+
+
+@app.route('/api/health/item', methods=['POST'])
+@requires_auth
+def health_item_save():
+    from tools import health as H
+    r = H.save_item(request.json or {})
+    return jsonify(r), (200 if r['status'] == 'ok' else 400)
+
+
+@app.route('/api/health/item/delete', methods=['POST'])
+@requires_auth
+def health_item_delete():
+    from tools import health as H
+    return jsonify(H.delete_item((request.json or {}).get('id', '')))
+
+
+@app.route('/api/health/recap-time', methods=['POST'])
+@requires_auth
+def health_recap_time():
+    from tools import health as H
+    r = H.set_recap_time((request.json or {}).get('time', ''))
+    return jsonify(r), (200 if r['status'] == 'ok' else 400)
+
+
+@app.route('/api/health/ideas', methods=['POST'])
+@requires_auth
+def health_ideas_save():
+    from tools import health as H
+    return jsonify(H.set_ideas((request.json or {}).get('ideas') or {}))
+
+
+@app.route('/api/health/status', methods=['POST'])
+@requires_auth
+def health_status():
+    from tools import health as H
+    body = request.json or {}
+    try:
+        d = datetime.strptime(body.get('date', ''), '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'status': 'error', 'message': 'Dată invalidă'}), 400
+    st = body.get('status')
+    H.set_status(d, body.get('id', ''), st if st in H.STATUSES else None)
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/health/vacation', methods=['POST'])
+@requires_auth
+def health_vacation():
+    from tools import health as H
+    body = request.json or {}
+    if not body.get('on'):
+        return jsonify(H.set_vacation(None))
+    end = None
+    if body.get('to'):
+        try:
+            end = datetime.strptime(body['to'], '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'status': 'error', 'message': 'Dată invalidă'}), 400
+    return jsonify(H.set_vacation(datetime.now().date(), end))
 
 
 # ==============================================================
