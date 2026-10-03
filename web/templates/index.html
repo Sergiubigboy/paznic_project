@@ -7,6 +7,26 @@
 
 {% block title %}Chronos OS | Jurnal{% endblock %}
 
+{% block page_actions %}
+<button class="btn btn-sm hidden" id="journalLockBtn" type="button" title="Ascunde jurnalul până la următoarea parolă">🔒 Blochează</button>
+{% endblock %}
+
+{% block head_extra %}
+<style>
+.journal-lock {
+    text-align: center; padding: 34px 20px; margin: 18px 0;
+    border: 1px dashed var(--border-light); border-radius: var(--radius);
+    background: rgba(255,255,255,.02);
+}
+.journal-lock-ic { font-size: 34px; opacity: .8; margin-bottom: 8px; }
+.journal-lock-title { font-size: 16px; font-weight: 800; color: #fff; }
+.journal-lock-sub { font-size: 13px; color: var(--text-muted); margin: 4px 0 16px; }
+.journal-lock-form { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; max-width: 420px; margin: 0 auto; }
+.journal-lock-form input { flex: 1 1 180px; }
+.journal-lock-err { color: var(--red); font-size: 12.5px; min-height: 18px; margin-top: 8px; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container">
     <div class="layout-split">
@@ -65,6 +85,20 @@
                 <div id="entryStatus" style="margin-top:8px;font-size:12px;color:var(--text-muted);display:none;"></div>
             </div>
 
+            <!-- Încuietoare: citirea jurnalului cere parolă (scrisul nu) -->
+            <div class="journal-lock hidden" id="journalLock">
+                <div class="journal-lock-ic">🔒</div>
+                <div class="journal-lock-title" id="journalLockTitle">Jurnalul e blocat</div>
+                <div class="journal-lock-sub" id="journalLockSub">Poți scrie liniștit mai sus — ca să citești intrările, pune parola.</div>
+                <form class="journal-lock-form" id="journalLockForm" autocomplete="off">
+                    <input type="password" class="form-input" id="journalPw" placeholder="Parola jurnalului" autocomplete="current-password">
+                    <input type="password" class="form-input hidden" id="journalPw2" placeholder="Repetă parola" autocomplete="new-password">
+                    <button class="btn btn-primary" type="submit" id="journalUnlockBtn">Deblochează</button>
+                </form>
+                <div class="journal-lock-err" id="journalLockErr"></div>
+            </div>
+
+            <div id="journalReader">
             <!-- Month Picker -->
             <div id="monthPickerContainer"></div>
 
@@ -78,6 +112,7 @@
             <div id="logsContainer"></div>
             <div id="journalPagination" class="pagination-row"></div>
             <div id="noResults" class="empty-state no-results">Nu am găsit nimic.</div>
+            </div>
         </div>
 
         <!-- SIDEBAR -->
@@ -142,7 +177,8 @@
 {% block scripts %}
 <!-- doar aici e consumat evenimentul dayStatusLoaded -->
 <script src="{{ url_for('static', filename='js/daily-status.js') }}?v=3.0"></script>
-<script src="{{ url_for('static', filename='js/script.js') }}?v=2.1"></script>
+<script src="{{ url_for('static', filename='js/journal-lock.js') }}?v=1.0"></script>
+<script src="{{ url_for('static', filename='js/script.js') }}?v=2.2"></script>
 <script>
 // Populate sidebar today status from day status data
 document.addEventListener('dayStatusLoaded', async (e) => {

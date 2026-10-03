@@ -10,12 +10,45 @@ import shutil
 from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import wraps
-from flask import Flask, request, Response, render_template, jsonify, send_from_directory
+import ipaddress
+import secrets
+from flask import Flask, request, Response, render_template, jsonify, send_from_directory, session
+from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
+try:
+    import config  # noqa: F401 — încarcă .env în os.environ
+except Exception:
+    pass
+
 # --- CONFIGURARE SECURITATE ---
-USERNAME = "admin"
-PASSWORD = "123"  # SCHIMBĂ ASTA
+# Acasă (rețeaua locală) și pe Tailscale site-ul se deschide direct, fără
+# parolă. User/parola de mai jos se cer DOAR pentru cereri din afara acestor
+# rețele — de ex. dacă tunelul Cloudflare încă rulează. Setate în .env.
+USERNAME = os.environ.get("DASHBOARD_USER", "admin")
+PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "123")
+
+# Rețele în care ai încredere: localhost, LAN (192.168.x, 10.x, 172.16-31.x)
+# și Tailscale (100.64.0.0/10 + IPv6-ul lui).
+_TRUSTED_NETS = [ipaddress.ip_network(n) for n in (
+    "127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    "100.64.0.0/10", "fd7a:115c:a1e0::/48",
+)]
+# Antete puse de un proxy/tunel. Dacă apar, cererea vine din internet chiar
+# dacă ajunge de pe 127.0.0.1 (așa intră tot ce trece prin cloudflared).
+_PROXY_HEADERS = ("Cf-Connecting-Ip", "Cf-Ray", "X-Forwarded-For", "X-Real-Ip", "Forwarded")
+
+
+def _local_request() -> bool:
+    if any(h in request.headers for h in _PROXY_HEADERS):
+        return False
+    try:
+        ip = ipaddress.ip_address((request.remote_addr or "").split("%")[0])
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return any(ip in net for net in _TRUSTED_NETS)
 
 # --- CONFIGURARE CĂI ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -62,6 +95,73 @@ from wled_specialist import WLEDStateManager, WLEDDispatcher
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max upload
+
+
+def _flask_secret() -> str:
+    """Cheie pentru cookie-ul de sesiune (deblocarea jurnalului). Generată o
+    dată și păstrată pe disc, ca un restart să nu invalideze nimic."""
+    path = os.path.join(DATA_DIR, ".flask_secret")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            key = f.read().strip()
+            if len(key) >= 32:
+                return key
+    except FileNotFoundError:
+        pass
+    key = secrets.token_hex(32)
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(key)
+    return key
+
+
+app.secret_key = _flask_secret()
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+
+
+# ============ ÎNCUIETOAREA JURNALULUI ============
+# Restul site-ului e deschis acasă/Tailscale; jurnalul se CITEȘTE doar după
+# parolă. Scrisul rămâne liber — poți nota ceva fără să deblochezi.
+# Deblocarea ține cât folosești pagina: după JOURNAL_UNLOCK_MIN minute fără
+# nicio cerere spre jurnal se închide singură (laptop uitat deschis), și
+# oricum la închiderea browserului (cookie de sesiune).
+JOURNAL_LOCK_FILE = os.path.join(DATA_DIR, "journal_lock.json")
+JOURNAL_UNLOCK_MIN = 10
+_journal_fails = {"n": 0, "until": 0.0}
+
+
+def _journal_hash():
+    try:
+        with open(JOURNAL_LOCK_FILE, "r", encoding="utf-8") as f:
+            return json.load(f).get("hash")
+    except Exception:
+        return None
+
+
+def _journal_set_password(pw: str) -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(JOURNAL_LOCK_FILE, "w", encoding="utf-8") as f:
+        json.dump({"hash": generate_password_hash(pw), "set_at": datetime.now().isoformat()}, f)
+
+
+def journal_unlocked(refresh: bool = True) -> bool:
+    until = session.get("journal_until", 0)
+    if until <= time():
+        session.pop("journal_until", None)
+        return False
+    if refresh:
+        session["journal_until"] = time() + JOURNAL_UNLOCK_MIN * 60
+    return True
+
+
+def requires_journal_unlock(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not journal_unlocked():
+            return jsonify({"status": "locked", "locked": True,
+                            "has_password": bool(_journal_hash())}), 423
+        return f(*args, **kwargs)
+    return decorated
 
 # Lazy-loaded journal core
 class DispatcherProxy:
@@ -130,6 +230,9 @@ def authenticate():
 def requires_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Acasă sau pe Tailscale: direct, fără parolă.
+        if _local_request():
+            return f(*args, **kwargs)
         # Check device trust token first
         device_token = request.headers.get('X-Device-Token') or request.cookies.get('device_token')
         if device_token and is_trusted_device(device_token):
@@ -873,6 +976,9 @@ def day_status():
             last_weight_ever = wl[-1].get('weight')
             recent_weights = list(reversed(wl[-7:]))
 
+    # Textul intrărilor de azi doar cu jurnalul deblocat; numărul rămâne vizibil.
+    if not journal_unlocked(refresh=False):
+        journal_data["entries"] = []
     return jsonify({
         "date": today,
         "weight": weight_data,
@@ -1055,6 +1161,7 @@ def serve_aesthetic_photo(filename):
 
 @app.route('/media/journal/<filename>')
 @requires_auth
+@requires_journal_unlock
 def serve_journal_photo(filename):
     return send_from_directory(JOURNAL_PHOTOS_DIR, filename)
 
@@ -1103,6 +1210,57 @@ def list_trusted_devices():
     devices_data = load_trusted_devices()
     return jsonify(devices_data.get("devices", []))
 
+# ============ API JURNAL: încuiere ============
+@app.route('/api/journal/lock-status', methods=['GET'])
+@requires_auth
+def journal_lock_status():
+    # ?touch=1 = ești activ pe pagină (citești) → prelungește deblocarea
+    unlocked = journal_unlocked(refresh=request.args.get("touch") == "1")
+    return jsonify({"locked": not unlocked, "has_password": bool(_journal_hash()),
+                    "idle_min": JOURNAL_UNLOCK_MIN})
+
+
+@app.route('/api/journal/unlock', methods=['POST'])
+@requires_auth
+def journal_unlock():
+    """Deblochează. Dacă nu există încă o parolă, cea trimisă devine parola."""
+    pw = str((request.json or {}).get("password") or "")
+    if _journal_fails["until"] > time():
+        wait = int(_journal_fails["until"] - time()) + 1
+        return jsonify({"status": "error", "message": f"Prea multe încercări. Mai așteaptă {wait}s."}), 429
+    stored = _journal_hash()
+    if not stored:
+        if len(pw) < 4:
+            return jsonify({"status": "error", "message": "Parola trebuie să aibă cel puțin 4 caractere."}), 400
+        _journal_set_password(pw)
+    elif not check_password_hash(stored, pw):
+        _journal_fails["n"] += 1
+        if _journal_fails["n"] >= 5:
+            _journal_fails.update(n=0, until=time() + 60)
+        return jsonify({"status": "error", "message": "Parolă greșită."}), 401
+    _journal_fails["n"] = 0
+    session["journal_until"] = time() + JOURNAL_UNLOCK_MIN * 60
+    return jsonify({"status": "success", "created": not stored})
+
+
+@app.route('/api/journal/lock', methods=['POST'])
+@requires_auth
+def journal_lock():
+    session.pop("journal_until", None)
+    return jsonify({"status": "success"})
+
+
+@app.route('/api/journal/password', methods=['POST'])
+@requires_auth
+@requires_journal_unlock
+def journal_change_password():
+    pw = str((request.json or {}).get("password") or "")
+    if len(pw) < 4:
+        return jsonify({"status": "error", "message": "Cel puțin 4 caractere."}), 400
+    _journal_set_password(pw)
+    return jsonify({"status": "success"})
+
+
 # ============ API LOGS ============
 @app.route('/api/logs/months')
 @requires_auth
@@ -1113,6 +1271,7 @@ def api_logs_months():
 
 @app.route('/api/logs')
 @requires_auth
+@requires_journal_unlock
 def api_logs():
     """Return logs for a specific month. Defaults to current month.
     Query param: ?month=YYYY-MM
@@ -1165,6 +1324,7 @@ def add_journal_entry():
 
 @app.route('/api/journal/rejudge', methods=['POST'])
 @requires_auth
+@requires_journal_unlock
 def rejudge_entry():
     data = request.json
     logical_date = data.get('date', '').strip()
@@ -1182,6 +1342,7 @@ def rejudge_entry():
 
 @app.route('/api/journal/update-scores', methods=['POST'])
 @requires_auth
+@requires_journal_unlock
 def update_journal_scores():
     """Manually update scores in a daily_summary for a specific date."""
     data = request.json
@@ -1247,6 +1408,7 @@ def upload_journal_photo():
 
 @app.route('/api/journal/photos/delete', methods=['POST'])
 @requires_auth
+@requires_journal_unlock
 def delete_journal_photo():
     data = request.json or {}
     filename = data.get('filename', '')

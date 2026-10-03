@@ -207,16 +207,15 @@ async function loadAll() {
 
     renderMonthPicker(availableMonths);
 
-    // Load logs, targets, gym data in parallel
+    // Load logs, targets, gym data in parallel (logs = null dacă jurnalul e blocat)
     const [logs, targets, measurements, checks] = await Promise.all([
-        fetch(`/api/logs?month=${currentMonth}`).then(r => r.json()),
+        JournalLock.fetchLogs(currentMonth),
         fetch('/api/targets').then(r => r.json()),
         fetch('/api/gym/measurements').then(r => r.json()).catch(() => []),
         fetch('/api/gym/daily-checks').then(r => r.json()).catch(() => [])
     ]);
 
-    allData = logs;
-    renderLogs(logs);
+    if (logs) { allData = logs; renderLogs(logs); }
     renderSidebarTargets(targets.goals || []);
     renderSidebarGym(measurements, checks);
 }
@@ -227,7 +226,8 @@ async function loadLogsForMonth(month) {
     container.innerHTML = '<div style="color:var(--text-faint);font-size:13px;padding:24px 0;text-align:center">Se încarcă...</div>';
 
     try {
-        const logs = await fetch(`/api/logs?month=${month}`).then(r => r.json());
+        const logs = await JournalLock.fetchLogs(month);
+        if (!logs) return;                    // blocat — JournalLock arată formularul
         allData = logs;
         renderLogs(logs);
     } catch(e) {
