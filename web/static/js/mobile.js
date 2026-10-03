@@ -28,9 +28,30 @@
     });
 
     // ── 2. Tastatura ──
+    // Pe iPhone tastatura NU micșorează pagina, doar o acoperă: o foaie lipită
+    // jos ajunge sub tastatură. visualViewport spune cât se vede de fapt;
+    // îl dăm CSS-ului ca --vv-top / --vv-h, iar foile se așază pe zona aia.
+    const vv = window.visualViewport;
+    function syncViewport() {
+        if (!vv) return;
+        root.style.setProperty('--vv-top', `${vv.offsetTop}px`);
+        root.style.setProperty('--vv-h', `${vv.height}px`);
+    }
+    if (vv) {
+        vv.addEventListener('resize', syncViewport);
+        vv.addEventListener('scroll', syncViewport);
+        syncViewport();
+    }
+
     const isField = (el) => el && (el.tagName === 'TEXTAREA' || el.isContentEditable ||
         (el.tagName === 'INPUT' && !['checkbox', 'radio', 'range', 'button', 'submit', 'color', 'file'].includes(el.type)));
-    document.addEventListener('focusin', (e) => { if (isField(e.target)) root.classList.add('kb-open'); });
+    document.addEventListener('focusin', (e) => {
+        if (!isField(e.target)) return;
+        root.classList.add('kb-open');
+        // Câmpul atins dintr-o foaie: după ce urcă tastatura, îl aducem la mijloc.
+        const sheet = e.target.closest('.modal, .scene-modal');
+        if (sheet) setTimeout(() => { syncViewport(); e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 320);
+    });
     document.addEventListener('focusout', () => setTimeout(() => {
         if (!isField(document.activeElement)) root.classList.remove('kb-open');
     }, 50));

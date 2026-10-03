@@ -71,15 +71,26 @@
     .seg-tab, .page-tab, .fin-tab, .elab-tab { scroll-snap-align: center; flex: 0 0 auto; min-height: 38px; }
 
     /* ── 7. Modale → foi care urcă de jos ── */
+    /* Fundalul acoperă doar partea VIZIBILĂ a ecranului (deasupra tastaturii),
+       nu tot layout-ul — vezi --vv-top/--vv-h din mobile.js. */
     .modal-overlay, .scene-modal-overlay {
         align-items: flex-end;
         padding: 0;
         overflow: hidden;
+        inset: auto 0 auto 0 !important;
+        top: var(--vv-top, 0px) !important;
+        height: var(--vv-h, 100dvh) !important;
+        visibility: hidden;
+        transition: opacity var(--t), visibility 0s linear .28s;
+    }
+    .modal-overlay.open, .scene-modal-overlay.open, .scene-modal-overlay.active {
+        visibility: visible;
+        transition: opacity var(--t), visibility 0s;
     }
     .modal, .scene-modal, .modal.modal-wide {
         width: 100% !important;
         max-width: none !important;
-        max-height: 92dvh;
+        max-height: calc(var(--vv-h, 100dvh) - 16px);
         margin: 0 !important;
         border-radius: 22px 22px 0 0 !important;
         border-bottom: none;
@@ -110,6 +121,13 @@
         z-index: 2;
     }
     html.modal-open, html.modal-open body { overflow: hidden; }
+    /* Cu tastatura sus, foaia nu mai are nevoie de spațiul pentru bara de jos a iPhone-ului */
+    html.kb-open .modal, html.kb-open .scene-modal { padding-bottom: 14px !important; }
+
+    /* Meniul „Mai mult" stă sub ecran când e închis — ascuns de tot, altfel
+       iese la iveală când iOS mută pagina pentru tastatură. */
+    .sheet:not(.open), .sheet-scrim:not(.open) { visibility: hidden; transition-property: transform, opacity, visibility; transition-delay: 0s, 0s, .3s; }
+    .sheet.open, .sheet-scrim.open { visibility: visible; transition-delay: 0s; }
 
     /* ── 8. Bulina Chronos: mai mică și ascunsă cât scrii ── */
     .chronos-dock { width: 48px; height: 48px; right: 14px; }
