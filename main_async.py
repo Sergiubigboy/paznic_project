@@ -77,6 +77,7 @@ from core.gemini_live import GeminiLiveSession
 from core import day_runner
 from core import automations
 from core import health_runner
+from core import lifecycle
 
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 5000
@@ -451,6 +452,8 @@ async def main() -> None:
         expected_components.add("AudioInterface")
 
     shutdown_event = asyncio.Event()
+    # Butonul „Repornește Chronos" din Setări cere oprirea prin evenimentul ăsta.
+    lifecycle.register(asyncio.get_running_loop(), shutdown_event)
 
     all_tasks = [
         asyncio.create_task(audio_task(audio), name="audio_main"),
@@ -512,6 +515,15 @@ async def main() -> None:
         logger.info("\nÎntrerupere.")
 
     await shutdown_all(bus, audio, router, tts, live if live_ok else None, web, all_tasks)
+
+    if lifecycle.restart_requested():
+        # Totul e oprit curat (sunet, microfon, web pe portul 5000). Pornim același
+        # program în același proces: sub systemd PID-ul rămâne, deci serviciul
+        # nu „cade"; pornit de mână din terminal, merge la fel.
+        logger.info("🔄 [Restart] Repornesc Chronos…")
+        logging.shutdown()
+        sys.stdout.flush()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
     # asyncio.run() așteaptă la final TOATE thread-urile din executorul implicit.
     # Unul blocat într-un apel care nu se mai întoarce (s-a întâmplat: login-ul

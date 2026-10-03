@@ -794,7 +794,7 @@ def seed_automations() -> list:
     return out
 
 
-def seed(force: bool = False) -> dict:
+def seed(force: bool = False, automations: bool = True) -> dict:
     """Pune protocolul din rezumat. Nu suprascrie iteme sau idei existente
     (după id / grup), decât cu force=True."""
     plan = load_plan()
@@ -815,10 +815,12 @@ def seed(force: bool = False) -> dict:
             ideas[g] = lst
             new_groups += 1
     save_ideas(ideas)
-    try:
-        autos = seed_automations()
-    except Exception as e:
-        autos = [f"automatizările n-au putut fi create: {e}"]
+    autos = []
+    if automations:
+        try:
+            autos = seed_automations()
+        except Exception as e:
+            autos = [f"automatizările n-au putut fi create: {e}"]
     return {"status": "ok", "items_added": added, "idea_groups_added": new_groups,
             "automations_added": autos}
 

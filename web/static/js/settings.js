@@ -9,11 +9,11 @@ document.addEventListener('DOMContentLoaded', () => {
     loadFileTree();
     initAppearance();
     const h = (location.hash || '').slice(1);
-    if (h === 'appearance') switchSettingsTab('appearance');
+    if (h === 'appearance' || h === 'system') switchSettingsTab(h);
 });
 
 // ============ TABURI ============
-const SETTINGS_TABS = ['files', 'appearance'];
+const SETTINGS_TABS = ['files', 'appearance', 'system'];
 function _capTab(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 function switchSettingsTab(name) {
     if (!SETTINGS_TABS.includes(name)) return;

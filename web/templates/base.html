@@ -52,7 +52,7 @@
     <!-- 1. baza legacy   2. css legacy de pagină   3. sistemul nou (are ultimul cuvânt)  4. extra pagină -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=3.0">
     {% block page_css %}{% endblock %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/chronos.css') }}?v=3.1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/chronos.css') }}?v=3.2">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     {% block head_extra %}{% endblock %}
     <!-- 5. stratul pentru telefon — ULTIMUL, ca să aibă ultimul cuvânt -->

@@ -999,6 +999,58 @@ def day_status():
 
 
 # ============ TERMINAL / DISPATCHER API ============
+# ============ SISTEM: repornire + resetări (Setări → Sistem) ============
+@app.route('/api/system/resets', methods=['GET'])
+@requires_auth
+def system_resets():
+    from core import lifecycle
+    from tools import resets
+    return jsonify({"resets": resets.list_resets(), "backups": resets.list_backups(),
+                    "can_restart": lifecycle.can_restart()})
+
+
+def _restart_soon():
+    """Repornește după ce răspunsul HTTP a plecat — altfel pagina n-ar afla că a mers."""
+    import threading
+    from core import lifecycle
+    threading.Timer(0.6, lifecycle.request_restart).start()
+
+
+@app.route('/api/system/restart', methods=['POST'])
+@requires_auth
+def system_restart():
+    from core import lifecycle
+    if not lifecycle.can_restart():
+        return jsonify({"status": "error",
+                        "message": "Dashboard-ul rulează singur, fără Chronos — n-am ce reporni."}), 409
+    _restart_soon()
+    return jsonify({"status": "ok", "message": "Repornesc Chronos…"})
+
+
+@app.route('/api/system/reset', methods=['POST'])
+@requires_auth
+def system_reset():
+    from core import lifecycle
+    from tools import resets
+    r = resets.reset((request.json or {}).get('key', ''))
+    if r.get('needs_restart') and lifecycle.can_restart():
+        r['restarting'] = True
+        _restart_soon()
+    return jsonify(r), (200 if r['status'] == 'ok' else 400)
+
+
+@app.route('/api/system/restore', methods=['POST'])
+@requires_auth
+def system_restore():
+    from core import lifecycle
+    from tools import resets
+    r = resets.restore((request.json or {}).get('name', ''))
+    if r.get('needs_restart') and lifecycle.can_restart():
+        r['restarting'] = True
+        _restart_soon()
+    return jsonify(r), (200 if r['status'] == 'ok' else 400)
+
+
 @app.route('/api/terminal/ping', methods=['GET'])
 @requires_auth
 def terminal_ping():

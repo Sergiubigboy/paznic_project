@@ -12,6 +12,7 @@
 <div class="seg-tabs" role="tablist">
     <button class="seg-tab active" id="tabFiles" onclick="switchSettingsTab('files')">📁 Fișiere</button>
     <button class="seg-tab"        id="tabAppearance" onclick="switchSettingsTab('appearance')">🎨 Aspect</button>
+    <button class="seg-tab"        id="tabSystem" onclick="switchSettingsTab('system')">🛠️ Sistem</button>
 </div>
 
 <!-- ══════════════════ FIȘIERE ══════════════════ -->
@@ -136,8 +137,80 @@
     </div>
 </section>
 
+<!-- ══════════════════ SISTEM ══════════════════ -->
+<section class="tab-panel" id="panelSystem">
+    <div class="sys-card sys-restart">
+        <div>
+            <div class="card-title">🔄 Repornește Chronos</div>
+            <div class="card-sub">Oprire curată și pornire din nou — citește iar <code>.env</code>, JSON-urile și codul nou după un <code>git pull</code>. Durează câteva secunde.</div>
+        </div>
+        <button class="btn btn-primary" id="sysRestartBtn" type="button">Repornește</button>
+    </div>
+
+    <div class="sec-label">Resetează setări</div>
+    <div class="card-sub" style="margin:-4px 0 12px">Înainte de orice reset se face automat o copie. Datele tale (jurnal, bani, taskuri, poze) nu apar aici, intenționat.</div>
+    <div class="sys-list" id="sysResets"><div class="empty-state">Se încarcă…</div></div>
+
+    <div class="sec-label">Copii de siguranță</div>
+    <div class="sys-list" id="sysBackups"></div>
+</section>
+
+<div class="sys-overlay hidden" id="sysOverlay">
+    <div class="sys-overlay-box">
+        <div class="sys-spinner"></div>
+        <div class="sys-overlay-title" id="sysOverlayTitle">Repornesc Chronos…</div>
+        <div class="sys-overlay-sub" id="sysOverlaySub">Pagina se reîncarcă singură când revine.</div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block head_extra %}
+<style>
+.sys-card {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 16px; margin-bottom: 8px;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.012));
+}
+.sys-card > div { flex: 1 1 260px; }
+.sys-card .card-sub { margin-top: 4px; line-height: 1.5; }
+.sys-card code { background: rgba(255,255,255,.07); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
+.sys-list { display: flex; flex-direction: column; gap: 8px; }
+.sys-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: rgba(255,255,255,.025);
+}
+.sys-row.absent { opacity: .55; }
+.sys-row-main { flex: 1; min-width: 0; }
+.sys-row-title { font-size: 14px; font-weight: 700; color: #fff; }
+.sys-row-desc { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.45; }
+.sys-row-meta { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
+.sys-overlay {
+    position: fixed; inset: 0; z-index: 600;
+    background: rgba(3,3,8,.86);
+    display: grid; place-items: center; padding: 20px;
+}
+.sys-overlay-box { text-align: center; }
+.sys-overlay-title { font-size: 17px; font-weight: 800; color: #fff; margin-top: 16px; }
+.sys-overlay-sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; }
+.sys-spinner {
+    width: 38px; height: 38px; margin: 0 auto; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.12); border-top-color: var(--primary);
+    animation: sysSpin 0.9s linear infinite;
+}
+@keyframes sysSpin { to { transform: rotate(360deg); } }
+@media (max-width: 600px) {
+    .sys-row { flex-wrap: wrap; }
+    .sys-row .btn { width: 100%; }
+    .sys-card .btn { width: 100%; }
+}
+</style>
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/settings.js') }}?v=3.0"></script>
+<script src="{{ url_for('static', filename='js/settings.js') }}?v=3.1"></script>
+<script src="{{ url_for('static', filename='js/settings-system.js') }}?v=1.0"></script>
 {% endblock %}
