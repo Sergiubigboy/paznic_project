@@ -3384,16 +3384,28 @@ def wled_snapshot():
 # HEALTH — program zilnic + remindere (vezi tools/health.py)
 # ==============================================================
 
-def _health_today_payload():
+def _health_today_payload(day_str=None):
+    """Ziua afișată în tabul Azi — azi, sau o zi din trecut aleasă din grilă."""
     from tools import health as H
     now = datetime.now()
-    d = H.logical_day(now)
+    today = H.logical_day(now)
+    d = today
+    if day_str:
+        try:
+            d = min(datetime.strptime(day_str, '%Y-%m-%d').date(), today)
+        except ValueError:
+            pass
     log = H.load_log()
+    day_log = log.get(d.isoformat()) or {}
     items = []
     for hhmm, it in H.day_items(d):
         at = datetime.combine(d, datetime.min.time()).replace(hour=int(hhmm[:2]), minute=int(hhmm[3:]))
         items.append({**it, 'time': hhmm, 'status': H.status_of(d, it['id'], log), 'passed': at <= now})
-    return {'date': d.isoformat(), 'weekend': H.is_weekend(d), 'items': items}
+    return {'date': d.isoformat(), 'weekend': H.is_weekend(d), 'items': items,
+            'is_today': d == today,
+            # „sent" = botul a trimis remindere în ziua aia → nemarcat înseamnă făcut
+            'sent': bool(day_log.get('sent')),
+            'vacation': H.is_vacation(d)}
 
 
 @app.route('/api/health', methods=['GET'])
@@ -3404,7 +3416,7 @@ def health_get():
     return jsonify({
         'plan': plan,
         'ideas': H.load_ideas(),
-        'today': _health_today_payload(),
+        'today': _health_today_payload(request.args.get('date')),
         'stats': H.stats(28),
         'vacation_now': H.is_vacation(datetime.now().date(), plan),
         'bot': bool(H.bot_token()),
@@ -3453,6 +3465,20 @@ def health_status():
         return jsonify({'status': 'error', 'message': 'Dată invalidă'}), 400
     st = body.get('status')
     H.set_status(d, body.get('id', ''), st if st in H.STATUSES else None)
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/health/day', methods=['POST'])
+@requires_auth
+def health_day():
+    """Toată ziua deodată: {date, status: 'done' | null}."""
+    from tools import health as H
+    body = request.json or {}
+    try:
+        d = datetime.strptime(body.get('date', ''), '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'status': 'error', 'message': 'Dată invalidă'}), 400
+    H.mark_day(d, 'done' if body.get('status') == 'done' else None)
     return jsonify({'status': 'ok'})
 
 

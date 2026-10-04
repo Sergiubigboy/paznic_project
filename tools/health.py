@@ -406,6 +406,22 @@ def set_status(d: date, item_id: str, status: Optional[str]) -> None:
         save_log(log)
 
 
+def mark_day(d: date, status: Optional[str]) -> None:
+    """Toată ziua deodată: „done" bifează tot ce nu e marcat „n-am",
+    None golește ziua (pentru o zi completată din greșeală)."""
+    with _lock:
+        log = load_log()
+        day = log.setdefault(d.isoformat(), {})
+        items = day.setdefault("items", {})
+        if status is None:
+            day["items"] = {}
+        else:
+            for _, it in day_items(d):
+                if items.get(it["id"]) != "missed":
+                    items[it["id"]] = status
+        save_log(log)
+
+
 def mark_sent(d: date, key: str) -> bool:
     """True dacă `key` (ora sau „recap") NU fusese trimis încă azi — și îl marchează."""
     with _lock:
@@ -636,14 +652,16 @@ def stats(days: int = 28, today: Optional[date] = None) -> dict:
         d = today - timedelta(days=off)
         entry = {"date": d.isoformat(), "vacation": is_vacation(d, plan), "cats": {}}
         day = log.get(d.isoformat())
-        if not entry["vacation"] and day and day.get("sent"):
+        # O zi contează dacă botul a trimis ceva (tăcerea = făcut) SAU dacă ai
+        # completat-o manual din pagină (atunci contează doar ce ai marcat).
+        if not entry["vacation"] and day and (day.get("sent") or day.get("items")):
             for _, it in day_items(d, plan):
                 k = it["kind"]
                 if k not in totals:
                     continue
                 st = (day.get("items") or {}).get(it["id"])
-                if d == today and st is None:
-                    continue                      # azi: contează doar ce e deja marcat
+                if st is None and (d == today or not day.get("sent")):
+                    continue                      # nemarcat și nici închis de bot
                 ok = st != "missed"
                 c = entry["cats"].setdefault(k, [0, 0])
                 c[0] += ok

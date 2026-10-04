@@ -65,6 +65,17 @@
 .dt-streak-day.done { background: var(--teal); }
 .dt-streak-day.miss { background: var(--surface2); }
 .dt-streak-day.future { background: var(--surface2); opacity: 0.4; }
+/* Fiecare zi din istoric e un buton (atingi = bifezi/debifezi ziua aia) */
+.dt-streak-row { height: 34px; gap: 2px; }
+.dt-streak-hit {
+    flex: 1; height: 100%; min-width: 0; padding: 0; border: none; background: transparent;
+    display: flex; align-items: flex-end; cursor: pointer; border-radius: 4px;
+}
+.dt-streak-hit:hover { background: rgba(255,255,255,.06); }
+.dt-streak-hit .dt-streak-day { width: 100%; flex: none; }
+.dt-streak-hit:hover .dt-streak-day.miss, .dt-streak-hit:hover .dt-streak-day.no-task { background: rgba(var(--teal-rgb),.35); }
+.dt-streak-day.miss { background: rgba(255,255,255,.1); }
+.dt-streak-day.no-task { background: rgba(255,255,255,.05); }
 .dt-stats-row { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 .dt-stat { background: var(--surface2); border-radius: var(--radius-xs); padding: 6px 12px; font-size: 11px; }
 .dt-stat strong { color: var(--primary); font-size: 14px; font-weight: 900; }
@@ -446,7 +457,7 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/target.js') }}"></script>
-<script src="{{ url_for('static', filename='js/daily-tasks.js') }}"></script>
+<script src="{{ url_for('static', filename='js/daily-tasks.js') }}?v=1.1"></script>
 <script src="{{ url_for('static', filename='js/reminders.js') }}"></script>
 <script src="{{ url_for('static', filename='js/maintenance.js') }}"></script>
 {% endblock %}

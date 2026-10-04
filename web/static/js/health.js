@@ -4,7 +4,9 @@
 // Tabul „Corp” e fosta pagină Fitness și are propriul gym.js.
 
 (function () {
-    const S = { data: null, editing: null };
+    // viewDate = ziua deschisă în tabul Azi (null = azi). Se alege din grila
+    // de consecvență sau cu săgețile ‹ ›, ca să completezi zile din trecut.
+    const S = { data: null, editing: null, viewDate: null };
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const KIND_ORDER = ['meal', 'supplement', 'gym', 'routine'];
@@ -20,7 +22,7 @@
 
     async function load() {
         try {
-            S.data = await api('/api/health');
+            S.data = await api('/api/health' + (S.viewDate ? `?date=${S.viewDate}` : ''));
         } catch (e) {
             $('hlTimeline').innerHTML = `<div class="hl-empty">Nu pot încărca: ${esc(e.message)}</div>`;
             return;
@@ -35,7 +37,8 @@
 
     function renderConsistency() {
         const { stats, kinds } = S.data;
-        const today = S.data.today.date;
+        const today = stats.days[stats.days.length - 1]?.date;
+        const shown = S.data.today.date;
         $('hlConsistency').innerHTML = ['meal', 'supplement', 'gym'].map((k) => {
             const pct = stats.pct[k];
             const cells = stats.days.map((d) => {
@@ -43,8 +46,8 @@
                 const c = d.cats[k];
                 if (d.vacation) cls = 'vac';
                 else if (c && c[1]) cls = c[0] === c[1] ? 'full' : c[0] === 0 ? 'zero' : 'part';
-                const tip = d.vacation ? `${d.date}: vacanță` : c ? `${d.date}: ${c[0]}/${c[1]}` : `${d.date}: fără date`;
-                return `<span class="hl-cell ${cls} ${d.date === today ? 'today' : ''}" title="${esc(tip)}"></span>`;
+                const tip = (d.vacation ? `${d.date}: vacanță` : c ? `${d.date}: ${c[0]}/${c[1]}` : `${d.date}: necompletat`) + ' — atinge ca s-o deschizi';
+                return `<button type="button" class="hl-cell ${cls} ${d.date === today ? 'today' : ''} ${d.date === shown ? 'sel' : ''}" data-day="${esc(d.date)}" title="${esc(tip)}" aria-label="${esc(tip)}"></button>`;
             }).join('');
             return `
             <div class="hl-cons">
@@ -60,28 +63,39 @@
 
     // ─────────────── AZI ───────────────
 
+    // Într-o zi în care botul a trimis remindere, „nemarcat" = făcut (✓ gri).
+    // Într-o zi din trecut fără bot, nemarcat = necompletat (—).
+    const silentIsDone = () => S.data.today.sent || S.data.today.is_today;
+
     function statusChip(it) {
         if (it.status === 'missed') return '<span class="hl-st bad">✗ n-am</span>';
         if (it.status === 'done') return '<span class="hl-st ok">✓ făcut</span>';
-        if (it.status === 'auto' || it.passed) return '<span class="hl-st auto">✓</span>';
+        if (it.status === 'auto' || (it.passed && silentIsDone())) return '<span class="hl-st auto">✓</span>';
+        if (it.passed) return '<span class="hl-st none">—</span>';
         return '<span class="hl-st">urmează</span>';
     }
 
     function renderToday() {
         const t = S.data.today;
         const d = new Date(t.date + 'T12:00:00');
-        $('hlTodayDate').textContent = d.toLocaleDateString('ro-RO', { weekday: 'long', day: 'numeric', month: 'long' })
+        $('hlTodayDate').textContent = (t.is_today ? 'Azi · ' : '') + d.toLocaleDateString('ro-RO', { weekday: 'long', day: 'numeric', month: 'long' })
             + (t.weekend ? ' · weekend' : ' · zi de școală');
+        $('hlTodaySub').textContent = t.is_today ? 'Atinge un item ca să-l marchezi „n-am făcut”.'
+            : t.sent ? 'Zi cu remindere — ce n-ai marcat contează ca făcut. Atinge ca să corectezi.'
+            : 'Zi necompletată — atinge ce ai făcut, sau „Tot făcut”.';
+        $('hlNextDay').disabled = t.is_today;
+        $('hlDayActions').classList.toggle('hidden', t.is_today);
+        $('hlVacWrap').classList.toggle('hidden', !t.is_today);
         $('hlVacation').checked = !!S.data.vacation_now;
-        $('hlBotWarn').classList.toggle('hidden', !!S.data.bot);
+        $('hlBotWarn').classList.toggle('hidden', !!S.data.bot || !t.is_today);
 
-        if (S.data.vacation_now) {
+        if (t.vacation) {
             const v = S.data.plan.vacation || {};
             $('hlTimeline').innerHTML = `<div class="hl-vac-banner">🏖️ Ești în vacanță${v.to ? ' până pe ' + esc(v.to.split('-').reverse().slice(0, 2).join('.')) : ''}. Nu primești remindere și zilele astea nu contează la consecvență.</div>`;
             return;
         }
         if (!t.items.length) {
-            $('hlTimeline').innerHTML = '<div class="hl-empty">Nimic programat azi. Adaugă iteme din tabul „Program”.</div>';
+            $('hlTimeline').innerHTML = `<div class="hl-empty">Nimic programat ${t.is_today ? 'azi' : 'în ziua asta'}. Adaugă iteme din tabul „Program”.</div>`;
             return;
         }
         const icon = (k) => S.data.kinds[k]?.icon || '•';
@@ -100,7 +114,11 @@
     async function toggleStatus(id) {
         const it = S.data.today.items.find((x) => x.id === id);
         if (!it) return;
-        const next = it.status === 'missed' ? 'done' : 'missed';
+        // Zi cu bot: nemarcat (=făcut) → n-am → făcut → n-am…
+        // Zi completată manual: nemarcat → făcut → n-am → nemarcat (poți anula)
+        const next = silentIsDone()
+            ? (it.status === 'missed' ? 'done' : 'missed')
+            : (!it.status ? 'done' : it.status === 'done' ? 'missed' : null);
         try {
             await api('/api/health/status', { date: S.data.today.date, id, status: next });
             it.status = next;
@@ -218,9 +236,40 @@
         if (name === 'body') window.dispatchEvent(new Event('resize'));
     }
 
+    // ─────────────── ZILE DIN TRECUT ───────────────
+
+    function shiftDay(iso, n) {
+        const d = new Date(iso + 'T12:00:00');
+        d.setDate(d.getDate() + n);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    async function openDay(iso) {
+        const today = S.data.stats.days[S.data.stats.days.length - 1]?.date;
+        S.viewDate = iso && iso !== today ? iso : null;
+        showTab('today');
+        await load();
+        $('hlPanel-today').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     // ─────────────── EVENIMENTE ───────────────
 
     function wire() {
+        $('hlConsistency').addEventListener('click', (e) => {
+            const c = e.target.closest('[data-day]');
+            if (c) openDay(c.dataset.day);
+        });
+        $('hlPrevDay').addEventListener('click', () => openDay(shiftDay(S.data.today.date, -1)));
+        $('hlNextDay').addEventListener('click', () => openDay(shiftDay(S.data.today.date, 1)));
+        $('hlBackToday').addEventListener('click', () => openDay(null));
+        $('hlAllDone').addEventListener('click', async () => {
+            try {
+                await api('/api/health/day', { date: S.data.today.date, status: 'done' });
+                flash('✓ Zi completată.');
+                load();
+            } catch (err) { flash(err.message, 'error'); }
+        });
+
         $('hlTabs').addEventListener('click', (e) => {
             const b = e.target.closest('[data-tab]');
             if (b) showTab(b.dataset.tab);

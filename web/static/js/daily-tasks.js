@@ -150,13 +150,17 @@ function buildStreakHtml(histTask, task) {
     // Show last 30 days
     const last30 = dateRange.slice(-30);
 
+    // Fiecare zi e un buton: atingi și bifezi/debifezi taskul în ziua aia —
+    // așa completezi ușor zilele în care n-ai intrat pe site.
     const bars = last30.map(d => {
         if (d > today) return `<div class="dt-streak-day future" title="${d}"></div>`;
-        if (d < created) return `<div class="dt-streak-day no-task" title="${d}"></div>`;
         const done = checkedSet.has(d);
-        return `<div class="dt-streak-day ${done ? 'done' : 'miss'}"
-                     style="${done ? 'height:100%' : 'height:40%'}"
-                     title="${d}: ${done ? 'Bifat ✓' : 'Nebisat ✗'}"></div>`;
+        const before = d < created;
+        return `<button type="button" class="dt-streak-hit" onclick="toggleDtCheck('${task.id}','${d}')"
+                     title="${d}: ${done ? 'Bifat ✓ — atinge ca să debifezi' : 'Nebifat — atinge ca să bifezi'}">
+                    <span class="dt-streak-day ${done ? 'done' : before ? 'no-task' : 'miss'}"
+                          style="${done ? 'height:100%' : 'height:40%'}"></span>
+                </button>`;
     }).join('');
 
     return `<div class="dt-streak-row" title="Ultimele 30 zile">${bars}</div>
@@ -171,16 +175,17 @@ function escapeHtml(str) {
 }
 
 // ===== TOGGLE CHECK =====
-async function toggleDtCheck(taskId) {
-    const checkedIds = dtChecks[dtCurrentDate] || [];
+async function toggleDtCheck(taskId, day) {
+    const date = day || dtCurrentDate;     // din bara de istoric vine ziua atinsă
+    const checkedIds = dtChecks[date] || [];
     const isNowChecked = !checkedIds.includes(taskId);
 
     // Optimistic update
     if (isNowChecked) {
-        if (!dtChecks[dtCurrentDate]) dtChecks[dtCurrentDate] = [];
-        dtChecks[dtCurrentDate].push(taskId);
+        if (!dtChecks[date]) dtChecks[date] = [];
+        dtChecks[date].push(taskId);
     } else {
-        dtChecks[dtCurrentDate] = dtChecks[dtCurrentDate].filter(id => id !== taskId);
+        dtChecks[date] = dtChecks[date].filter(id => id !== taskId);
     }
     renderDtList();
 
@@ -188,7 +193,7 @@ async function toggleDtCheck(taskId) {
         const res = await fetch('/api/daily-tasks/check', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ id: taskId, date: dtCurrentDate, done: isNowChecked })
+            body: JSON.stringify({ id: taskId, date, done: isNowChecked })
         }).then(r => r.json());
 
         if (res.status !== 'success') {

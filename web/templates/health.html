@@ -9,7 +9,7 @@
 
 {% block head_extra %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/health.css') }}?v=1.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/health.css') }}?v=1.1">
 <style>
 .gym-section-label {
     font-size: 9px; font-weight: 800; text-transform: uppercase;
@@ -67,11 +67,19 @@
 <!-- ═══════════ AZI ═══════════ -->
 <section class="hl-panel active" id="hlPanel-today">
     <div class="hl-today-head">
-        <div>
-            <div class="hl-today-date" id="hlTodayDate">—</div>
-            <div class="hl-today-sub" id="hlTodaySub">Atinge un item ca să-l marchezi „n-am făcut”.</div>
+        <div class="hl-daynav">
+            <button type="button" class="hl-nav-btn" id="hlPrevDay" title="Ziua de dinainte">‹</button>
+            <div>
+                <div class="hl-today-date" id="hlTodayDate">—</div>
+                <div class="hl-today-sub" id="hlTodaySub">Atinge un item ca să-l marchezi „n-am făcut”.</div>
+            </div>
+            <button type="button" class="hl-nav-btn" id="hlNextDay" title="Ziua următoare">›</button>
         </div>
-        <label class="hl-vac" title="În vacanță nu primești remindere">
+        <div class="hl-day-actions hidden" id="hlDayActions">
+            <button type="button" class="btn btn-sm btn-teal" id="hlAllDone">✓ Tot făcut</button>
+            <button type="button" class="btn btn-sm btn-ghost" id="hlBackToday">Azi →</button>
+        </div>
+        <label class="hl-vac" id="hlVacWrap" title="În vacanță nu primești remindere">
             <span>🏖️ Vacanță</span>
             <span class="hl-switch"><input type="checkbox" id="hlVacation"><span></span></span>
         </label>
@@ -481,7 +489,7 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/daily-status.js') }}?v=3.0"></script>
-<script src="{{ url_for('static', filename='js/health.js') }}?v=1.0"></script>
+<script src="{{ url_for('static', filename='js/health.js') }}?v=1.1"></script>
 <script src="{{ url_for('static', filename='js/gym.js') }}"></script>
 <script>
 // Show mood sparkline from journal data
