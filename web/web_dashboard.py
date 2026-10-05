@@ -293,8 +293,13 @@ def get_logs_for_month(year_month: str):
                     pass
 
     grouped_logs = defaultdict(list)
+    periods = defaultdict(list)       # intrările pe o perioadă (o săptămână etc.)
     for log in logs:
         try:
+            if log.get("type") in ("period_entry", "period_summary"):
+                log['display_time'] = datetime.fromisoformat(log['timestamp']).strftime("%H:%M")
+                periods[(log.get("period_from"), log.get("period_to"))].append(log)
+                continue
             if log.get("type") in ["daily_entry", "daily_summary"]:
                 if "logical_date" in log:
                     day_string = log["logical_date"]
@@ -330,6 +335,20 @@ def get_logs_for_month(year_month: str):
             "logs": day_logs,
             "journal_photos": journal_photos.get(day, [])
         })
+
+    # Perioadele apar în listă la ultima lor zi, înaintea zilei respective.
+    for (p_from, p_to), p_logs in periods.items():
+        if not p_from or not p_to:
+            continue
+        p_logs.sort(key=lambda x: (0 if x.get("type") == "period_summary" else 1, x['timestamp']))
+        try:
+            from tools.journal_period import label
+            lbl = label(datetime.strptime(p_from, "%Y-%m-%d").date(), datetime.strptime(p_to, "%Y-%m-%d").date())
+        except Exception:
+            lbl = f"{p_from} – {p_to}"
+        result.append({"date": p_to, "period": {"from": p_from, "to": p_to, "label": lbl},
+                       "logs": p_logs, "journal_photos": []})
+    result.sort(key=lambda d: (d["date"], 1 if d.get("period") else 0), reverse=True)
     return result
 
 def get_all_logs():
@@ -1382,56 +1401,61 @@ def _append_journal_entry(text: str, custom_date: str = "", source: str = "web")
     return logical_date
 
 
-# ============ JURNAL PE MAI MULTE ZILE ============
-# Scrii o dată despre o perioadă → AI-ul propune textul pe zile → îl corectezi
-# în pagină → se salvează toate. Nu cere deblocarea jurnalului: e textul pe
-# care tocmai l-ai scris, iar analiza zilelor rulează în fundal fără să
-# întoarcă nimic din jurnal.
+# ============ JURNAL PE O PERIOADĂ ============
+# N-ai scris o săptămână? O intrare pentru toată perioada, ca un singur bloc,
+# cu analiză și scoruri ca la o zi (vezi tools/journal_period.py). Scrisul nu
+# cere deblocarea jurnalului; analiza rulează în fundal și nu întoarce nimic.
 
-@app.route('/api/journal/split', methods=['POST'])
-@requires_auth
-def journal_split():
-    from tools.journal_split import split
-    body = request.json or {}
-    try:
-        start = datetime.strptime(body.get('from', ''), '%Y-%m-%d').date()
-        end = datetime.strptime(body.get('to', ''), '%Y-%m-%d').date()
-    except ValueError:
-        return jsonify({"status": "error", "message": "Alege intervalul de zile."}), 400
-    r = split(body.get('text', ''), start, end)
-    return jsonify(r), (200 if r["status"] == "ok" else 400)
-
-
-@app.route('/api/journal/bulk', methods=['POST'])
-@requires_auth
-def journal_bulk():
+def _judge_period_bg(d_from, d_to):
     import threading
-    body = request.json or {}
-    days = []
-    for d in (body.get('days') or [])[:31]:
-        text = str((d or {}).get('text') or '').strip()
-        try:
-            day = datetime.strptime(str((d or {}).get('date') or ''), '%Y-%m-%d').date()
-        except ValueError:
-            continue
-        if text and day <= datetime.now().date():
-            days.append((day.isoformat(), text))
-    if not days:
-        return jsonify({"status": "error", "message": "Nicio zi cu text."}), 400
-    for day, text in days:
-        _append_journal_entry(text, day, source="web_multi")
+    from tools.journal_period import judge_period
 
+    def _run():
+        try:
+            memory = getattr(get_journal(), 'memory', None)
+        except Exception:
+            memory = None
+        try:
+            judge_period(d_from, d_to, memory=memory)
+        except Exception as e:
+            print(f"[Jurnal] Analiza perioadei {d_from}–{d_to} a eșuat: {e}")
+    threading.Thread(target=_run, daemon=True, name="journal-period").start()
+
+
+def _period_dates(body):
+    try:
+        return (datetime.strptime(body.get('from', ''), '%Y-%m-%d').date(),
+                datetime.strptime(body.get('to', ''), '%Y-%m-%d').date())
+    except ValueError:
+        return None, None
+
+
+@app.route('/api/journal/period', methods=['POST'])
+@requires_auth
+def journal_period_add():
+    from tools.journal_period import add_period
+    body = request.json or {}
+    d_from, d_to = _period_dates(body)
+    if not d_from:
+        return jsonify({"status": "error", "message": "Alege perioada."}), 400
+    r = add_period(d_from, d_to, body.get('text', ''))
+    if r["status"] != "ok":
+        return jsonify(r), 400
     if body.get('judge', True):
-        def _judge_all(dates):
-            journal = get_journal()
-            for day in dates:
-                try:
-                    journal.rejudge_day(day)
-                except Exception as e:
-                    print(f"[Jurnal] Analiza {day} a eșuat: {e}")
-        threading.Thread(target=_judge_all, args=([d for d, _ in days],),
-                         daemon=True, name="journal-judge").start()
-    return jsonify({"status": "success", "saved": len(days)})
+        _judge_period_bg(d_from, d_to)
+    return jsonify(r)
+
+
+@app.route('/api/journal/period/rejudge', methods=['POST'])
+@requires_auth
+@requires_journal_unlock
+def journal_period_rejudge():
+    d_from, d_to = _period_dates(request.json or {})
+    if not d_from:
+        return jsonify({"status": "error", "message": "Perioadă invalidă."}), 400
+    _judge_period_bg(d_from, d_to)
+    return jsonify({"status": "ok"})
+
 
 @app.route('/api/journal/rejudge', methods=['POST'])
 @requires_auth

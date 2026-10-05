@@ -161,7 +161,6 @@
     /* Jurnal */
     .journal-input-card { padding: 14px !important; border-radius: 16px !important; }
     #newEntryText, #jmText { min-height: 130px !important; }
-    .jm-day textarea { min-height: 60px !important; }
     .jm-mode { margin-left: 0; width: 100%; }
     .jm-mode-btn { flex: 1; padding: 8px 12px; }
     .journal-photo-slot { width: 72px !important; height: 72px !important; }

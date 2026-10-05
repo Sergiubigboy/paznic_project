@@ -266,9 +266,17 @@ function renderLogs(daysArray) {
 
     displayedDays.forEach(dayObj => {
         const group = document.createElement('div');
-        group.className = 'day-group';
+        const per = dayObj.period;           // intrare pentru o perioadă (o săptămână etc.)
+        group.className = 'day-group' + (per ? ' period-group' : '');
 
-        group.innerHTML = `
+        group.innerHTML = per ? `
+            <div class="day-header">
+                <span class="day-date-str"><span class="period-badge">📅 Perioadă</span> ${per.label}</span>
+                <div class="day-actions">
+                    <button class="btn btn-secondary btn-xs" onclick="triggerRejudgePeriod('${per.from}','${per.to}',this)">🔄 Re-judecă</button>
+                </div>
+            </div>
+        ` : `
             <div class="day-header">
                 <span class="day-date-str">${fmtDate(dayObj.date)}</span>
                 <div class="day-actions">
@@ -294,7 +302,7 @@ function renderLogs(daysArray) {
         dayObj.logs.forEach(log => {
             const card = document.createElement('div');
 
-            if (log.type === 'daily_summary') {
+            if (log.type === 'daily_summary' || log.type === 'period_summary') {
                 card.className = 'summary-card';
                 const a = log.analysis || {};
                 const scores = a.scores || {};
@@ -317,10 +325,10 @@ function renderLogs(daysArray) {
 
                 card.innerHTML = `
                     <div class="summary-top">
-                        <span class="summary-label">🧠 Analiză Psihologică</span>
+                        <span class="summary-label">🧠 ${per ? 'Analiza perioadei' : 'Analiză Psihologică'}</span>
                         <div style="display:flex;align-items:center;gap:8px">
                             ${editedTag}
-                            <button class="btn btn-ghost btn-xs" onclick="openScoreEdit('${dayObj.date}',${JSON.stringify(scores).replace(/"/g,'&quot;')})">✏️ Scoruri</button>
+                            ${per ? '' : `<button class="btn btn-ghost btn-xs" onclick="openScoreEdit('${dayObj.date}',${JSON.stringify(scores).replace(/"/g,'&quot;')})">✏️ Scoruri</button>`}
                         </div>
                     </div>
                     <div class="summary-text">${a.short_summary || '—'}</div>
@@ -332,14 +340,14 @@ function renderLogs(daysArray) {
                 `;
             } else {
                 card.className = 'entry-card';
-                const src = log.source === 'web' ? '🌐 Web' : '🎤 Vocal';
+                const src = log.type === 'period_entry' ? '📅 Perioadă' : log.source === 'web' ? '🌐 Web' : '🎤 Vocal';
                 card.innerHTML = `
                     <div class="entry-header">
                         <span class="entry-time">${log.display_time || ''}</span>
                         <span class="entry-badge">${src}</span>
                     </div>
                     <div class="entry-text">"${log.raw_text || ''}"</div>
-                    <button class="entry-photo-btn" onclick="openEntryPhotoModal('${dayObj.date}')">📷 Adaugă poze</button>
+                    ${per ? '' : `<button class="entry-photo-btn" onclick="openEntryPhotoModal('${dayObj.date}')">📷 Adaugă poze</button>`}
                 `;
             }
             group.appendChild(card);
@@ -496,6 +504,18 @@ document.getElementById('submitEntryBtn').addEventListener('click', async functi
 document.getElementById('rejudgeAfterSaveBtn').addEventListener('click', function() {
     triggerRejudge(this.dataset.date || lastSavedDate, this);
 });
+
+function triggerRejudgePeriod(from, to, btn) {
+    btn.disabled = true; btn.textContent = '⏳ Analizez…';
+    fetch('/api/journal/period/rejudge', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ from, to })
+    }).then(r => r.json()).then(res => {
+        if (res.status === 'locked') { JournalLock.showLock(res); return; }
+        flash('🔄 Analizez perioada — apare în ~30s.');
+        setTimeout(() => loadLogsForMonth(currentMonth), 30000);
+    }).catch(() => { btn.disabled = false; btn.textContent = '🔄 Re-judecă'; flash('❌ Eroare rețea', 'error'); });
+}
 
 function triggerRejudge(date, btn) {
     const orig = btn.textContent;
