@@ -232,7 +232,7 @@ try:
     ok("config.py se importa corect.")
 
     CHEI = [
-        ("GEMINI_API_KEY",        True,  "vocea si tot ce tine de AI"),
+        ("GEMINI_API_KEY",        True,  "vocea Live (+ textul, daca LLM_PROVIDER=gemini)"),
         ("TELEGRAM_BOT_TOKEN",    False, "notificari pe telefon"),
         ("TELEGRAM_CHAT_ID",      False, "notificari pe telefon"),
         ("HA_URL",                False, "Home Assistant"),
@@ -252,11 +252,44 @@ except Exception as e:
     err(f"config.py nu se importa: {type(e).__name__}: {e}",
         "git pull   (config.py trebuie sa vina din git)")
 
+# ── 5b. FURNIZORUL DE TEXT ─────────────────────────────────────────────
+sectiune("5b. FURNIZORUL DE TEXT (LLM_PROVIDER)")
+
+try:
+    import config as _C
+    print(f"  Text pe: {_C.LLM_PROVIDER}  (vocea Live e mereu pe Gemini)")
+    if _C.LLM_PROVIDER == "claude":
+        import json
+        import subprocess
+        from core.claude_cli import find_cli
+        cli = find_cli()
+        if not cli:
+            err("Executabilul `claude` nu a fost gasit — textul cade pe Gemini.",
+                "curl -fsSL https://claude.ai/install.sh | bash   (vezi INSTALL_PI.md)")
+        else:
+            ok(f"Claude CLI: {cli}")
+            env = dict(os.environ)
+            env.pop("ANTHROPIC_API_KEY", None)
+            try:
+                r = subprocess.run([cli, "auth", "status"], capture_output=True,
+                                   text=True, timeout=20, env=env)
+                st = json.loads(r.stdout or "{}")
+                if st.get("loggedIn"):
+                    ok(f"Autentificat ({st.get('authMethod')}, "
+                       f"abonament: {st.get('subscriptionType', '?')})")
+                else:
+                    err("Claude CLI nu e autentificat.",
+                        "claude setup-token  -> pune tokenul in .env ca CLAUDE_CODE_OAUTH_TOKEN")
+            except Exception as e:
+                warn(f"Nu pot citi starea autentificarii: {type(e).__name__}: {e}")
+except Exception as e:
+    err(f"Verificarea furnizorului a picat: {type(e).__name__}: {e}")
+
 # ── 6. MODULELE PROIECTULUI ────────────────────────────────────────────
 sectiune("6. MODULELE PROIECTULUI")
 
 MODULE = [
-    "personalization", "ai_core", "core.event_bus", "core.audio_interface",
+    "personalization", "ai_core", "core.claude_cli", "core.event_bus", "core.audio_interface",
     "core.gemini_live", "core.llm_router", "core.tts_engine", "core.emotions",
     "core.user_profile", "core.day_runner", "agents.chronos_agent",
     "agents.music_agent", "agents.wled_agent", "agents.logger_agent",

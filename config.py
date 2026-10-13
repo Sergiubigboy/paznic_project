@@ -109,9 +109,15 @@ try:
         # Platformă
         RASPBERRY_PI,
         # LLM Modele
+        LLM_PROVIDER,
+        LLM_FALLBACK_TO_GEMINI,
         GEMINI_MODEL_DEFAULT,
         GEMINI_MODEL_LOGGER,
         GEMINI_MODEL_DJ,
+        CLAUDE_MODEL_DEFAULT,
+        CLAUDE_MODEL_LOGGER,
+        CLAUDE_MODEL_DJ,
+        CLAUDE_MAX_PARALLEL,
         # Emoții
         EMOTIONS_ENABLED,
         EMOTION_ANALYSIS_ENABLED,
@@ -171,10 +177,16 @@ except ImportError as e:
     TTS_SPEAK_TERMINAL_REPLIES = False
     DISPATCHER_TIMEOUT       = 35.0
     RASPBERRY_PI             = False
+    LLM_PROVIDER             = "claude"
+    LLM_FALLBACK_TO_GEMINI   = True
     GEMINI_MODEL_DEFAULT     = "gemini-2.5-flash"
     GEMINI_MODEL_LOGGER      = "gemini-2.5-flash"
     GEMINI_MODEL_DJ          = "gemini-2.5-flash"
-    EMOTIONS_ENABLED         = True
+    CLAUDE_MODEL_DEFAULT     = "haiku"
+    CLAUDE_MODEL_LOGGER      = "sonnet"
+    CLAUDE_MODEL_DJ          = "haiku"
+    CLAUDE_MAX_PARALLEL      = 2
+    EMOTIONS_ENABLED        = True
     EMOTION_ANALYSIS_ENABLED = True
     EMOTION_BASELINE     = {"nervozitate": 15, "bucurie": 50, "plictiseala": 20, "afectiune": 55}
     EMOTION_HALFLIFE_MIN = {"nervozitate": 25, "bucurie": 90, "plictiseala": 0, "afectiune": 720}
@@ -195,6 +207,29 @@ except ImportError as e:
     VAD_PREFIX_PADDING_MS    = 300
     VAD_START_SENSITIVITY    = "START_SENSITIVITY_LOW"
     VAD_END_SENSITIVITY      = "END_SENSITIVITY_LOW"
+
+# ─────────────────────────────────────────────────────────────
+# FURNIZORUL DE TEXT (vocea Live rămâne pe Gemini oricum)
+# ─────────────────────────────────────────────────────────────
+# .env are ultimul cuvânt: LLM_PROVIDER=gemini schimbă fără să atingi codul.
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", LLM_PROVIDER).strip().lower()
+if LLM_PROVIDER not in ("claude", "gemini"):
+    import warnings
+    warnings.warn(f"LLM_PROVIDER necunoscut: {LLM_PROVIDER!r}. Folosesc gemini.")
+    LLM_PROVIDER = "gemini"
+
+# Unde e executabilul `claude`. Gol = căutare automată (PATH, ~/.local/bin,
+# CLI-ul aplicației desktop pe Windows).
+CLAUDE_CLI_PATH = os.environ.get("CLAUDE_CLI_PATH", "")
+
+# Modelul pe roluri, pentru furnizorul ales. Codul folosește DOAR astea,
+# nu numele Gemini/Claude direct.
+if LLM_PROVIDER == "claude":
+    LLM_MODEL_DEFAULT, LLM_MODEL_LOGGER, LLM_MODEL_DJ = (
+        CLAUDE_MODEL_DEFAULT, CLAUDE_MODEL_LOGGER, CLAUDE_MODEL_DJ)
+else:
+    LLM_MODEL_DEFAULT, LLM_MODEL_LOGGER, LLM_MODEL_DJ = (
+        GEMINI_MODEL_DEFAULT, GEMINI_MODEL_LOGGER, GEMINI_MODEL_DJ)
 
 # ─────────────────────────────────────────────────────────────
 # PARAMETRI AUDIO LEGACY (compatibilitate cu codul vechi)

@@ -102,7 +102,37 @@ WLED_IP_MAIN=...
 WLED_IP_FLOOR=...
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
+CLAUDE_CODE_OAUTH_TOKEN=...   # vezi 4b
 ```
+
+---
+
+## 4b. Textul pe abonamentul Claude
+
+Tot ce e text (planificare, DJ, lumini, jurnal, emoții, conversația din
+terminal) merge prin Claude Code CLI, pe abonamentul Claude — fără cost per
+token. Vocea Live rămâne pe Gemini, cu `GEMINI_API_KEY`.
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash     # pune `claude` în ~/.local/bin
+claude setup-token                                  # login în browser, afișează un token
+```
+
+`setup-token` îți dă un link: deschide-l pe telefon/PC, loghează-te, și
+copiază tokenul primit în `.env` ca `CLAUDE_CODE_OAUTH_TOKEN=...`. Serviciul
+systemd nu are browser, așa că tokenul ăsta e singurul login care merge acolo.
+
+Verifică: `python tests/diagnostic.py` → secțiunea **5b** trebuie să arate
+„Autentificat". Test rapid, fără restul lui Chronos:
+
+```bash
+python -m core.claude_cli "Spune salut în 3 cuvinte"
+```
+
+Vrei înapoi pe Gemini? `LLM_PROVIDER=gemini` în `.env` (sau în
+`personalization.py`, secțiunea 7). Dacă Claude pică (CLI lipsă, limita
+abonamentului atinsă), apelul se reîncearcă singur pe Gemini cât timp
+`LLM_FALLBACK_TO_GEMINI = True`.
 
 ---
 

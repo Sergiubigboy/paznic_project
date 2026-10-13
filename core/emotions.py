@@ -353,7 +353,7 @@ def analyze_exchange(user_text: str, ai_text: str = "") -> Dict[str, float]:
     state.register_interaction()
 
     try:
-        from ai_core import ask_gemini_json
+        from ai_core import ask_llm_json
     except ImportError:
         return {}
 
@@ -391,7 +391,7 @@ insulte grele sau laude sincere. Majoritatea schimburilor normale = 0 sau ±3.
 Afecțiunea se schimbă cel mai greu — rar peste ±10."""
 
     try:
-        result = ask_gemini_json(prompt, schema=_ANALYSIS_SCHEMA, temperature=0.3)
+        result = ask_llm_json(prompt, schema=_ANALYSIS_SCHEMA, temperature=0.3)
     except Exception as e:
         logger.debug(f"[Emotions] Analiză eșuată: {e}")
         return {}

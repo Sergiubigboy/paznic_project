@@ -7,8 +7,8 @@ Agent AI dedicat pentru curatarea muzicală (DJ) și trimiterea comenzilor pe di
 import logging
 import random
 from datetime import datetime
-from config import GEMINI_MODEL_DJ
-from ai_core import ask_gemini_json
+from config import LLM_MODEL_DJ
+from ai_core import ask_llm_json
 from tools.spotify_tools import send_google_command, pause_music, resume_music
 from tools.spotify_api import (
     pause_playback_api, resume_playback_api,
@@ -78,7 +78,7 @@ class MusicAgent:
             "required": ["google_command", "reason"]
         }
 
-        decision = ask_gemini_json(system_prompt, schema=schema, temperature=0.9, model=GEMINI_MODEL_DJ)
+        decision = ask_llm_json(system_prompt, schema=schema, temperature=0.9, model=LLM_MODEL_DJ)
 
         if not decision or not isinstance(decision, dict):
             # Fallback

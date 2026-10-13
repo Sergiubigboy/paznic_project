@@ -1,9 +1,17 @@
 """
-ai_core.py — Stratul de transport către Gemini (REST)
-======================================================
-Un singur loc prin care trec TOATE apelurile text/JSON către Gemini.
+ai_core.py — Stratul de transport pentru text (Claude sau Gemini)
+==================================================================
+Un singur loc prin care trec TOATE apelurile text/JSON ale lui Chronos.
+Vocea Live NU trece pe aici (e în core/gemini_live.py, mereu pe Gemini).
 
-De ce există în forma asta:
+Furnizorul se alege în personalization.py / .env cu LLM_PROVIDER:
+  - "claude" → core/claude_cli.py, pe abonamentul Claude (Claude Code CLI)
+  - "gemini" → Gemini REST, mai jos
+Apelanții folosesc ask_llm_json / ask_llm_text / stream_llm_text și nu știu
+cine răspunde. Dacă Claude pică și LLM_FALLBACK_TO_GEMINI e activ, apelul se
+reîncearcă pe Gemini.
+
+De ce transportul Gemini există în forma asta:
   - CONEXIUNI REFOLOSITE. Înainte, fiecare apel deschidea o conexiune TCP+TLS
     nouă. Handshake-ul costă 100-250ms pe fiecare request — pe un Pi, peste
     linia lui, ăsta era cel mai scump lucru din tot apelul. Acum o singură
@@ -28,7 +36,12 @@ from typing import Any, Dict, Iterator, Optional
 import requests
 from requests.adapters import HTTPAdapter
 
-from config import GEMINI_API_KEY, GEMINI_BASE_URL, GEMINI_MODEL_DEFAULT
+from config import (
+    GEMINI_API_KEY, GEMINI_BASE_URL,
+    GEMINI_MODEL_DEFAULT, GEMINI_MODEL_LOGGER, GEMINI_MODEL_DJ,
+    CLAUDE_MODEL_DEFAULT, CLAUDE_MODEL_LOGGER, CLAUDE_MODEL_DJ,
+    LLM_PROVIDER, LLM_FALLBACK_TO_GEMINI,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +107,14 @@ def get_session() -> requests.Session:
 
 
 def close_session() -> None:
-    """Închide sesiunea partajată (apelat la shutdown)."""
+    """Închide sesiunea partajată și oprește apelurile Claude în curs
+    (apelat la shutdown)."""
     global _session
+    try:
+        from core import claude_cli
+        claude_cli.shutdown()
+    except Exception:
+        pass
     with _session_lock:
         if _session is not None:
             try:
@@ -163,7 +182,7 @@ def _extract_text(data: dict) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
-# API PUBLIC
+# GEMINI (REST)
 # ─────────────────────────────────────────────────────────────
 
 def _salveaza_json_taiat(raw: str) -> Optional[dict]:
@@ -243,7 +262,7 @@ def _salveaza_json_taiat(raw: str) -> Optional[dict]:
         return None
 
 
-def ask_gemini_json(
+def _gemini_json(
     system_prompt: str,
     schema: dict,
     temperature: float = 0.7,
@@ -290,7 +309,7 @@ def ask_gemini_json(
         return None
 
 
-def ask_gemini_text(
+def _gemini_text(
     prompt: str,
     temperature: float = 0.8,
     model: Optional[str] = None,
@@ -325,7 +344,7 @@ def ask_gemini_text(
     return text or None
 
 
-def stream_gemini_text(
+def _gemini_stream(
     prompt: str,
     temperature: float = 0.8,
     model: Optional[str] = None,
@@ -354,6 +373,9 @@ def stream_gemini_text(
     if resp is None:
         return
 
+    # SSE vine fără charset → requests ar decoda ca ISO-8859-1 și ar strica
+    # diacriticele („bunÄ" în loc de „bună").
+    resp.encoding = "utf-8"
     try:
         for line in resp.iter_lines(decode_unicode=True):
             if not line or not line.startswith("data:"):
@@ -372,3 +394,199 @@ def stream_gemini_text(
         logger.error(f"❌ [AI Core] Stream întrerupt ({model}): {type(e).__name__}: {e}")
     finally:
         resp.close()
+
+
+# ─────────────────────────────────────────────────────────────
+# CLAUDE (abonament, prin CLI)
+# ─────────────────────────────────────────────────────────────
+
+_TIMEOUT_CLAUDE_JSON = 60.0
+_TIMEOUT_CLAUDE_TEXT = 60.0
+_TIMEOUT_CLAUDE_STREAM = 90.0
+
+_SYSTEM_CLAUDE_JSON = (
+    "Ești un modul de extracție structurată. Răspunzi EXCLUSIV cu un singur "
+    "obiect JSON valid care respectă schema dată — fără text înainte sau după, "
+    "fără blocuri ``` și fără comentarii."
+)
+_SYSTEM_CLAUDE_TEXT = (
+    "Urmezi întocmai personajul și instrucțiunile din mesaj. Răspunsul e "
+    "afișat pe ecran și citit cu voce tare: text simplu, fără markdown, fără "
+    "linkuri și fără liste de surse."
+)
+
+# Rolurile, ca un apel de fallback să ajungă pe modelul echivalent.
+_ROLURI = (
+    (CLAUDE_MODEL_LOGGER, GEMINI_MODEL_LOGGER),
+    (CLAUDE_MODEL_DJ, GEMINI_MODEL_DJ),
+    (CLAUDE_MODEL_DEFAULT, GEMINI_MODEL_DEFAULT),
+)
+
+_claude_lipsa_raportat = False
+
+
+def _model_gemini(model: Optional[str]) -> str:
+    if not model or model.startswith("gemini"):
+        return model or GEMINI_MODEL_DEFAULT
+    for claude, gemini in _ROLURI:
+        if model == claude:
+            return gemini
+    return GEMINI_MODEL_DEFAULT
+
+
+def _model_claude(model: Optional[str]) -> str:
+    if not model:
+        return CLAUDE_MODEL_DEFAULT
+    if model.startswith("gemini"):
+        for claude, gemini in _ROLURI:
+            if model == gemini:
+                return claude
+        return CLAUDE_MODEL_DEFAULT
+    return model
+
+
+def _foloseste_claude() -> bool:
+    """Claude e ales ȘI CLI-ul există. Altfel cădem pe Gemini, o dată anunțat."""
+    global _claude_lipsa_raportat
+    if LLM_PROVIDER != "claude":
+        return False
+    from core import claude_cli
+    if claude_cli.find_cli():
+        return True
+    if not _claude_lipsa_raportat:
+        _claude_lipsa_raportat = True
+        logger.warning("⚠️ [AI Core] LLM_PROVIDER=claude, dar CLI-ul lipsește → folosesc Gemini.")
+    return False
+
+
+def _poate_fallback() -> bool:
+    return bool(LLM_FALLBACK_TO_GEMINI and GEMINI_API_KEY)
+
+
+def _schema_standard(schema: Any) -> Any:
+    """Schema Gemini ("OBJECT", "STRING") → JSON Schema obișnuit ("object")."""
+    if isinstance(schema, dict):
+        return {k: (v.lower() if k == "type" and isinstance(v, str)
+                    else _schema_standard(v))
+                for k, v in schema.items()}
+    if isinstance(schema, list):
+        return [_schema_standard(x) for x in schema]
+    return schema
+
+
+def _parse_json_claude(raw: str, model: str) -> Optional[dict]:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1]
+        text = text.rsplit("```", 1)[0]
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0:
+        logger.error(f"❌ [AI Core] Claude n-a dat JSON ({model}): {raw[:200]}")
+        return None
+    try:
+        val = json.loads(text[start:end + 1])
+        if isinstance(val, dict):
+            return val
+    except json.JSONDecodeError:
+        pass
+    salvat = _salveaza_json_taiat(text[start:])
+    if salvat is not None:
+        logger.warning(f"⚠️ [AI Core] JSON Claude incomplet ({model}) — "
+                       f"recuperat {len(salvat)} campuri: {list(salvat)}")
+        return salvat
+    logger.error(f"❌ [AI Core] JSON invalid de la Claude ({model}): {raw[:200]}")
+    return None
+
+
+def _claude_json(system_prompt: str, schema: dict, model: Optional[str]) -> Optional[dict]:
+    from core import claude_cli
+    model = _model_claude(model)
+    prompt = (
+        f"{system_prompt}\n\n---\n"
+        "Răspunde DOAR cu un obiect JSON care respectă schema de mai jos "
+        "(JSON Schema). Câmpurile din `required` sunt obligatorii.\n"
+        f"{json.dumps(_schema_standard(schema), ensure_ascii=False)}"
+    )
+    raw = claude_cli.complete(prompt, _SYSTEM_CLAUDE_JSON, model,
+                              timeout=_TIMEOUT_CLAUDE_JSON)
+    return _parse_json_claude(raw, model) if raw else None
+
+
+# ─────────────────────────────────────────────────────────────
+# API PUBLIC
+# ─────────────────────────────────────────────────────────────
+
+def ask_llm_json(
+    system_prompt: str,
+    schema: dict,
+    temperature: float = 0.7,
+    model: Optional[str] = None,
+    max_tokens: int = MAX_TOKENS_JSON,
+    thinking: bool = False,
+) -> Optional[dict]:
+    """Răspuns JSON pe schemă (schema în format Gemini: "OBJECT", "STRING"...).
+
+    `temperature`, `max_tokens` și `thinking` contează doar pe Gemini; CLI-ul
+    Claude nu le expune (gândirea e oricum oprită acolo).
+    """
+    if _foloseste_claude():
+        rez = _claude_json(system_prompt, schema, model)
+        if rez is not None or not _poate_fallback():
+            return rez
+        logger.warning("⚠️ [AI Core] Claude a picat → reîncerc pe Gemini.")
+    return _gemini_json(system_prompt, schema, temperature, _model_gemini(model),
+                        max_tokens, thinking)
+
+
+def ask_llm_text(
+    prompt: str,
+    temperature: float = 0.8,
+    model: Optional[str] = None,
+    use_search: bool = False,
+    max_tokens: int = MAX_TOKENS_TEXT,
+    thinking: bool = False,
+) -> Optional[str]:
+    """Răspuns text liber, opțional cu căutare pe net (Google pe Gemini,
+    WebSearch pe Claude)."""
+    if _foloseste_claude():
+        from core import claude_cli
+        rez = claude_cli.complete(prompt, _SYSTEM_CLAUDE_TEXT, _model_claude(model),
+                                  search=use_search, timeout=_TIMEOUT_CLAUDE_TEXT)
+        if rez or not _poate_fallback():
+            return rez
+        logger.warning("⚠️ [AI Core] Claude a picat → reîncerc pe Gemini.")
+    return _gemini_text(prompt, temperature, _model_gemini(model), use_search,
+                        max_tokens, thinking)
+
+
+def stream_llm_text(
+    prompt: str,
+    temperature: float = 0.8,
+    model: Optional[str] = None,
+    use_search: bool = False,
+    max_tokens: int = MAX_TOKENS_TEXT,
+    thinking: bool = False,
+) -> Iterator[str]:
+    """Generator peste bucățile de text (vezi `_gemini_stream`).
+
+    Fallback-ul pe Gemini se face doar dacă Claude n-a produs NICIO bucată —
+    altfel utilizatorul ar auzi două răspunsuri lipite.
+    """
+    if _foloseste_claude():
+        from core import claude_cli
+        emis = False
+        for piece in claude_cli.stream(prompt, _SYSTEM_CLAUDE_TEXT, _model_claude(model),
+                                       search=use_search, timeout=_TIMEOUT_CLAUDE_STREAM):
+            emis = True
+            yield piece
+        if emis or not _poate_fallback():
+            return
+        logger.warning("⚠️ [AI Core] Claude n-a răspuns → reîncerc pe Gemini.")
+    yield from _gemini_stream(prompt, temperature, _model_gemini(model), use_search,
+                              max_tokens, thinking)
+
+
+# Numele vechi, păstrate pentru orice apelant extern.
+ask_gemini_json = ask_llm_json
+ask_gemini_text = ask_llm_text
+stream_gemini_text = stream_llm_text

@@ -9,8 +9,8 @@ import speech_recognition as sr
 from datetime import datetime, timedelta
 import glob
 import chromadb
-from ai_core import ask_gemini_json
-from config import GEMINI_MODEL_LOGGER
+from ai_core import ask_llm_json
+from config import LLM_MODEL_LOGGER
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "chronos_data")
@@ -36,15 +36,15 @@ TARGET_SILENCE = 4.0
 SCORES_SCHEMA = {
     "type": "OBJECT",
     "properties": {
-        "energie":         {"type": "INTEGER", "description": "Nivelul de energie/vitalitate al zilei (1=mort, 10=exploziv)"},
+        "energie":         {"type": "INTEGER", "description": "Energia fizica a zilei (1=praf, 10=exploziv). Dupa un sprint, o zi joasa e recuperare normala."},
         "stres":           {"type": "INTEGER", "description": "Stresul psihic resimtit (1=relaxat total, 10=copleșit/paralizat)"},
-        "dopamina":        {"type": "INTEGER", "description": "Calitatea surselor de dopamina (1=scroll/vicii/pasiv, 10=activ/natural/sport/creație)"},
-        "disciplina":      {"type": "INTEGER", "description": "Autocontrol si respectarea planului personal (1=caotic, 10=de fier)"},
+        "dopamina":        {"type": "INTEGER", "description": "Cat de activa a fost ziua ca surse de stimulare (1=mai mult consum pasiv/ecrane, 10=mai mult facut/miscat/creat). MASURATOARE, nu nota de purtare."},
+        "disciplina":      {"type": "INTEGER", "description": "Cat din ce si-a propus a si facut (1=nimic din plan, 10=tot). O zi de reset asumata NU scade disciplina."},
         "social":          {"type": "INTEGER", "description": "Calitatea conexiunilor sociale ale zilei (1=izolare totala, 10=conexiuni profunde)"},
         "somn":            {"type": "INTEGER", "description": "Calitatea si cantitatea somnului din noaptea anterioara (1=epuizare, 10=odihnit complet)"},
         "claritate":       {"type": "INTEGER", "description": "Claritate mentala, focus si gandire lucida (1=ceata/confuz, 10=cristal/razor sharp)"},
         "progres_scopuri": {"type": "INTEGER", "description": "Progres concret spre obiectivele declarate (1=zero actiune, 10=zi maxima spre scop)"},
-        "dispozitie":      {"type": "INTEGER", "description": "Starea emotionala generala/mood (1=depresie/gol interior, 10=fericire autentica)"},
+        "dispozitie":      {"type": "INTEGER", "description": "Dispozitia generala a zilei, din ce a spus el (1=foarte prost, 10=foarte bine)."},
         "corp":            {"type": "INTEGER", "description": "Cum s-a simtit si tratat corpul - sport, nutritie, ingrijire (1=neglijare totala, 10=optim)"}
     },
     "required": ["energie", "stres", "dopamina", "disciplina", "social", "somn", "claritate", "progres_scopuri", "dispozitie", "corp"]
@@ -57,23 +57,27 @@ JUDGMENT_SCHEMA = {
         "tags": {
             "type": "ARRAY",
             "items": {"type": "STRING"},
-            "description": "3-6 cuvinie cheie reprezentative in romana (ex: epuizare, robotica, conexiune, gol_interior)"
+            "description": "3-6 cuvinte cheie in romana, DESCRIPTIVE nu diagnostice. Bun: robotica, cad, sport, prieteni, nesomn, livrat. Interzis: gol_interior, evadare, pasivitate, anxietate."
         },
         "short_summary": {
             "type": "STRING",
-            "description": "Esenta zilei in 2-3 propozitii. Nu enumera activitati, surprinde starea si tonul zilei."
+            "description": "STAREA ZILEI in 1-2 fraze: sinteza bruta a energiei si a actiunii, fara judecata morala. Nu enumera activitati."
         },
         "psychologist_feedback": {
             "type": "STRING",
-            "description": "Feedback empatic dar sincer, ca un psiholog bun. Observa pattern-uri, pune intrebari bune, nu judeca, ci ajuta sa inteleaga."
+            "description": "Nota de partener de execuție, max 3 fraze. Numele campului e istoric — NU ești psiholog. Constatare + consecinta practica. FARA intrebari terapeutice, fara psihanaliza, fara moralizare."
         },
         "what_went_well": {
             "type": "STRING",
-            "description": "Ce a mers bine azi concret (1-3 lucruri scurte)"
+            "description": "Fapte obiective care au mers, 1-3 lucruri (a avansat la cod, a dat un meci bun, a vandut ceva). Nu generalitati incurajatoare."
         },
         "pattern_alert": {
             "type": "STRING",
-            "description": "Un pattern negativ sau riscant observat din aceasta zi (sau confirmat din nou). Poate fi null daca nu e nimic ingrijorator."
+            "description": "FRICTION CHECK. Doar daca se REPETA o greseala concreta, tehnica sau de disciplina, vizibila in date (a treia noapte sub 5 ore, acelasi lucru amanat de patru ori). O zi proasta izolata NU e pattern. Daca nu exista, scrie exact: Zero fricțiuni notabile."
+        },
+        "what_blocked": {
+            "type": "STRING",
+            "description": "Ce s-a blocat efectiv, ca fapt: unde a pierdut timp, ce n-a ieșit, ce a amanat. Gol ('') daca n-a fost nimic."
         }
     },
     "required": ["scores", "tags", "short_summary", "psychologist_feedback", "what_went_well", "pattern_alert"]
@@ -242,7 +246,7 @@ class JournalCore:
             },
             "required": ["action", "voice_reply", "mood_color"]
         }
-        result = ask_gemini_json(prompt, schema=schema, temperature=0.3)
+        result = ask_llm_json(prompt, schema=schema, temperature=0.3)
         if not result: return
         print(f"🤖 Chronos: {result.get('voice_reply', 'Am salvat.')}")
         if result.get("action") == "SAVE":
@@ -339,50 +343,12 @@ class JournalCore:
             except:
                 targets_context = "Targeturile nu au putut fi încărcate."
 
-        prompt = f"""
-        ROL: Psiholog sincer și empatic, cunoscut ca "Chronos". Analizezi jurnalul zilnic al utilizatorului.
-        
-        Nu ești un coach de productivitate și nu ești brutal fără motiv. Ești ca un prieten psiholog care:
-        - Observă pattern-uri comportamentale și emoționale
-        - Pune întrebări care ajută la reflecție
-        - Laudă CE MERITĂ LĂUDAT, nu generic
-        - Semnalează probleme cu empatie, nu cu judecată
-        - Conectează ziua de azi cu targeturile declarate
-        
-        DATA ANALIZATĂ: {logical_date}
-        
-        TARGETURILE ACTIVE ALE UTILIZATORULUI:
-        {targets_context}
-        
-        CONTEXT DIN ZILELE TRECUTE (memorie):
-        {past_context}
-        
-        LOGURILE ZILEI (ce a zis utilizatorul):
-        {combined_text}
-        
-        INSTRUCȚIUNI STRICTE:
-        1. short_summary: 2-3 propoziții care surprind ESENȚA și TONUL zilei, nu o listă de activități.
-        2. psychologist_feedback: 3-5 propoziții. Fii empatic dar sincer. Observă pattern-uri. Pune o întrebare bună la final.
-        3. what_went_well: 1-3 lucruri concrete pozitive din această zi.
-        4. pattern_alert: Un pattern negativ specific observat azi (dacă există). Dacă nu e nimic îngrijorător, scrie null sau "Niciun pattern negativ semnificativ azi."
-        5. tags: 3-6 cuvinte cheie în română, relevante psihologic (ex: epuizare, conexiune_sociala, gol_interior, progres, rezistenta, anxietate)
-        6. RĂSPUNDE EXCLUSIV ÎN LIMBA ROMÂNĂ!
-        
-        SCORURI (1-10, fii obiectiv bazat pe ce a SPUS, nu pe ce vrei tu să crezi):
-        - energie: cât de energic/vital s-a simțit
-        - stres: cât de stresat/presat s-a simțit (10 = paralizat de stres)
-        - dopamina: calitatea surselor de dopamina (10 = activ/natural, 1 = scroll/vicii/pasiv)
-        - disciplina: autocontrol și respectarea unui plan (1 = haos, 10 = fier)
-        - social: calitatea interacțiunilor sociale (1 = izolare, 10 = conexiuni profunde)
-        - somn: calitatea somnului anterior (estimat din context)
-        - claritate: claritate mentală și focus
-        - progres_scopuri: progres spre targeturile declarate
-        - dispozitie: starea emoțională generală (1 = depresie, 10 = fericire autentică)
-        - corp: cum s-a simțit și tratat corpul (sport, mâncare, odihnă)
-        """
+        from tools.journal_prompt import build_day
+        prompt = build_day(logical_date, combined_text,
+                           targets_context, past_context)
 
-        # MODIFICAT: Schimbat modelul în gemini-2.5-pro pentru o analiză psihologică profundă
-        analysis = ask_gemini_json(prompt, schema=JUDGMENT_SCHEMA, temperature=0.6, model=GEMINI_MODEL_LOGGER)
+        # Rolul si formatul vin din tools/journal_prompt.py — sursa unica.
+        analysis = ask_llm_json(prompt, schema=JUDGMENT_SCHEMA, temperature=0.6, model=LLM_MODEL_LOGGER)
         if not analysis:
             logging.error(f"❌ AI-ul a eșuat la rezumatul pentru {logical_date}")
             return None

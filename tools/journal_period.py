@@ -124,34 +124,8 @@ def judge_period(d_from: date, d_to: date, memory=None) -> dict:
 
     zile = (d_to - d_from).days + 1
     combined = "\n\n".join(texts)
-    prompt = f"""
-    ROL: Psiholog sincer și empatic, cunoscut ca "Chronos". De data asta nu analizezi o zi,
-    ci o PERIOADĂ: {zile} zile, {_ZILE[d_from.weekday()]} {d_from.isoformat()} – {_ZILE[d_to.weekday()]} {d_to.isoformat()}.
-    Utilizatorul n-a scris zilnic și a povestit toată perioada dintr-o dată.
-
-    Ești ca un prieten psiholog care se uită la imaginea de ansamblu:
-    - ce a dominat perioada, cum a evoluat starea de la început la final;
-    - pattern-uri pe mai multe zile, nu momente izolate;
-    - laudă ce merită, semnalează cu empatie, conectează cu targeturile.
-
-    TARGETURILE ACTIVE:
-    {_targets_context()}
-
-    CE A SCRIS DESPRE PERIOADĂ:
-    {combined}
-
-    INSTRUCȚIUNI STRICTE:
-    1. short_summary: 2-3 propoziții cu ESENȚA și TONUL perioadei (nu o listă zi cu zi).
-    2. psychologist_feedback: 3-5 propoziții despre perioadă ca întreg. Încheie cu o întrebare bună.
-    3. what_went_well: 1-3 lucruri concrete pozitive din perioadă.
-    4. pattern_alert: un pattern negativ din perioadă, dacă există; altfel "Niciun pattern negativ semnificativ."
-    5. tags: 3-6 cuvinte cheie în română, relevante psihologic.
-    6. RĂSPUNDE EXCLUSIV ÎN LIMBA ROMÂNĂ!
-
-    SCORURI (1-10) = MEDIA REALISTĂ a perioadei, din ce a SPUS (nu ce ai vrea să crezi):
-    energie, stres (10 = paralizat), dopamina (10 = activ/natural, 1 = scroll/vicii), disciplina,
-    social, somn, claritate, progres_scopuri, dispozitie, corp.
-    """
+    from tools.journal_prompt import build_period
+    prompt = build_period(label(d_from, d_to), zile, combined, _targets_context())
     analysis = ask(prompt, schema=JUDGMENT_SCHEMA, temperature=0.6, model=model)
     if not analysis:
         return {"status": "error", "message": "AI-ul n-a putut analiza perioada."}

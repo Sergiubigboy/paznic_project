@@ -217,6 +217,18 @@ check("thinkingBudget=0 pe apelurile structurate",
       cfg["thinkingConfig"]["thinkingBudget"] == 0)
 check("maxOutputTokens e plafonat", cfg["maxOutputTokens"] == 100)
 check("stream_gemini_text există", callable(ai_core.stream_gemini_text))
+check("schema Gemini → JSON Schema (tipuri mici)",
+      ai_core._schema_standard({"type": "OBJECT", "properties": {"a": {"type": "STRING"}}})
+      == {"type": "object", "properties": {"a": {"type": "string"}}})
+check("JSON Claude în bloc ``` e extras",
+      ai_core._parse_json_claude('```json\n{"a": 1}\n```', "m") == {"a": 1})
+check("modelul de rol trece corect Claude → Gemini la fallback",
+      ai_core._model_gemini(ai_core.CLAUDE_MODEL_LOGGER) == ai_core.GEMINI_MODEL_LOGGER)
+from core.claude_cli import curata_text_cautare
+curat = curata_text_cautare(
+    "Azi sunt 23 de grade, [conform Meteo](https://x.ro/a).\n\nSources:\n- [A](https://a.com)")
+check("sursele și linkurile căutării nu ajung în TTS",
+      curat == "Azi sunt 23 de grade, conform Meteo.", repr(curat))
 
 # ── REZUMAT ──────────────────────────────────────────────────────────────
 print(f"\n{'='*60}")

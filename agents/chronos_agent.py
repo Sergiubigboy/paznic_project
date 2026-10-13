@@ -33,7 +33,7 @@ from typing import Any, Dict, Iterator, List, Optional
 from agents.music_agent import MusicAgent
 from agents.wled_agent import WLEDAgent
 from agents.logger_agent import LoggerAgent
-from ai_core import ask_gemini_json, ask_gemini_text, stream_gemini_text
+from ai_core import ask_llm_json, ask_llm_text, stream_llm_text
 # Calea text nu are tool-uri, deci foloseste promptul FARA regulile de
 # tool-uri vocale — vezi personalization.SYSTEM_PROMPT_TEXT.
 from config import SYSTEM_PROMPT_TEXT
@@ -172,7 +172,7 @@ class ChronosAgent:
     def plan(self, user_text: str) -> dict:
         """Decide ce agenți se invocă și ce date personale trebuie citite."""
         logger.info(f"🧠 [Chronos Agent] Planific: '{user_text}'")
-        result = ask_gemini_json(
+        result = ask_llm_json(
             self._PLAN_RULES.format(text=user_text),
             schema=self._PLAN_SCHEMA,
             temperature=0.1,
@@ -511,7 +511,7 @@ class ChronosAgent:
                            scriere: Optional[dict] = None) -> str:
         """Răspuns de conversație, dintr-o bucată (calea sincronă)."""
         prompt = self.build_chat_prompt(text, data_cats, scriere)
-        reply = ask_gemini_text(prompt, temperature=0.9, use_search=needs_web)
+        reply = ask_llm_text(prompt, temperature=0.9, use_search=needs_web)
         if not reply:
             logger.warning("⚠️ [Chronos Agent] general_chat n-a generat răspuns.")
             return "Nu am putut genera un răspuns acum, mai încearcă."
@@ -531,7 +531,7 @@ class ChronosAgent:
         """
         prompt = self.build_chat_prompt(text, data_cats, scriere)
         collected: List[str] = []
-        for piece in stream_gemini_text(prompt, temperature=0.9, use_search=needs_web):
+        for piece in stream_llm_text(prompt, temperature=0.9, use_search=needs_web):
             collected.append(piece)
             yield piece
 

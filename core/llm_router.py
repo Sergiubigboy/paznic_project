@@ -555,7 +555,7 @@ async def _aiter_sync(
 ) -> AsyncIterator[str]:
     """Transformă un generator SINCRON într-unul asincron.
 
-    `stream_gemini_text` e sincron (requests cu stream=True): iterat direct pe
+    `stream_llm_text` e sincron (requests cu stream=True): iterat direct pe
     buclă ar bloca tot sistemul între bucăți. Aici rulează pe un thread și
     împinge bucățile în bucla asyncio pe măsură ce sosesc.
     """

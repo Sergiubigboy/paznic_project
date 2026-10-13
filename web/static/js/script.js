@@ -319,13 +319,18 @@ function renderLogs(daysArray) {
                 const tagsHtml = tags.map(t => `<span class="tag">${t}</span>`).join('');
                 const psychFb = a.psychologist_feedback || '';
                 const whatWell = a.what_went_well || '';
+                const whatBlocked = a.what_blocked || '';
                 const patternAlert = a.pattern_alert || '';
-                const showAlert = patternAlert && !patternAlert.includes('Niciun');
+                // Fricțiunea se arată doar când există una reală. „Zero fricțiuni"
+                // e varianta nouă, „Niciun pattern..." cea din intrările vechi.
+                const showAlert = patternAlert
+                    && !patternAlert.includes('Niciun')
+                    && !patternAlert.toLowerCase().includes('zero fric');
                 const editedTag = log.scores_manually_edited ? `<span class="summary-edited-tag">✏️ editat</span>` : '';
 
                 card.innerHTML = `
                     <div class="summary-top">
-                        <span class="summary-label">🧠 ${per ? 'Analiza perioadei' : 'Analiză Psihologică'}</span>
+                        <span class="summary-label">🧠 ${per ? 'Analiza perioadei' : 'Analiza zilei'}</span>
                         <div style="display:flex;align-items:center;gap:8px">
                             ${editedTag}
                             ${per ? '' : `<button class="btn btn-ghost btn-xs" onclick="openScoreEdit('${dayObj.date}',${JSON.stringify(scores).replace(/"/g,'&quot;')})">✏️ Scoruri</button>`}
@@ -334,9 +339,10 @@ function renderLogs(daysArray) {
                     <div class="summary-text">${a.short_summary || '—'}</div>
                     ${scoresHtml}
                     ${tagsHtml ? `<div class="tags-row">${tagsHtml}</div>` : ''}
-                    ${psychFb ? `<div class="feedback-block"><div class="feedback-lbl">💭 Feedback</div><div class="feedback-txt">${psychFb}</div></div>` : ''}
-                    ${whatWell ? `<div class="feedback-block good"><div class="feedback-lbl">✅ Ce a mers bine</div><div class="feedback-txt">${whatWell}</div></div>` : ''}
-                    ${showAlert ? `<div class="feedback-block warn"><div class="feedback-lbl">⚠️ Pattern</div><div class="feedback-txt">${patternAlert}</div></div>` : ''}
+                    ${psychFb ? `<div class="feedback-block"><div class="feedback-lbl">📋 Nota</div><div class="feedback-txt">${psychFb}</div></div>` : ''}
+                    ${whatWell ? `<div class="feedback-block good"><div class="feedback-lbl">✅ Ce a mers</div><div class="feedback-txt">${whatWell}</div></div>` : ''}
+                    ${whatBlocked ? `<div class="feedback-block"><div class="feedback-lbl">⛔ Ce s-a blocat</div><div class="feedback-txt">${whatBlocked}</div></div>` : ''}
+                    ${showAlert ? `<div class="feedback-block warn"><div class="feedback-lbl">⚠️ Fricțiune</div><div class="feedback-txt">${patternAlert}</div></div>` : ''}
                 `;
             } else {
                 card.className = 'entry-card';
@@ -441,7 +447,7 @@ document.getElementById('searchInput').addEventListener('input', function(e) {
         const filtered = allData.map(d => {
             const matching = d.logs.filter(log => {
                 const a = log.analysis || {};
-                return [log.raw_text, a.short_summary, a.psychologist_feedback, a.what_went_well, a.pattern_alert, (a.tags||[]).join(' ')]
+                return [log.raw_text, a.short_summary, a.psychologist_feedback, a.what_went_well, a.what_blocked, a.pattern_alert, (a.tags||[]).join(' ')]
                     .filter(Boolean).join(' ').toLowerCase().includes(q);
             });
             return matching.length ? { ...d, logs: matching } : null;

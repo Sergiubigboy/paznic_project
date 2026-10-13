@@ -6,7 +6,7 @@ Agent AI dedicat pentru ambianță vizuală, efecte și culori pe benzile LED WL
 
 import logging
 from tools.wled_tools import set_all_leds, set_dual_zone_leds
-from ai_core import ask_gemini_json
+from ai_core import ask_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ class WLEDAgent:
             ]
         }
 
-        decision = ask_gemini_json(system_prompt, schema=schema, temperature=0.2)
+        decision = ask_llm_json(system_prompt, schema=schema, temperature=0.2)
 
         if not decision or not isinstance(decision, dict):
             # Fallback direct

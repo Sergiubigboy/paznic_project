@@ -244,9 +244,31 @@ RASPBERRY_PI = False
 # ============================================================
 # 7. LLM MODELE (dispatcher, jurnal, muzică)
 # ============================================================
+# Cine răspunde la TEXT: planificator, DJ, WLED, jurnal, emoții, profil,
+# planul zilei și conversația din terminal. Vocea Live (+ STT/TTS-ul ei)
+# rămâne MEREU pe Gemini, indiferent de alegerea de aici.
+#   "claude" → prin Claude Code CLI, pe abonamentul Claude (fără cost/token)
+#   "gemini" → Gemini REST API, cu GEMINI_API_KEY (ca înainte)
+# Poate fi suprascris din .env: LLM_PROVIDER=gemini
+LLM_PROVIDER = "claude"
+
+# Dacă Claude nu răspunde (CLI lipsă, neautentificat, limită atinsă),
+# apelul se reîncearcă pe Gemini, ca o comandă să nu se piardă.
+LLM_FALLBACK_TO_GEMINI = True
+
 GEMINI_MODEL_DEFAULT = "gemini-2.5-flash"
 GEMINI_MODEL_LOGGER  = "gemini-2.5-flash"
 GEMINI_MODEL_DJ      = "gemini-2.5-flash"
+
+# Alias-uri de CLI ("haiku", "sonnet", "opus") sau nume complete de model.
+# haiku = rapid (planificare, conversație); sonnet = analiza din jurnal.
+CLAUDE_MODEL_DEFAULT = "haiku"
+CLAUDE_MODEL_LOGGER  = "sonnet"
+CLAUDE_MODEL_DJ      = "haiku"
+
+# Câte apeluri Claude pot rula simultan. Fiecare e un proces separat
+# (~100-200MB cât rulează) — pe Pi, 2 e un plafon sănătos.
+CLAUDE_MAX_PARALLEL = 2
 
 # ============================================================
 # 8. EMOȚII — starea afectivă a lui Chronos

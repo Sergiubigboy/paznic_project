@@ -28,12 +28,12 @@ STATE_FILE = os.path.join(BASE_DIR, "chronos_data", "day_runner_state.json")
 
 try:
     from config import (DAY_TELEGRAM_ENABLED, DAY_NOTIFY_LEAD_MIN,
-                        DAY_REMINDER_HOURS, GEMINI_MODEL_DEFAULT)
+                        DAY_REMINDER_HOURS, LLM_MODEL_DEFAULT)
 except ImportError:
     DAY_TELEGRAM_ENABLED = True
     DAY_NOTIFY_LEAD_MIN = 0
     DAY_REMINDER_HOURS = 3.0
-    GEMINI_MODEL_DEFAULT = "gemini-2.5-flash"
+    LLM_MODEL_DEFAULT = "gemini-2.5-flash"
 
 # Scurtături: comenzi frecvente, rezolvate fără LLM
 _SCURTATURI = {
@@ -86,7 +86,7 @@ def _interpreteaza(text: str) -> dict:
             return {"actiune": act, "target": rest or tgt}
 
     try:
-        from ai_core import ask_gemini_json
+        from ai_core import ask_llm_json
     except ImportError:
         return {"actiune": "nimic"}
 
@@ -109,8 +109,8 @@ Acțiuni:
 
 `target` = la ce se referă, dacă spune. Gol dacă vorbește despre ce e acum."""
 
-    rez = ask_gemini_json(prompt, schema=_SCHEMA, temperature=0.1,
-                          model=GEMINI_MODEL_DEFAULT)
+    rez = ask_llm_json(prompt, schema=_SCHEMA, temperature=0.1,
+                       model=LLM_MODEL_DEFAULT)
     return rez if isinstance(rez, dict) else {"actiune": "nimic"}
 
 

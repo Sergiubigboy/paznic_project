@@ -98,7 +98,7 @@ def _build(logger_agent) -> dict:
     corpus = "\n---\n".join(docs)[:6000]
 
     try:
-        from ai_core import ask_gemini_json
+        from ai_core import ask_llm_json
     except ImportError:
         return {}
 
@@ -128,7 +128,7 @@ REGULI STRICTE:
   categorie, las-o goală în loc să inventezi.
 Scrie în română, concret, fără platitudini."""
 
-    result = ask_gemini_json(prompt, schema=_SCHEMA, temperature=0.4)
+    result = ask_llm_json(prompt, schema=_SCHEMA, temperature=0.4)
     if not isinstance(result, dict):
         return {}
 
