@@ -79,6 +79,7 @@ from core import automations
 from core import health_runner
 from core import lifecycle
 from core import presence
+from core import console_bridge
 
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 5000
@@ -477,6 +478,8 @@ async def main() -> None:
         asyncio.create_task(automations.get_engine().run(bus), name="automations"),
         # Health: remindere de mese/suplimente/sală pe botul Telegram separat.
         asyncio.create_task(health_runner.run(), name="health"),
+        # Consola fizică din carcasă (Pico pe USB): ecranele mici, tastele, LED-urile.
+        asyncio.create_task(console_bridge.get_bridge().run(), name="console"),
     ]
 
     # Un task critic care moare cu excepție oprește sistemul — dar prin

@@ -100,7 +100,7 @@ class AudioInterface:
     __slots__ = (
         "bus", "EventType", "_oww_model", "_model_name", "_sd", "_enabled",
         "_running", "_last_detect", "_ww_queue", "_live_mode", "_live_queue",
-        "_wake_interrupt_armed", "_infer_pool", "_loop",
+        "_wake_interrupt_armed", "_infer_pool", "_loop", "_channels",
     )
 
     def __init__(self, event_bus):
@@ -112,6 +112,7 @@ class AudioInterface:
         self._model_name: str = "N/A"
         self._sd = None
         self._enabled: bool = False
+        self._channels: int = CHANNELS
         self._running: bool = False
         self._last_detect: float = 0.0
 
@@ -227,6 +228,22 @@ class AudioInterface:
         idx, dev = ales
         sd.default.device = (idx, sd.default.device[1] if
                              isinstance(sd.default.device, (list, tuple)) else None)
+
+        # Unele microfoane nu se deschid în mono: PS3 Eye (din consolă) are 4
+        # capsule și pe ALSA cere toate 4 canalele. Le deschidem pe câte acceptă
+        # placa; callback-ul păstrează oricum doar primul canal.
+        self._channels = CHANNELS
+        try:
+            sd.check_input_settings(device=idx, channels=CHANNELS, samplerate=SAMPLE_RATE, dtype=DTYPE)
+        except Exception:
+            maxim = int(dev.get("max_input_channels") or CHANNELS)
+            try:
+                sd.check_input_settings(device=idx, channels=maxim, samplerate=SAMPLE_RATE, dtype=DTYPE)
+                self._channels = maxim
+                logger.info(f"ℹ️ [AudioInterface] Microfonul nu merge în mono — îl deschid pe "
+                            f"{maxim} canale și folosesc primul.")
+            except Exception as e:
+                logger.warning(f"⚠️ [AudioInterface] Setări microfon neconfirmate ({e}); încerc mono.")
         logger.info(f"🎙️ [AudioInterface] Microfon [{idx}]: '{dev.get('name')}' @ {SAMPLE_RATE}Hz")
         altele = [x for x in intrari if x[0] != idx]
         if altele:
@@ -362,7 +379,7 @@ class AudioInterface:
                 try:
                     with self._sd.InputStream(
                         samplerate=SAMPLE_RATE,
-                        channels=CHANNELS,
+                        channels=self._channels,
                         dtype=DTYPE,
                         blocksize=FRAME_LENGTH,
                         callback=callback,

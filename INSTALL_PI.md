@@ -269,6 +269,17 @@ Dezactivare definitivă: `rm ~/.config/autostart/chronos-screen.desktop`.
 
 ---
 
+## 9. Consola fizică (Pico, butoane, ecranele mici)
+
+Carcasa cu TFT, ecran rotund, encoder, taste, slider și LED-uri e condusă de un
+Pico legat pe USB la Pi. Schema, pinii, ce trebuie cumpărat și cum se încarcă
+firmware-ul sunt în **[console/README.md](console/README.md)**.
+
+Pe Pi îți trebuie doar `pip install pyserial` și `sudo usermod -aG dialout sergiu`
+(acces la portul serial). Fără Pico conectat, Chronos merge exact ca înainte.
+
+---
+
 ## Probleme frecvente
 
 **`cannot import name 'SYSTEM_PROMPT' from 'config'`**

@@ -19,6 +19,7 @@ chronos_data/
 .cache
 
 # Diverse
+.pio/
 .DS_Store
 *.log
 dj_history.json

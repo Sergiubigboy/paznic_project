@@ -296,6 +296,77 @@ async def screen_voice_tests():
 
 asyncio.run(screen_voice_tests())
 
+# ── 10. CONSOLA FIZICĂ (Pico pe USB) ─────────────────────────────────────
+print("\n[10] Consola fizică — bridge-ul de pe Pi")
+import json
+import core.console_bridge as cb
+
+check("textul pleacă fără diacritice spre TFT",
+      cb.ascii_text("Plătește „țânțarul” — acum") == 'Plateste "tantarul" - acum')
+
+_old_data_dir = cb.DATA_DIR
+cb.DATA_DIR = tempfile.mkdtemp()
+with open(os.path.join(cb.DATA_DIR, "reminders.json"), "w", encoding="utf-8") as f:
+    json.dump({"reminders": [
+        {"id": "r1", "title": "Udă plantele", "priority": "Low", "checked": False},
+        {"id": "r2", "title": "Plătește curentul", "priority": "High", "checked": False},
+        {"id": "r3", "title": "Deja făcut", "priority": "Med", "checked": True}]}, f)
+
+bridge = cb.ConsoleBridge()
+lst = bridge.handle({"t": "get", "v": "rem"})[0]
+check("lista de remindere: doar cele deschise, urgentele primele",
+      [i["id"] for i in lst["items"]] == ["r2", "r1"] and lst["items"][0]["x"] == "Plateste curentul")
+bridge.handle({"t": "focus", "v": "rem", "sel": 1})
+c = presence.console()
+check("ce selectezi pe TFT apare pe ecranul mare, cu diacritice",
+      c and c["sel"] == 1 and c["items"][1]["x"] == "Udă plantele")
+out = bridge.handle({"t": "do", "a": "rem_check", "id": "r1"})
+with open(os.path.join(cb.DATA_DIR, "reminders.json"), encoding="utf-8") as f:
+    saved = {r["id"]: r["checked"] for r in json.load(f)["reminders"]}
+check("bifat de pe consolă = bifat în fișier", saved["r1"] is True and saved["r2"] is False)
+check("după bifare, Pico-ul primește lista nouă",
+      out[0]["t"] == "ok" and out[1]["t"] == "list" and [i["id"] for i in out[1]["items"]] == ["r2"])
+bridge.handle({"t": "focus", "v": "home", "sel": 0})
+check("înapoi în meniu → ecranul mare închide pop-up-ul", presence.console() is None)
+check("acțiune necunoscută → eroare, nu excepție",
+      bridge.handle({"t": "do", "a": "rm_rf"})[0]["t"] == "err")
+hb = bridge.heartbeat()
+check("heartbeat-ul are ora, vocea, culoarea", {"h", "m", "s", "mood", "al"} <= set(hb))
+
+
+async def console_serial_test():
+    """Un Pico simulat pe un port serial virtual (pty)."""
+    import pty
+    master, slave = pty.openpty()
+    os.set_blocking(master, False)
+    os.environ["CONSOLE_PORT"] = os.ttyname(slave)
+    b = cb.ConsoleBridge()
+    task = asyncio.create_task(b.run())
+    await asyncio.sleep(0.5)
+    os.write(master, b'{"t":"hello","fw":"test"}\n{"t":"get","v":"rem"}\nnu e json\n')
+    got, buf = [], b""
+    end = asyncio.get_running_loop().time() + 3
+    while asyncio.get_running_loop().time() < end and not any(m.get("t") == "list" for m in got):
+        await asyncio.sleep(0.05)
+        try:
+            buf += os.read(master, 4096)
+        except BlockingIOError:
+            pass
+        *lines, buf = buf.split(b"\n")
+        got += [json.loads(x) for x in lines if x.strip()]
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    os.environ.pop("CONSOLE_PORT", None)
+    os.close(master)
+    check("pe serial: hello → heartbeat", any(m.get("t") == "hb" for m in got))
+    check("pe serial: get → listă; o linie stricată nu oprește nimic",
+          any(m.get("t") == "list" and m.get("v") == "rem" for m in got))
+
+
+if sys.platform != "win32":
+    asyncio.run(console_serial_test())
+cb.DATA_DIR = _old_data_dir
+
 # ── REZUMAT ──────────────────────────────────────────────────────────────
 print(f"\n{'='*60}")
 print(f"  {len(PASS)} PASS   {len(FAIL)} FAIL")

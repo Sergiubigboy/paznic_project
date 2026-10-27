@@ -9,6 +9,7 @@ la fel ca core/lifecycle.py pentru repornire:
     dashboard  → voice()                     ce face vocea acum (idle / listening / speaking)
     dashboard  → wake()                      atingerea promptului = ai zis „Jarvis"
     dashboard  → stop_voice()                închide sesiunea vocală curentă
+    consola    → set_console(view)           ce e selectat pe TFT → apare și pe ecranul mare
 
 Dashboard-ul pornit singur (fără main_async) vede `available: False` și
 promptul de voce de pe ecran spune că vocea e oprită, în loc să promită ceva
@@ -65,6 +66,26 @@ def wake() -> bool:
         )
     logger.info("👆 [Presence] Sesiune vocală pornită de pe ecran.")
     return True
+
+
+# ── Consola fizică ────────────────────────────────────────────────────────
+# Ce arată acum TFT-ul consolei (lista prin care navighezi cu encoderul).
+# Ecranul mare o arată și el, în detaliu, cât timp e „proaspătă".
+
+_console = None
+CONSOLE_FRESH_S = 90
+
+
+def set_console(view) -> None:
+    global _console
+    _console = dict(view, ts=time.time()) if view else None
+
+
+def console():
+    c = _console
+    if not c or time.time() - c["ts"] > CONSOLE_FRESH_S:
+        return None
+    return c
 
 
 def stop_voice() -> bool:

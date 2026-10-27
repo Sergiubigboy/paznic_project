@@ -196,6 +196,13 @@ class GeminiLiveSession:
         # ca ecranul de pe Pi să-l mai arate câteva secunde după ce s-a încheiat.
         self._last_exchange = None
 
+        # Nivelul audio de acum (RMS 0-32767): microfonul cât asculți, boxele
+        # cât vorbește el. Îl citește consola fizică pentru waveform-ul de pe
+        # ecranul rotund — două atribuiri pe chunk, cost neglijabil.
+        self._mic_level = 0.0
+        self._out_level = 0.0
+        self._level_ts  = 0.0
+
         # ── FOCUS MODE (al doilea mod de barge-in) ──
         # False → mod GENERAL: poți vorbi peste Chronos oricând (barge-in pe RMS).
         # True  → mod FOCUS: Chronos livrează ceva important (răspuns bazat pe
@@ -1550,6 +1557,7 @@ class GeminiLiveSession:
             # sesiunea deschisă la nesfârșit, pentru că microfonul livrează
             # chunk-uri non-stop indiferent dacă vorbești sau nu.
             rms_now = _rms(chunk, np)
+            self._mic_level, self._level_ts = rms_now, time.time()
 
             try:
                 await session.send_realtime_input(
@@ -1743,6 +1751,9 @@ class GeminiLiveSession:
                 # partajat cu Flask, cu apelurile agenților și cu analiza de
                 # emoții. Sub încărcare, redarea ajungea să aștepte un worker
                 # liber — adică exact întreruperi audibile în vocea lui Chronos.
+                pcm = self._np.frombuffer(data_bytes, dtype=self._np.int16, count=len(data_bytes) // 2)
+                self._out_level = _rms(pcm, self._np) if pcm.size else 0.0
+                self._level_ts = time.time()
                 await loop.run_in_executor(self._play_pool, stream.write, data_bytes)
                 self._last_audio_write_ts = time.time()
 
@@ -1860,8 +1871,12 @@ class GeminiLiveSession:
             state = "speaking" if self._ai_audio_active() else "listening"
         else:
             state = "idle"
+        # 0..1 pentru waveform; un nivel mai vechi de 0.4s e liniște, nu ecou.
+        raw = self._out_level if state == "speaking" else self._mic_level
+        level = min(1.0, raw / 4000.0) if state != "idle" and time.time() - self._level_ts < 0.4 else 0.0
         return {
             "state": state,
+            "level": round(level, 3),
             "user": self._current_user_transcript.strip()[-240:],
             "ai": self._current_ai_transcript.strip()[-400:],
             "last": self._last_exchange,

@@ -3841,6 +3841,7 @@ def screen_state():
         'voice': presence.voice(),
         'timers': store.upcoming()[:4],
         'ringing': store.ringing,
+        'console': presence.console(),
         'mood': {k: mood.get(k) for k in ('mood', 'mood_short', 'color')},
     })
 

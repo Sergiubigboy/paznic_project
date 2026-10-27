@@ -51,6 +51,8 @@
         musicBusy: 0,
         lights: null,
         pop: null,          // pop-up-ul deschis de om (muzică, lumini…)
+        popAt: 0,
+        console: null,      // ce e selectat pe TFT-ul consolei fizice
         sleeping: false,
         sleepAuto: false,
         lastTouch: Date.now(),
@@ -158,12 +160,15 @@
         if (S.offline) top = 'offline';
         else if (S.ringing) top = 'alarm';
         else if (voiceShown()) top = 'voice';
+        // Consola fizică bate pop-up-ul atins pe ecran doar dacă e mai nouă decât el.
+        else if (S.console && (!S.pop || S.console.ts * 1000 > S.popAt)) top = 'console';
         else top = S.pop;
         qsa('.pop').forEach((p) => p.classList.toggle('show', p.dataset.pop === top));
     }
 
     function openPop(name) {
         S.pop = name;
+        S.popAt = Date.now();
         if (name === 'music') pollMusic();
         if (name === 'lights') pollLights();
         renderAll();
@@ -213,6 +218,7 @@
             $('mood').textContent = low(d.mood.mood_short || d.mood.mood || '');
             if (d.mood.color) document.documentElement.style.setProperty('--mood', d.mood.color);
         }
+        applyConsole(d.console);
         applyTimers(d.timers || []);
         applyAlarm(d.ringing);
         applyVoice(d.voice);
@@ -280,6 +286,25 @@
         if (S.voice) S.voice.state = 'idle';
         renderPops();
         await act('/api/screen/voice', { action: 'stop' });
+    }
+
+    // ── Consola fizică ──────────────────────────────────────────
+    // Navighezi cu encoderul pe TFT; aici apare aceeași listă, cu tot textul.
+    function applyConsole(c) {
+        const prev = S.console;
+        S.console = c || null;
+        if (!c) return;
+        if (!prev || prev.ts !== c.ts) wake();
+        const items = c.items || [];
+        $('cTitle').textContent = 'CONSOLĂ · ' + c.title;
+        $('cPos').textContent = items.length ? (c.sel + 1) + '/' + items.length : '';
+        $('cList').innerHTML = items.length
+            ? items.map((it, i) => '<div class="it' + (i === c.sel ? ' now' : '') + (it.d ? ' gata' : '') + '"><span>' +
+                (it.d ? '[x]' : '[ ]') + '</span><span class="t">' + esc(low(it.x)) + '</span>' +
+                (it.n && c.view === 'targets' ? '<span class="end">' + it.n + '%</span>' : '') + '</div>').join('')
+            : '<p class="dim">lista e goală.</p>';
+        const sel = $('cList').children[c.sel];
+        if (sel) sel.scrollIntoView({ block: 'nearest' });
     }
 
     // ── Alarma ──────────────────────────────────────────────────

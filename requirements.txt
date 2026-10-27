@@ -43,5 +43,8 @@ spotipy>=2.25.0
 Flask>=3.0.0
 Werkzeug>=3.0.0
 
+# ── Consola fizică (Pico pe USB, vezi console/README.md) ──
+pyserial>=3.5
+
 # ── Jurnal (transcriere din fișier) ──
 SpeechRecognition>=3.10.0
