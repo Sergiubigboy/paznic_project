@@ -475,6 +475,16 @@ async def main() -> None:
         asyncio.create_task(health_runner.run(), name="health"),
     ]
 
+    # Timerele și alarmele salvate înainte de restart. Doar aici, nu la importul
+    # modulului: dashboard-ul pornit singur citește aceeași listă, dar nu sună.
+    # Watcher-ul verifică prima oară după 1s, deci motorul de automatizări de
+    # mai sus apucă să pornească și prinde evenimentul „alarm".
+    try:
+        from tools.timers import get_store as timers_store
+        timers_store().start()
+    except Exception as e:
+        logger.error(f"❌ [Timere] Nu pot relua timerele salvate: {e}")
+
     # Un task critic care moare cu excepție oprește sistemul — dar prin
     # callback, nu prin scanarea listei de 2 ori pe secundă la nesfârșit.
     # Pe Pi, „premium la vedere, aproape zero CPU" înseamnă inclusiv asta:

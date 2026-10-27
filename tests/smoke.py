@@ -230,6 +230,48 @@ curat = curata_text_cautare(
 check("sursele și linkurile căutării nu ajung în TTS",
       curat == "Azi sunt 23 de grade, conform Meteo.", repr(curat))
 
+# ── 9. TIMERE DUPĂ RESTART ───────────────────────────────────────────────
+print("\n[9] Timere — reluate după restart")
+import json as _json
+import os as _os
+import tempfile as _tempfile
+import time as _time
+from datetime import datetime as _dt, timedelta as _td
+from tools.timers import TimerStore
+
+
+def _salvat(label, delta):
+    return {"id": f"t_{label}", "label": label, "kind": "alarm",
+            "due": (_dt.now() + delta).isoformat(timespec="seconds"),
+            "created_at": _dt.now().isoformat(timespec="seconds")}
+
+
+with _tempfile.TemporaryDirectory() as _d:
+    _cale = _os.path.join(_d, "timers.json")
+    with open(_cale, "w", encoding="utf-8") as _f:
+        _json.dump([_salvat("viitor", _td(seconds=2)),
+                    _salvat("intarziat", -_td(minutes=3)),
+                    _salvat("vechi", -_td(hours=8))], _f)
+
+    _st = TimerStore(_cale)
+    _sunate = []
+    _st._fire = lambda it: _sunate.append(it["label"])   # fără sunet/automatizări
+    _time.sleep(1.5)
+    check("doar construit (ca în dashboard) nu sună nimic",
+          _sunate == [] and _st._watcher is None, str(_sunate))
+
+    _st.start()
+    check("alarma de acum 8h e aruncată la pornire",
+          "vechi" not in _sunate and len(_st._items) == 2, str(_st._items))
+    _capat = _time.time() + 6
+    while _time.time() < _capat and len(_sunate) < 2:
+        _time.sleep(0.2)
+    check("alarma întârziată câteva minute sună imediat", "intarziat" in _sunate, str(_sunate))
+    check("timerul salvat (scadent în 2s) sună după restart",
+          "viitor" in _sunate, str(_sunate))
+    with open(_cale, encoding="utf-8") as _f:
+        check("fișierul rămâne gol după ce au sunat", _json.load(_f) == [])
+
 # ── REZUMAT ──────────────────────────────────────────────────────────────
 print(f"\n{'='*60}")
 print(f"  {len(PASS)} PASS   {len(FAIL)} FAIL")

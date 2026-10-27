@@ -8,6 +8,8 @@ Ce face:
     - timer relativ  („peste 10 minute", „într-o oră și jumătate")
     - alarmă absolută („mâine la 7", „la 14:30")
     - persistă pe disc → supraviețuiește unui restart al aplicației
+      (main_async cheamă `start()` la pornire; ce a expirat cât Chronos era
+      oprit sună doar dacă e întârziat sub OVERDUE_GRACE, altfel e aruncat)
     - la declanșare sună un semnal audio distinct și repetat
 
 Un singur thread de supraveghere pentru toate, cu verificare o dată pe secundă
@@ -31,6 +33,7 @@ TIMERS_FILE = os.path.join(BASE_DIR, "chronos_data", "timers.json")
 
 MAX_ACTIVE = 20          # plafon sănătos, previne acumularea la infinit
 RING_SECONDS = 12        # cât sună dacă nu-l oprești
+OVERDUE_GRACE = timedelta(minutes=10)   # la pornire: mai vechi de atât → aruncat
 _CHECK_INTERVAL = 1.0
 
 
@@ -67,12 +70,44 @@ class TimerStore:
 
     # ── Supraveghere ──
 
+    def start(self) -> int:
+        """Pornește supravegherea pentru timerele salvate înainte de restart.
+
+        O chemă DOAR procesul Chronos (main_async), nu și dashboard-ul pornit
+        singur — altfel ar suna alarme și acolo. Ce a expirat cât eram opriți
+        sună acum dacă întârzierea e sub OVERDUE_GRACE; restul e aruncat (o
+        alarmă de azi-noapte care sună la boot-ul Pi-ului nu ajută pe nimeni).
+        Întoarce câte timere rămân de păzit."""
+        with self._lock:
+            limita = datetime.now() - OVERDUE_GRACE
+            pastrate, aruncate = [], []
+            for it in self._items:
+                try:
+                    due = datetime.fromisoformat(it["due"])
+                except Exception:
+                    aruncate.append(it)
+                    continue
+                (aruncate if due < limita else pastrate).append(it)
+            for it in aruncate:
+                eticheta = it.get("label") or it.get("kind") or "timer"
+                logger.info(f"🗑️ [Timere] Expirat cât Chronos era oprit, nu mai sună: "
+                            f"{eticheta} (scadent {it.get('due')})")
+            if aruncate:
+                self._items = pastrate
+                self._save()
+            n = len(self._items)
+        if n:
+            logger.info(f"⏱️ [Timere] Reiau {n} timer(e) salvate.")
+            self._ensure_watcher()
+        return n
+
     def _ensure_watcher(self) -> None:
-        if self._watcher and self._watcher.is_alive():
-            return
-        self._watcher = threading.Thread(target=self._loop, daemon=True,
-                                         name="timer_watcher")
-        self._watcher.start()
+        with self._lock:
+            if self._watcher and self._watcher.is_alive():
+                return
+            self._watcher = threading.Thread(target=self._loop, daemon=True,
+                                             name="timer_watcher")
+            self._watcher.start()
 
     def _loop(self) -> None:
         while True:
@@ -81,7 +116,10 @@ class TimerStore:
                 scadente = []
                 with self._lock:
                     if not self._items:
-                        return          # nimic de păzit — thread-ul se stinge
+                        # nimic de păzit — thread-ul se stinge. Golim referința
+                        # sub lock ca un add() concurent să pornească altul.
+                        self._watcher = None
+                        return
                     acum = datetime.now()
                     ramase = []
                     for it in self._items:
