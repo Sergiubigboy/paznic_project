@@ -218,6 +218,57 @@ journalctl -u chronos.service -f
 
 ---
 
+## 8. Ecranul (touchscreen pe Pi)
+
+Chronos are o interfață făcută special pentru ecranul Pi-ului:
+**`http://localhost:5000/screen`** — un terminal simplu, alb pe negru:
+starea curentă sus, un log care curge dedesubt, iar tot restul vine ca pop-up.
+
+Instalare, o singură dată (ca utilizatorul tău, **fără** `sudo` în față):
+
+```bash
+cd ~/projects/paznic_project
+bash pi/install_screen.sh
+sudo reboot
+```
+
+După reboot: Pi-ul intră singur în desktop, așteaptă să pornească Chronos și
+deschide ecranul pe tot monitorul (Chromium în kiosk). Dacă Chronos repornește
+(din Setări sau după un `git pull` + restart), pagina se reîncarcă singură.
+
+Ce găsești pe ecran:
+
+| Zonă | Ce face |
+|---|---|
+| **Starea** (sus) | `ACUM` / `APOI` din programul zilei, timere, ce cântă, lumini, remindere. Atinge un rând → pop-up-ul lui. |
+| **Logul** | Ce s-a întâmplat: ce i-ai zis (`tu`) și ce a răspuns (`ch`), piese noi (`♪`), ce ai apăsat (`ok`), erori (`err`). |
+| **`> atinge pentru voce`** | = ai zis „Jarvis". Pop-up-ul VOCE arată live ce spui și ce răspunde; `gata` închide sesiunea. |
+| **`muz`** | Play/pauză, `<<` `>>`, ♥ (îl ține minte DJ-ul), volum `-` / `+`. |
+| **`lum`** | Aprinde / stinge, intensitate `-` / `+`, scenele salvate în dashboard. |
+| **`zi`** | Programul de azi și reminderele. **Două atingeri** bifează — o atingere din greșeală nu bifează nimic. |
+| **`sys`** | Luminozitate, stingere automată noaptea, reîncărcare, repornire Chronos. |
+| **`off`** | Stinge ecranul acum: rămâne un ceas abia vizibil. Orice atingere îl aprinde. |
+
+Când sună o alarmă sau un timer, apare pop-up-ul roșu ALARMĂ cu `oprește`.
+
+**Noaptea**, între ora de culcare și cea de trezire din programul de somn,
+după 2 minute fără atingere ecranul trece singur pe ceasul estompat și se
+aprinde dimineața. Pe touchscreen-urile oficiale Raspberry Pi scade și lumina
+de fundal; pe un monitor HDMI pagina doar se întunecă.
+
+Ecran pe verticală? Rotește-l din *Preferences → Screen Configuration*;
+interfața se aranjează singură și pe vertical.
+
+Ieșire din kiosk (cu tastatură sau prin SSH):
+
+```bash
+pkill -f kiosk.sh; pkill chromium
+```
+
+Dezactivare definitivă: `rm ~/.config/autostart/chronos-screen.desktop`.
+
+---
+
 ## Probleme frecvente
 
 **`cannot import name 'SYSTEM_PROMPT' from 'config'`**
@@ -255,3 +306,20 @@ vezi pasul 3.
 Serviciul rulează ca alt utilizator, care poate n-are acces la placa audio.
 Verifică `User=sergiu` în `/etc/systemd/system/chronos.service` și că userul e
 în grupul `audio`: `sudo usermod -aG audio sergiu`.
+
+**Ecranul rămâne pe pop-up-ul OFFLINE**
+Pagina e bine, Chronos nu răspunde pe portul 5000. Verifică serviciul:
+`systemctl status chronos.service`. Pagina se reconectează singură.
+
+**Pe ecran, promptul spune „voce oprită"**
+Chronos rulează, dar fără microfon sau fără Gemini Live — vezi pașii 4 și 5.
+Restul ecranului merge normal.
+
+**Rândul MUZICĂ scrie „spotify neconectat"**
+Pe Pi lipsește tokenul Spotify: `python -m tools.spotify_api auth`, apoi
+repornește serviciul.
+
+**Luminozitatea nu apare în `sys`**
+Ecranul n-are lumină de fundal reglabilă (monitor HDMI) sau regula udev nu s-a
+aplicat încă — a fost nevoie de un reboot după `install_screen.sh`. Verifică:
+`ls -l /sys/class/backlight/*/brightness` (grupul trebuie să fie `video`).

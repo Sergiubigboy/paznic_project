@@ -230,6 +230,72 @@ curat = curata_text_cautare(
 check("sursele și linkurile căutării nu ajung în TTS",
       curat == "Azi sunt 23 de grade, conform Meteo.", repr(curat))
 
+# ── 9. ECRANUL DE PE PI ──────────────────────────────────────────────────
+print("\n[9] Ecranul de pe Pi (/screen)")
+import os
+import tempfile
+from datetime import datetime, timedelta
+import web.web_dashboard as wd
+from core import presence
+from tools.timers import TimerStore
+
+client = wd.app.test_client()
+check("/screen se încarcă", client.get("/screen").status_code == 200)
+st = client.get("/api/screen/state").get_json()
+check("fără main_async vocea apare indisponibilă", st["voice"]["available"] is False)
+check("starea are boot + timere", "boot" in st and isinstance(st["timers"], list))
+check("vocea refuză curat când nu rulează",
+      client.post("/api/screen/voice", json={"action": "wake"}).status_code == 409)
+check("acțiune de muzică necunoscută → 400",
+      client.post("/api/screen/music", json={"action": "format"}).status_code == 400)
+
+ts = TimerStore(os.path.join(tempfile.mkdtemp(), "timers.json"))
+ts.add(datetime.now() + timedelta(minutes=5), "paste")
+up = ts.upcoming()
+check("timerele active ajung pe ecran", len(up) == 1 and up[0]["label"] == "paste")
+check("✕ anulează exact timerul ales", ts.remove(up[0]["id"]) and not ts.upcoming())
+
+
+from core.gemini_live import GeminiLiveSession
+gl = GeminiLiveSession(None)
+check("vocea: idle fără sesiune", gl.snapshot()["state"] == "idle")
+gl._session_active, gl._ai_is_speaking = True, True
+check("vocea: speaking cât vorbește Chronos", gl.snapshot()["state"] == "speaking")
+gl._ai_is_speaking, gl._last_audio_write_ts = False, 0.0
+check("vocea: listening după ce tace", gl.snapshot()["state"] == "listening")
+gl._play_pool.shutdown(wait=False)
+gl._tool_pool.shutdown(wait=False)
+
+
+class _FakeLive:
+    stopped = False
+
+    def snapshot(self):
+        return {"state": "listening", "user": "salut", "ai": "", "last": None}
+
+    def stop_session(self):
+        self.stopped = True
+
+
+async def screen_voice_tests():
+    bus = EventBus()
+    sub = bus.subscribe(EventType.WAKE_WORD_DETECTED)
+    live = _FakeLive()
+    presence.register(asyncio.get_running_loop(), bus, live)
+    v = await asyncio.to_thread(lambda: client.get("/api/screen/state").get_json()["voice"])
+    check("starea vocii vine din sesiunea live", v["available"] and v["state"] == "listening")
+    code = await asyncio.to_thread(
+        lambda: client.post("/api/screen/voice", json={"action": "wake"}).status_code)
+    data = await asyncio.wait_for(sub.__anext__(), 2)
+    check("atingerea promptului = wake word", code == 200 and data.get("model_name") == "screen")
+    await asyncio.to_thread(lambda: client.post("/api/screen/voice", json={"action": "stop"}))
+    await asyncio.sleep(0.05)
+    check("„Gata” oprește sesiunea vocală", live.stopped)
+    presence.register(None, None, None)
+
+
+asyncio.run(screen_voice_tests())
+
 # ── REZUMAT ──────────────────────────────────────────────────────────────
 print(f"\n{'='*60}")
 print(f"  {len(PASS)} PASS   {len(FAIL)} FAIL")

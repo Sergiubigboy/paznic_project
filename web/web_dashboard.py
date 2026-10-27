@@ -3723,6 +3723,263 @@ def set_theme():
     })
 
 
+# ==============================================================
+# ECRANUL DE PE PI — /screen (Chromium în kiosk, vezi pi/kiosk.sh)
+# ==============================================================
+# Pagină de sine stătătoare, făcută pentru touchscreen: ceas, vocea lui
+# Chronos, muzică, lumini, ziua. /api/screen/state e interogat la ~1s, deci
+# trebuie să fie ieftin: doar memorie, fără rețea. Tot ce întreabă alte
+# servicii (HA, Spotify, WLED) are cache scurt — un ecran aprins toată ziua
+# nu are de ce să bată la ușa lor la fiecare secundă.
+
+_SCREEN_BOOT = str(int(time()))   # se schimbă la repornire → ecranul se reîncarcă singur
+_screen_cache = {}
+
+
+def _screen_cached(key, ttl, fn):
+    hit = _screen_cache.get(key)
+    if hit and time() - hit[0] < ttl:
+        return hit[1]
+    val = fn()
+    _screen_cache[key] = (time(), val)
+    return val
+
+
+def _screen_music_agent():
+    """Agentul de muzică al lui Chronos (memoria DJ-ului vede și skip-urile de
+    pe ecran); dashboard-ul pornit singur își face unul propriu."""
+    try:
+        agent = shared_dispatcher.music_agent
+    except Exception:
+        agent = None
+    if agent is None:
+        from agents.music_agent import MusicAgent
+        agent = _screen_cached('music_agent', float('inf'), MusicAgent)
+    return agent
+
+
+def _screen_weather():
+    from tools import home_assistant as ha
+    if not ha.is_configured():
+        return None
+    now = ha.local_weather()
+    if now.get('status') != 'ok':
+        return None
+    fc = _screen_cached('forecast', 1800, lambda: ha.weather_forecast(3))
+    return {
+        'temp': now.get('temperatura'),
+        'stare': now.get('stare'),
+        'conditie': now.get('conditie'),
+        'umiditate': now.get('umiditate'),
+        'zile': fc.get('zile', []) if fc.get('status') == 'ok' else [],
+    }
+
+
+def _screen_day():
+    from tools import day_planner as dp
+    zi = dp.load_day()
+    iteme = {i.get('id'): i for i in zi.get('iteme', [])}
+    if zi.get('cu_program') and zi.get('program'):
+        blocuri = [{'start': b.get('start'), 'end': b.get('sfarsit'), 'titlu': b.get('titlu'),
+                    'gen': b.get('gen', 'task'),
+                    'gata': bool(iteme.get(b.get('item_id'), {}).get('gata'))}
+                   for b in zi['program']]
+    else:
+        blocuri = [{'start': None, 'end': None, 'titlu': i.get('titlu'), 'gen': 'task',
+                    'gata': bool(i.get('gata'))} for i in zi.get('iteme', [])]
+    trezire, culcare = dp.sleep_window()
+    return {'blocuri': blocuri,
+            'somn': {'trezire': trezire.strftime('%H:%M'), 'culcare': culcare.strftime('%H:%M')}}
+
+
+def _backlight_path():
+    for dev in sorted(glob.glob('/sys/class/backlight/*')):
+        if os.access(os.path.join(dev, 'brightness'), os.W_OK):
+            return dev
+    return None
+
+
+def _backlight_get():
+    dev = _backlight_path()
+    if not dev:
+        return None
+    try:
+        with open(os.path.join(dev, 'max_brightness')) as f:
+            mx = int(f.read().strip() or 255)
+        with open(os.path.join(dev, 'brightness')) as f:
+            cur = int(f.read().strip() or 0)
+        return round(cur * 100 / max(1, mx))
+    except Exception:
+        return None
+
+
+def _safe(fn, default=None):
+    """Un serviciu picat (HA, WLED, Spotify) nu are voie să strice tot ecranul."""
+    try:
+        return fn()
+    except Exception as e:
+        print(f"[Screen] {getattr(fn, '__name__', 'apel')}: {e}")
+        return default
+
+
+@app.route('/screen')
+@requires_auth
+def screen_page():
+    return render_template('screen.html')
+
+
+@app.route('/api/screen/state', methods=['GET'])
+@requires_auth
+def screen_state():
+    from core import presence
+    from tools.timers import get_store
+    store = get_store()
+    mood = _screen_cached('mood', 20, _chronos_state_payload)
+    return jsonify({
+        'boot': _SCREEN_BOOT,
+        'now': datetime.now().isoformat(timespec='seconds'),
+        'voice': presence.voice(),
+        'timers': store.upcoming()[:4],
+        'ringing': store.ringing,
+        'mood': {k: mood.get(k) for k in ('mood', 'mood_short', 'color')},
+    })
+
+
+@app.route('/api/screen/overview', methods=['GET'])
+@requires_auth
+def screen_overview():
+    rem = [r for r in _load_reminders().get('reminders', []) if not r.get('checked')]
+    order = {'High': 0, 'Med': 1, 'Low': 2}
+    rem.sort(key=lambda r: order.get(r.get('priority'), 1))
+    theme, _, _ = _resolve_theme(_load_theme())
+    return jsonify({
+        'weather': _screen_cached('weather', 600, lambda: _safe(_screen_weather)),
+        'day': _safe(_screen_day, {'blocuri': [], 'somn': None}),
+        'reminders': [{'id': r['id'], 'title': r.get('title', ''), 'emoji': r.get('emoji', '📌'),
+                       'priority': r.get('priority', 'Med')} for r in rem[:8]],
+        'scenes': [{'id': s['id'], 'name': s.get('name', ''), 'emoji': s.get('emoji', '🎬')}
+                   for s in _load_scenes().get('scenes', [])],
+        'accent': theme,
+        'backlight': _backlight_get(),
+    })
+
+
+@app.route('/api/screen/music', methods=['GET'])
+@requires_auth
+def screen_music():
+    from tools.spotify_api import playback_snapshot
+    return jsonify(_screen_cached('music', 3, playback_snapshot))
+
+
+@app.route('/api/screen/music', methods=['POST'])
+@requires_auth
+def screen_music_control():
+    body = request.json or {}
+    action = body.get('action', '')
+    if action not in ('play', 'pause', 'next', 'previous', 'volume_up', 'volume_down',
+                      'set_volume', 'like', 'dislike'):
+        return jsonify({'status': 'error', 'message': 'Acțiune necunoscută'}), 400
+    try:
+        res = _screen_music_agent().control(action, body.get('value'))
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    _screen_cache.pop('music', None)
+    return jsonify({'status': res.get('status', 'ok'),
+                    'message': res.get('msg') or res.get('message', '')})
+
+
+@app.route('/api/screen/voice', methods=['POST'])
+@requires_auth
+def screen_voice():
+    from core import presence
+    action = (request.json or {}).get('action')
+    ok = presence.wake() if action == 'wake' else presence.stop_voice() if action == 'stop' else None
+    if ok is None:
+        return jsonify({'status': 'error', 'message': 'Acțiune necunoscută'}), 400
+    if not ok:
+        return jsonify({'status': 'error', 'message': 'Vocea nu e pornită (fără microfon sau fără Gemini).'}), 409
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/screen/timer', methods=['POST'])
+@requires_auth
+def screen_timer():
+    from tools.timers import get_store
+    body = request.json or {}
+    store = get_store()
+    if body.get('action') == 'stop':
+        store.stop_ringing()
+        return jsonify({'status': 'ok'})
+    if body.get('action') == 'cancel' and store.remove(body.get('id', '')):
+        return jsonify({'status': 'ok'})
+    return jsonify({'status': 'error', 'message': 'Timerul nu mai există'}), 404
+
+
+@app.route('/api/screen/plan/done', methods=['POST'])
+@requires_auth
+def screen_plan_done():
+    from tools import day_planner as dp
+    titlu = ((request.json or {}).get('titlu') or '').strip()
+    if not titlu:
+        return jsonify({'status': 'error', 'message': 'Titlu lipsă'}), 400
+    res = dp.complete(titlu)
+    return jsonify(res), (200 if res.get('status') == 'ok' else 404)
+
+
+@app.route('/api/screen/lights', methods=['GET'])
+@requires_auth
+def screen_lights():
+    def _read():
+        main_state, floor_state = _fetch_wled_zones()
+        zones = [z for z in (main_state, floor_state) if z]
+        if not zones:
+            return {'available': False}
+        on = [z for z in zones if z.get('on')]
+        bri = max((z.get('bri') or 0) for z in on) if on else 0
+        return {'available': True, 'on': bool(on), 'bri': round(bri * 100 / 255)}
+    return jsonify(_screen_cached('lights', 8, _read))
+
+
+@app.route('/api/screen/lights', methods=['POST'])
+@requires_auth
+def screen_lights_control():
+    from tools import wled_tools
+    body = request.json or {}
+    action = body.get('action')
+    if action == 'off':
+        payload = {'on': False}
+    elif action == 'on':
+        payload = {'on': True}
+    elif action == 'brightness':
+        try:
+            pct = max(1, min(100, int(body.get('value'))))
+        except (TypeError, ValueError):
+            return jsonify({'status': 'error', 'message': 'Valoare invalidă'}), 400
+        payload = {'on': True, 'bri': round(pct * 255 / 100)}
+    else:
+        return jsonify({'status': 'error', 'message': 'Acțiune necunoscută'}), 400
+    res = wled_tools.set_dual_zone_leds(payload, payload)
+    _screen_cache.pop('lights', None)
+    return jsonify({'status': res.get('status', 'error')})
+
+
+@app.route('/api/screen/backlight', methods=['POST'])
+@requires_auth
+def screen_backlight():
+    dev = _backlight_path()
+    if not dev:
+        return jsonify({'status': 'error', 'message': 'Ecranul nu are lumină de fundal reglabilă.'}), 404
+    try:
+        pct = max(0, min(100, int((request.json or {}).get('level'))))
+        with open(os.path.join(dev, 'max_brightness')) as f:
+            mx = int(f.read().strip() or 255)
+        with open(os.path.join(dev, 'brightness'), 'w') as f:
+            f.write(str(round(pct * mx / 100)))
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    return jsonify({'status': 'ok', 'level': pct})
+
+
 if __name__ == '__main__':
     print("Pornesc Dashboard-ul Chronos...")
     app.run(host='0.0.0.0', port=5000, debug=True)

@@ -1,0 +1,211 @@
+/* ═══════════════════════════════════════════════════════════════
+   Chronos — ecranul de pe Pi (/screen)
+   Un terminal: monospace, alb pe negru, fără rotunjiri, fără umbre.
+   Tot ce se poate apăsa e text între chenare; restul vine ca pop-up.
+   Mărimea fontului urmează ecranul: ~80 de coloane pe orice rezoluție.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+    --bg: #000;
+    --fg: #e6e6e6;
+    --dim: #6b6b6b;
+    --line: #2a2a2a;
+    --red: #ff3b3b;
+    --mood: #e6e6e6;
+    font-size: clamp(12px, min(2vw, 3.4vh), 28px);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; border-radius: 0; }
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'JetBrains Mono', 'DejaVu Sans Mono', ui-monospace, monospace;
+    line-height: 1.35;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    overscroll-behavior: none;
+}
+
+body.kiosk, body.kiosk * { cursor: none !important; }
+button { font: inherit; color: inherit; background: none; border: 0; text-align: left; cursor: pointer; }
+.dim { color: var(--dim); }
+
+/* ── Terminalul ─────────────────────────────────────────────── */
+.term {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 0.6em 1ch;
+}
+
+.hd {
+    display: flex;
+    justify-content: space-between;
+    font-weight: 700;
+    border-bottom: 2px solid var(--fg);
+    padding-bottom: 0.2em;
+}
+#mood { color: var(--mood); font-weight: 400; }
+#clock { font-variant-numeric: tabular-nums; }
+
+.sub { display: flex; justify-content: space-between; gap: 2ch; padding: 0.2em 0 0.4em; }
+.sub span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.status { border-bottom: 1px dashed var(--line); padding-bottom: 0.4em; }
+.row {
+    align-items: baseline;
+    display: flex;
+    width: 100%;
+    gap: 1ch;
+    padding: 0.08em 0;
+}
+.row b { flex: 0 0 7ch; color: var(--dim); font-weight: 400; }
+.row span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row:active { background: var(--fg); color: var(--bg); }
+.row:active b { color: var(--bg); }
+
+.log {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: none;
+    padding: 0.4em 0;
+    display: flex;
+    flex-direction: column;
+}
+.log::-webkit-scrollbar { display: none; }
+.log > :first-child { margin-top: auto; }
+.ln { display: flex; gap: 1ch; align-items: baseline; }
+.ln .t { color: var(--dim); flex: 0 0 5ch; }
+.ln .k { flex: 0 0 3ch; color: var(--dim); }
+.ln .x { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 400; }
+.ln.tu .x { color: var(--dim); }
+.ln.err .k, .ln.err .x { color: var(--red); }
+.ln.alarm .x { color: var(--red); font-weight: 700; }
+
+.ft {
+    display: flex;
+    align-items: stretch;
+    gap: 1ch;
+    border-top: 2px solid var(--fg);
+    padding-top: 0.3em;
+}
+.prompt { flex: 1; min-width: 0; padding: 0.4em 0; white-space: nowrap; overflow: hidden; }
+.prompt:active { background: var(--fg); color: var(--bg); }
+.prompt.off { color: var(--dim); }
+.cur { animation: blink 1s steps(1) infinite; margin-left: 0.3ch; }
+@keyframes blink { 50% { opacity: 0; } }
+.cmds { display: flex; gap: 0.6ch; }
+.cmds button { border: 1px solid var(--dim); padding: 0.4em 0.9ch; color: var(--dim); }
+.cmds button:active { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+
+/* ── Pop-up-uri ─────────────────────────────────────────────── */
+.pop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: none;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.78);
+    padding: 1em;
+}
+.pop.show { display: grid; }
+.box {
+    width: min(100%, 52ch);
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    border: 2px solid var(--fg);
+}
+.box-hd {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--fg);
+    color: var(--bg);
+    font-weight: 700;
+    padding: 0 1ch;
+    min-height: 1.9em;
+}
+.x { padding: 0.25em 0 0.25em 2ch; font-weight: 700; }
+.box-bd { padding: 0.8em 1.5ch 1em; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5em; }
+.big { font-size: 1.35em; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+.sec { margin-top: 0.5em; border-bottom: 1px dashed var(--line); }
+
+.btns { display: flex; flex-wrap: wrap; align-items: center; gap: 1ch; margin-top: 0.3em; }
+.btn { border: 2px solid var(--fg); padding: 0.45em 1.6ch; min-width: 5ch; text-align: center; }
+.btn:active, .btn.on { background: var(--fg); color: var(--bg); }
+.btn.wide { flex: 1; padding: 0.8em; font-weight: 700; font-size: 1.2em; }
+.lbl { color: var(--dim); min-width: 13ch; }
+.val { min-width: 5ch; text-align: center; font-variant-numeric: tabular-nums; }
+
+.list { display: flex; flex-direction: column; }
+.it { display: flex; align-items: baseline; gap: 1ch; width: 100%; padding: 0.35em 0.5ch; border-bottom: 1px solid var(--line); }
+.it .h { color: var(--dim); flex: 0 0 5ch; }
+.it .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.it:active { background: var(--fg); color: var(--bg); }
+.it.gata { color: var(--dim); text-decoration: line-through; }
+.it.now { color: var(--bg); background: var(--fg); }
+.it.now .h { color: var(--bg); }
+.it.pasiv { color: var(--dim); }
+.it.arm { outline: 2px solid var(--fg); outline-offset: -2px; }
+.it.arm .t::after { content: '  ← atinge iar'; color: var(--dim); }
+.it .end { color: var(--dim); }
+
+/* alarma: roșu, chenarul clipește */
+.pop.alarm { background: var(--bg); }
+.pop.alarm .box { border-color: var(--red); width: min(100%, 40ch); }
+.pop.alarm .box-hd { background: var(--red); }
+.pop.alarm.show .box { animation: flash 0.8s steps(1) infinite; }
+.pop.alarm .btn { border-color: var(--red); color: var(--red); }
+.pop.alarm .btn:active { background: var(--red); color: var(--bg); }
+@keyframes flash { 50% { border-color: var(--bg); } }
+
+#vState.listen::after { content: '_'; animation: blink 1s steps(1) infinite; }
+#vState.speak { font-weight: 700; }
+
+.dots::after { content: ''; animation: dots 1.5s steps(1) infinite; }
+@keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+
+/* ── Notificări scurte ──────────────────────────────────────── */
+.notes {
+    position: fixed;
+    right: 1ch;
+    bottom: 3.6em;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.4em;
+    pointer-events: none;
+    max-width: 60%;
+}
+.note { background: var(--bg); border: 2px solid var(--fg); padding: 0.25em 1ch; }
+.note.err { border-color: var(--red); color: var(--red); }
+
+/* ── Ecran stins ────────────────────────────────────────────── */
+.sleep {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: none;
+    place-items: center;
+    background: #000;
+    color: #262626;
+    font-size: 4em;
+    font-variant-numeric: tabular-nums;
+}
+.sleep.show { display: grid; }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; }
+}

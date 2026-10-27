@@ -216,6 +216,41 @@ def now_playing() -> dict:
         return {"status": "error", "message": str(e)}
 
 
+def playback_snapshot() -> dict:
+    """Ca now_playing(), dar pentru ecranul de pe Pi: copertă și progres în
+    milisecunde, ca bara să avanseze lin în browser între două interogări.
+    Separat de now_playing() ca URL-ul copertei să nu ajungă în tool-urile LLM."""
+    sp = _get_client()
+    if not sp:
+        return {"status": "error", "available": False, "message": "Spotify API indisponibil."}
+    try:
+        cur = sp.current_playback()
+        if not cur or not cur.get("item"):
+            return {"status": "ok", "available": True, "playing": False, "track": None}
+        item = cur["item"]
+        images = (item.get("album") or {}).get("images") or []
+        # Spotify le dă de la mare la mic; 300px ajunge pentru orice ecran de Pi.
+        cover = next((i["url"] for i in reversed(images) if (i.get("width") or 0) >= 250),
+                     images[0]["url"] if images else None)
+        device = cur.get("device") or {}
+        return {
+            "status": "ok",
+            "available": True,
+            "playing": bool(cur.get("is_playing")),
+            "track": item.get("name"),
+            "artist": ", ".join(a["name"] for a in item.get("artists", [])),
+            "album": (item.get("album") or {}).get("name"),
+            "cover": cover,
+            "progress_ms": cur.get("progress_ms") or 0,
+            "duration_ms": item.get("duration_ms") or 0,
+            "volume": device.get("volume_percent"),
+            "device": device.get("name"),
+        }
+    except Exception as e:
+        logger.debug(f"[Spotify API] playback_snapshot: {e}")
+        return {"status": "error", "available": True, "message": str(e)}
+
+
 def next_track() -> dict:
     sp = _get_client()
     if not sp:

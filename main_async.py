@@ -78,6 +78,7 @@ from core import day_runner
 from core import automations
 from core import health_runner
 from core import lifecycle
+from core import presence
 
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 5000
@@ -454,6 +455,9 @@ async def main() -> None:
     shutdown_event = asyncio.Event()
     # Butonul „Repornește Chronos" din Setări cere oprirea prin evenimentul ăsta.
     lifecycle.register(asyncio.get_running_loop(), shutdown_event)
+    # Ecranul de pe Pi vede starea vocii și poate porni o sesiune la atingere.
+    presence.register(asyncio.get_running_loop(), bus,
+                      live if (live_ok and audio_ok) else None)
 
     all_tasks = [
         asyncio.create_task(audio_task(audio), name="audio_main"),

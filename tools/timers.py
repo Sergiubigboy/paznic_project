@@ -197,6 +197,28 @@ class TimerStore:
         return {"status": "ok", "active": len(randuri),
                 "message": "Ai: " + "; ".join(randuri) + "."}
 
+    def upcoming(self) -> list:
+        """Timerele active, ca date (pentru ecranul de pe Pi), cele mai apropiate primele."""
+        with self._lock:
+            items = sorted(self._items, key=lambda x: x["due"])
+            return [{"id": it.get("id"), "label": it.get("label", ""),
+                     "kind": it.get("kind", "timer"), "due": it.get("due")}
+                    for it in items]
+
+    def remove(self, item_id: str) -> bool:
+        """Anulează exact timerul cu id-ul ăsta (butonul ✕ de pe ecran)."""
+        with self._lock:
+            ramase = [i for i in self._items if i.get("id") != item_id]
+            if len(ramase) == len(self._items):
+                return False
+            self._items = ramase
+            self._save()
+        return True
+
+    @property
+    def ringing(self) -> bool:
+        return self._ringing.is_set()
+
     def cancel(self, query: str = "") -> dict:
         with self._lock:
             if not self._items:

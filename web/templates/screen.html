@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#000000">
+    <title>chronos · ecran</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/screen.css') }}?v=2.0">
+</head>
+<body>
+
+<div class="term">
+    <header class="hd">
+        <span>CHRONOS <span class="dim">//</span> <span id="mood">pornește</span></span>
+        <span id="clock">--:--:--</span>
+    </header>
+    <div class="sub dim">
+        <span id="date"></span>
+        <span id="wx"></span>
+    </div>
+
+    <section class="status">
+        <button class="row" data-open="day"><b>ACUM</b><span id="stNow">—</span></button>
+        <button class="row" data-open="day"><b>APOI</b><span id="stNext">—</span></button>
+        <button class="row" data-open="timers"><b>TIMER</b><span id="stTimers">—</span></button>
+        <button class="row" data-open="music"><b>MUZICĂ</b><span id="stMusic">—</span></button>
+        <button class="row" data-open="lights"><b>LUMINI</b><span id="stLights">—</span></button>
+        <button class="row" data-open="day"><b>TODO</b><span id="stRem">—</span></button>
+    </section>
+
+    <section class="log" id="log"></section>
+
+    <footer class="ft">
+        <button class="prompt" id="prompt" type="button"><span>&gt;</span> <span id="promptTxt">atinge pentru voce</span><span class="cur">█</span></button>
+        <nav class="cmds">
+            <button data-open="music" type="button">muz</button>
+            <button data-open="lights" type="button">lum</button>
+            <button data-open="day" type="button">zi</button>
+            <button data-open="sys" type="button">sys</button>
+            <button id="btnSleep" type="button">off</button>
+        </nav>
+    </footer>
+</div>
+
+<!-- ═══ POP-UP-URI ═══ -->
+<div class="pop" data-pop="voice">
+    <div class="box">
+        <div class="box-hd"><span>VOCE</span></div>
+        <div class="box-bd">
+            <p id="vState">● ascult_</p>
+            <p class="dim" id="vUser"></p>
+            <p id="vAi"></p>
+            <div class="btns"><button class="btn" id="vStop" type="button">gata</button></div>
+        </div>
+    </div>
+</div>
+
+<div class="pop alarm" data-pop="alarm">
+    <div class="box">
+        <div class="box-hd"><span>ALARMĂ</span><span id="aTime"></span></div>
+        <div class="box-bd">
+            <p class="big" id="aLabel">alarmă</p>
+            <div class="btns"><button class="btn wide" id="aStop" type="button">oprește</button></div>
+        </div>
+    </div>
+</div>
+
+<div class="pop" data-pop="music">
+    <div class="box">
+        <div class="box-hd"><span>MUZICĂ</span><button class="x" type="button">[x]</button></div>
+        <div class="box-bd">
+            <p class="big" id="mTrack">—</p>
+            <p class="dim" id="mArtist"></p>
+            <p id="mBar">[--------------------] 0:00/0:00</p>
+            <div class="btns">
+                <button class="btn" data-music="previous" type="button">&lt;&lt;</button>
+                <button class="btn" id="mToggle" type="button">play</button>
+                <button class="btn" data-music="next" type="button">&gt;&gt;</button>
+                <button class="btn" data-music="like" type="button">♥</button>
+            </div>
+            <div class="btns">
+                <span class="lbl">volum</span>
+                <button class="btn" data-vol="-10" type="button">-</button>
+                <span class="val" id="mVol">–</span>
+                <button class="btn" data-vol="10" type="button">+</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="pop" data-pop="lights">
+    <div class="box">
+        <div class="box-hd"><span>LUMINI</span><button class="x" type="button">[x]</button></div>
+        <div class="box-bd">
+            <p id="lState">—</p>
+            <div class="btns">
+                <button class="btn" data-light="on" type="button">aprinde</button>
+                <button class="btn" data-light="off" type="button">stinge</button>
+            </div>
+            <div class="btns">
+                <span class="lbl">intensitate</span>
+                <button class="btn" data-bri="-10" type="button">-</button>
+                <span class="val" id="lBri">–</span>
+                <button class="btn" data-bri="10" type="button">+</button>
+            </div>
+            <p class="dim sec">scene</p>
+            <div class="list" id="scenes"></div>
+        </div>
+    </div>
+</div>
+
+<div class="pop" data-pop="day">
+    <div class="box">
+        <div class="box-hd"><span>ZIUA</span><button class="x" type="button">[x]</button></div>
+        <div class="box-bd">
+            <p class="dim sec">program · două atingeri = bifat</p>
+            <div class="list" id="plan"></div>
+            <p class="dim sec">remindere</p>
+            <div class="list" id="rems"></div>
+        </div>
+    </div>
+</div>
+
+<div class="pop" data-pop="timers">
+    <div class="box">
+        <div class="box-hd"><span>TIMERE</span><button class="x" type="button">[x]</button></div>
+        <div class="box-bd"><div class="list" id="timers"></div></div>
+    </div>
+</div>
+
+<div class="pop" data-pop="sys">
+    <div class="box">
+        <div class="box-hd"><span>SYS</span><button class="x" type="button">[x]</button></div>
+        <div class="box-bd">
+            <div class="btns" id="blRow">
+                <span class="lbl">luminozitate</span>
+                <button class="btn" data-bl="-10" type="button">-</button>
+                <span class="val" id="blVal">–</span>
+                <button class="btn" data-bl="10" type="button">+</button>
+            </div>
+            <div class="btns">
+                <span class="lbl">noaptea off</span>
+                <button class="btn" id="autoSleep" type="button">da</button>
+                <span class="dim" id="sleepHint"></span>
+            </div>
+            <div class="btns">
+                <button class="btn" id="actReload" type="button">reîncarcă</button>
+                <button class="btn" id="actRestart" type="button">repornește chronos</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="pop" data-pop="offline">
+    <div class="box">
+        <div class="box-hd"><span>OFFLINE</span></div>
+        <div class="box-bd"><p>aștept chronos pe :5000<span class="dots"></span></p><p class="dim">se reconectează singur.</p></div>
+    </div>
+</div>
+
+<div class="notes" id="notes"></div>
+
+<div class="sleep" id="sleep"><span id="sClock">--:--</span></div>
+
+<script src="{{ url_for('static', filename='js/screen.js') }}?v=2.0"></script>
+</body>
+</html>

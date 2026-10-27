@@ -169,7 +169,8 @@ def local_weather() -> dict:
         bucati.append(f"vânt {vant} {a.get('wind_speed_unit', 'km/h')}")
 
     logger.info(f"🌤️ [HA] Vreme: {stare}, {temp}°C")
-    return {"status": "ok", "stare": stare, "temperatura": temp,
+    return {"status": "ok", "stare": stare, "conditie": st.get("state"),
+            "temperatura": temp,
             "umiditate": umid, "message": ", ".join(bucati) + ".",
             "nota": "Astea sunt date locale ACUM. Pentru zilele următoare "
                     "cere prognoza, tot de aici — nu căuta pe net."}
@@ -259,6 +260,7 @@ def weather_forecast(days: int = FORECAST_DAYS_DEFAULT) -> dict:
         nume = _nume_zi(zi, azi)
 
         zile.append({"zi": nume, "data": zi.isoformat(), "stare": stare,
+                     "conditie": item.get("condition"),
                      "maxim": tmax, "minim": tmin, "precipitatii": ploaie})
 
         text = f"{nume} {stare}"

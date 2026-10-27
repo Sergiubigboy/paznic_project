@@ -192,6 +192,10 @@ class GeminiLiveSession:
         # perechea salvată în memoria conversațională la finalul turului.
         self._current_ai_transcript = ""
 
+        # Ultimul schimb complet (tu → Chronos), păstrat după turn_complete
+        # ca ecranul de pe Pi să-l mai arate câteva secunde după ce s-a încheiat.
+        self._last_exchange = None
+
         # ── FOCUS MODE (al doilea mod de barge-in) ──
         # False → mod GENERAL: poți vorbi peste Chronos oricând (barge-in pe RMS).
         # True  → mod FOCUS: Chronos livrează ceva important (răspuns bazat pe
@@ -1669,6 +1673,12 @@ class GeminiLiveSession:
                         # Răspunsul important s-a livrat → barge-in normal înapoi
                         self._exit_focus_mode()
                         await self._save_conversation_turn()
+                        if self._current_user_transcript or self._current_ai_transcript:
+                            self._last_exchange = {
+                                "user": self._current_user_transcript.strip()[-240:],
+                                "ai": self._current_ai_transcript.strip()[-400:],
+                                "ts": time.time(),
+                            }
                         self._current_user_transcript = ""  # gata cu turul asta, nu se scurge în urmatorul
                         self._current_ai_transcript   = ""
                         await self._audio_out_queue.put(_FLUSH_SENTINEL)
@@ -1839,6 +1849,23 @@ class GeminiLiveSession:
         self._ended_intentionally = True   # oprire cerută explicit → fără reconectare
         self._session_active = False
         self._stop_playback.set()
+
+    def snapshot(self) -> dict:
+        """Starea vocii pentru ecranul de pe Pi: idle / listening / speaking.
+
+        Citită din thread-ul Flask: doar citiri de atribute simple, fără lock.
+        O valoare veche de o fracțiune de secundă e perfect ok pentru un
+        indicator — nu merită să încetinim bucla audio pentru el."""
+        if self._session_active:
+            state = "speaking" if self._ai_audio_active() else "listening"
+        else:
+            state = "idle"
+        return {
+            "state": state,
+            "user": self._current_user_transcript.strip()[-240:],
+            "ai": self._current_ai_transcript.strip()[-400:],
+            "last": self._last_exchange,
+        }
 
     @property
     def is_active(self) -> bool:
